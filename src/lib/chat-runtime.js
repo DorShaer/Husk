@@ -19,7 +19,7 @@ const {
 } = require('./chat-events');
 const { openaiTurn } = require('./openai-stream');
 const {
-  APP_SERVER_ARGS, codexModel, codexResumeId, codexInput, codexSession, normalizeCodexNotification, normalizeCodexApproval, codexDecision,
+  APP_SERVER_ARGS, codexModel, codexResumeId, codexInput, codexSession, normalizeCodexNotification, normalizeCodexApproval, codexDecision, normalizeCodexQuestion, codexQuestionResponse,
 } = require('./codex-app-server');
 
 const STDERR_KEEP = 2000;
@@ -36,7 +36,7 @@ const ALLOW_ALL = 'allow-all';
 // of leaving the tab on "Starting" forever.
 const HANDSHAKE_MS = 20000;
 
-function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVersion, platform, comSpec, log, handshakeMs, controlTimeoutMs } = {}) {
+function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, recordPrompt, appVersion, platform, comSpec, log, handshakeMs, controlTimeoutMs } = {}) {
   if (typeof spawn !== 'function') throw new TypeError('spawn is required');
   const sessions = new Map();
   const isWin = (platform || process.platform) === 'win32';
@@ -277,19 +277,33 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
 
     if (transport === 'codex') {
       try { s.child = spawnChild(exe, APP_SERVER_ARGS.slice(), cwd, env); } catch (e) { return { ok: false, error: e.message }; }
+      const requests = new Map();
       s.acp = createAcpClient({
         send: (msg) => writeLine(s, msg),
         onNotification: (method, params) => {
+          if (method === 'serverRequest/resolved') {
+            const id = requests.get(String(params.requestId));
+            if (id && s.pendingPerms.has(id)) {
+              requests.delete(String(params.requestId));
+              s.pendingPerms.delete(id);
+              send(tabId, { type: 'permission_resolved', requestId: id });
+            }
+          }
           if (method === 'turn/started' && params.turn) codexTurn(s, params.turn.id);
           if (method === 'turn/completed') { s.turnOpen = false; s.turnId = null; s.cancelWanted = false; }
           send(tabId, normalizeCodexNotification(method, params));
         },
-        onRequest: (method, params) => {
+        onRequest: (method, params, serverId) => {
           const requestId = 'p' + (++permSeq);
-          const card = normalizeCodexApproval(requestId, method, params);
+          const question = method === 'item/tool/requestUserInput';
+          const card = question ? normalizeCodexQuestion(requestId, params) : normalizeCodexApproval(requestId, method, params);
           if (!card) return undefined;
+          requests.set(String(serverId), requestId);
           return new Promise((resolve) => {
-            s.pendingPerms.set(requestId, (optionId) => resolve(codexDecision(optionId)));
+            s.pendingPerms.set(requestId, (optionId, answers) => {
+              requests.delete(String(serverId));
+              resolve(question ? codexQuestionResponse(params, optionId, answers) : codexDecision(optionId));
+            });
             offer(s, tabId, card);
           });
         },
@@ -305,7 +319,7 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
           if (timer && timer.unref) timer.unref();
         });
         const handshake = (async () => {
-          await s.acp.request('initialize', { clientInfo: { name: 'husk', title: 'Husk', version: String(appVersion || '0.0.0') }, capabilities: null });
+          await s.acp.request('initialize', { clientInfo: { name: 'husk', title: 'Husk', version: String(appVersion || '0.0.0') }, capabilities: { experimentalApi: true } });
           s.acp.notify('initialized');
           // The model list only feeds the picker; a CLI without it still chats.
           const models = await s.acp.request('model/list', {}).catch(() => null);
@@ -342,6 +356,8 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
     if (pinned) s.sessionId = pinned;
     else { const named = commandSessionId(command); if (named) s.sessionId = named; }
     try { s.child = spawnChild(exe, args, cwd, env); } catch (e) { return { ok: false, error: e.message }; }
+    let reportedCost = flags.some((f) => /^--resume(?:=|$)/.test(f)) ? null : 0;
+    let costSession = s.sessionId;
     s.framer = createFramer((ev) => {
       // Replies to Husk's own control requests. initialize carries claude's own
       // model list, the same one its /model menu shows; set_model answers here.
@@ -367,8 +383,19 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
       }
       const events = normalizeClaudeEvent(ev);
       for (const ne of events) {
-        if (ne.type === 'session' && ne.sessionId) s.sessionId = ne.sessionId;
-        if (ne.type === 'turn_end') s.turnOpen = false;
+        if (ne.type === 'session' && ne.sessionId) {
+          if (costSession && costSession !== ne.sessionId) reportedCost = 0;
+          costSession = ne.sessionId;
+          s.sessionId = ne.sessionId;
+        }
+        if (ne.type === 'turn_end') {
+          s.turnOpen = false;
+          if (Number.isFinite(ne.costUsd) && ne.costUsd >= 0) {
+            const total = ne.costUsd;
+            ne.costUsd = reportedCost === null ? undefined : Math.max(0, total - reportedCost);
+            reportedCost = Math.max(reportedCost || 0, total);
+          }
+        }
       }
       for (const ne of events) { if (ne && ne.type === 'permission') offer(s, tabId, ne); else send(tabId, ne); }
     }, (raw) => note(`claude non-json line: ${raw.slice(0, 200)}`));
@@ -402,17 +429,23 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
   // context is reference text Husk adds for the agent alone (what the Brain
   // recalled). It rides ahead of the prompt on the wire and stays out of the
   // replay log, so the thread shows what the user typed.
-  async function prompt({ tabId, text, images, context, at } = {}) {
+  async function prompt({ tabId, text, images, context, notice, at } = {}) {
     const s = sessions.get(tabId);
     if (!s) return { ok: false, error: 'no chat session' };
     const body = String(text || '');
     const pics = cleanImages(images);
     if (!body.trim() && !pics.length) return { ok: false, error: 'empty prompt' };
+    if (s.exited) return { ok: false, error: 'agent exited' };
+    if ((s.transport === 'acp' || s.transport === 'codex') && !s.sessionId) return { ok: false, error: 'session not ready' };
     const wire = context && body.trim() ? String(context) + '\n\n' + body : body;
     const sentAt = Number.isFinite(Number(at)) && Number(at) > 0 ? Number(at) : Date.now();
     // The renderer paints the user's bubble itself before calling here, so the
     // log takes it directly rather than echoing it back.
-    record(s, Object.assign({ type: 'user', text: body, at: sentAt }, pics.length ? { images: pics.map((p) => ({ mimeType: p.mimeType })) } : {}));
+    const userEvent = Object.assign({ type: 'user', text: body, at: sentAt }, pics.length ? { images: pics.map((p) => ({ mimeType: p.mimeType })) } : {});
+    record(s, userEvent);
+    try { if (typeof recordPrompt === 'function') recordPrompt(tabId, userEvent); } catch (_) {}
+    // A quiet line under the prompt, in the thread and the replay log.
+    if (notice) send(tabId, { type: 'status', text: String(notice) });
     if (s.transport === 'openai') {
       s.messages.push({ role: 'user', content: wire });
       s.turnOpen = true;
@@ -508,7 +541,7 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
       const resolve = s.pendingPerms.get(id);
       if (!resolve) return { ok: false, error: 'unknown permission request' };
       s.pendingPerms.delete(id);
-      resolve(answer === null || answer === undefined ? null : String(answer));
+      resolve(answer === null || answer === undefined ? null : String(answer), answers);
     } else {
       const perm = s.permInputs.get(id);
       if (perm === undefined) return { ok: false, error: 'unknown permission request' };

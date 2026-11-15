@@ -642,12 +642,12 @@
         tag.appendChild(el('span', 'chat-queued-label', 'Queued'));
         const sendNow = el('button', 'chat-queue-send', q === sendNowItem ? 'Sending now…' : 'Send now');
         sendNow.type = 'button';
-        sendNow.disabled = starting || exited || destroyed || !!sendNowItem;
+        sendNow.disabled = starting || exited || destroyed || gatePending || !!sendNowItem;
         sendNow.title = q === sendNowItem
           ? 'Interrupting the current reply to send this message'
           : 'Stop the current reply and send this message now';
         sendNow.addEventListener('click', () => {
-          if (starting || exited || destroyed || sendNowItem) return;
+          if (starting || exited || destroyed || gatePending || sendNowItem) return;
           const index = queued.indexOf(q);
           if (index < 0) return;
           queued.splice(index, 1);
@@ -665,7 +665,7 @@
             return;
           }
           paintQueue();
-          doSend(q.text, q.images);
+          doSend(q.text, q.images, q.at);
         });
         tag.appendChild(sendNow);
         const x = el('button', 'chat-queue-x', '\u00d7');
@@ -688,11 +688,11 @@
       schedule();
     }
     function flushQueue() {
-      if (!queued.length || running || starting || exited || destroyed) return;
+      if (!queued.length || running || starting || exited || destroyed || gatePending) return;
       const next = queued.shift();
       if (next === sendNowItem) sendNowItem = null;
       paintQueue();
-      doSend(next.text, next.images);
+      doSend(next.text, next.images, next.at);
     }
     // Prompt history on the arrow keys, shell style: Up from the start of the
     // field walks back through what was sent, Down walks forward and the last
@@ -765,8 +765,14 @@
       }
       // Each chip says what it is on hover: three bare words side by side do not.
       parts.forEach((p, k) => {
-        const chip = el('span', 'chat-chip' + (k === 1 && cwd ? ' chat-composer-cwd' : ''), p);
+        const action = k === 0 ? o.onAgentPick : k === 1 && cwd ? o.onFolderPick : null;
+        const chip = el(typeof action === 'function' ? 'button' : 'span', 'chat-chip' + (action ? ' chat-context-btn' : '') + (k === 1 && cwd ? ' chat-composer-cwd' : ''), p);
         chip.title = k === 0 ? `Agent: ${agentName}` : (k === 1 && cwd ? `Folder: ${cwd}` : `Mode: ${p}`);
+        if (typeof action === 'function') {
+          chip.type = 'button';
+          chip.setAttribute('aria-haspopup', 'menu');
+          chip.addEventListener('click', (ev) => { ev.stopPropagation(); action(chip); });
+        }
         meta.appendChild(chip);
       });
       // The model chip opens the picker (ACP lists come from the agent, claude's
@@ -878,6 +884,8 @@
       if (typeof o.onModelChange === 'function') { try { o.onModelChange(modelId, modelName); } catch (_) {} }
     }
 
+    let gateOpen = false;
+    let gatePending = false;
     function doSend(textArg, imagesArg, atArg) {
       const text = str(textArg === undefined ? input.value : textArg).replace(/\s+$/, '').replace(/^\s*\n/, '');
       const images = imagesArg !== undefined ? (imagesArg || []) : (textArg === undefined ? pendingImages.slice() : []);
@@ -906,6 +914,37 @@
         return true;
       }
       const sentAt = timestampValue(atArg) || Date.now();
+      if (running || starting) {
+        queued.push({ text, images, at: sentAt });
+        if (textArg === undefined) { input.value = ''; autogrow(); closeAc(); pendingImages = []; paintAttachments(); }
+        paintQueue();
+        return true;
+      }
+      // The host may hold a typed message for a yes or no first. The draft
+      // stays in the field until the answer.
+      if (gatePending) return true;
+      if (!gateOpen && typeof o.sendGate === 'function') {
+        let ask = null;
+        try { ask = o.sendGate(); } catch (_) {}
+        if (ask && typeof ask.then === 'function') {
+          gatePending = true;
+          const restoreQueued = () => {
+            if (!destroyed && textArg !== undefined) {
+              queued.unshift({ text, images, at: sentAt });
+              paintQueue();
+            }
+          };
+          paintQueue();
+          ask.then((ok) => {
+            gatePending = false;
+            if (destroyed) return;
+            if (!ok) { restoreQueued(); return; }
+            gateOpen = true;
+            try { doSend(textArg, imagesArg, atArg); } finally { gateOpen = false; }
+          }, () => { gatePending = false; restoreQueued(); });
+          return true;
+        }
+      }
       histIdx = -1;
       if (editingKey && textArg === undefined) {
         // The edited prompt and its reply leave the thread before the new one lands.
@@ -915,12 +954,6 @@
         state = api.reduce(state, { type: 'truncate', key }) || state;
         nodes.forEach((n, k) => { if (!state.items.some((it) => it.key === k)) { try { n.el.remove(); } catch (_) {} nodes.delete(k); } });
         paint();
-      }
-      if (running || starting) {
-        queued.push({ text, images, at: sentAt });
-        if (textArg === undefined) { input.value = ''; autogrow(); closeAc(); pendingImages = []; paintAttachments(); }
-        paintQueue();
-        return true;
       }
       if (textArg === undefined) { input.value = ''; autogrow(); closeAc(); pendingImages = []; paintAttachments(); }
       apply({ type: 'user', text, at: sentAt, images: images.map((im) => ({ mimeType: im.mimeType, data: im.dataUrl })) });
@@ -1434,27 +1467,28 @@
         el: card,
         update(it, pending) {
           card.replaceChildren();
+          const asking = str(it.title) === 'AskUserQuestion' && Array.isArray(it.input?.questions);
           const live = !it.decision && pending.indexOf(it.requestId) !== -1;
           card.classList.toggle('is-resolved', !live);
           if (!live) {
             const line = el('div', 'chat-perm-line');
             line.appendChild(icon('shield', 'chat-perm-icon'));
-            line.appendChild(el('span', 'chat-perm-tool', str(it.title)));
+            line.appendChild(el('span', 'chat-perm-tool', asking ? 'Question' : str(it.title)));
             if (it.detail) line.appendChild(el('span', 'chat-perm-detail-inline', str(it.detail)));
-            const verdict = it.decision ? decisionLabel(it) : 'No longer needed';
+            const verdict = it.decision ? (asking ? (it.decision === 'allow' ? 'Answered' : 'Dismissed') : decisionLabel(it)) : 'No longer needed';
             const v = el('span', 'chat-perm-verdict', verdict);
-            v.dataset.verdict = /allow/i.test(verdict) ? 'allow' : it.decision ? 'deny' : 'none';
+            v.dataset.verdict = /allow/i.test(verdict) || (asking && it.decision === 'allow') ? 'allow' : it.decision ? 'deny' : 'none';
             line.appendChild(v);
             card.appendChild(line);
             return;
           }
           const head = el('div', 'chat-perm-head');
           head.appendChild(el('span', 'chat-pill chat-pill-time', created));
-          const pill = el('span', 'chat-pill chat-pill-status', 'Waiting for approval');
+          const pill = el('span', 'chat-pill chat-pill-status', asking ? 'Waiting for your answer' : 'Waiting for approval');
           pill.dataset.state = 'waiting';
           head.appendChild(pill);
           card.appendChild(head);
-          card.appendChild(el('div', 'chat-perm-title', str(it.title)));
+          card.appendChild(el('div', 'chat-perm-title', asking ? 'Question' : str(it.title)));
           // AskUserQuestion is answered by picking options, not Allow/Deny. The
           // picks go back as updatedInput.answers keyed by question and header,
           // which claude reads as the tool result (verified against stream-json).
@@ -1474,6 +1508,7 @@
               if (q && q.question) block.appendChild(el('div', 'chat-ask-question', str(q.question)));
               const multi = !!(q && q.multiSelect);
               const list = el('div', 'chat-ask-options');
+              let other;
               for (const o of (Array.isArray(q && q.options) ? q.options : [])) {
                 if (!o || typeof o !== 'object') continue;
                 const b = el('button', 'chat-ask-option chat-ask-choice');
@@ -1482,6 +1517,7 @@
                 if (o.description) b.appendChild(el('span', 'chat-ask-desc', str(o.description)));
                 b.addEventListener('click', () => {
                   const set = picks[qi];
+                  if (other) other.value = '';
                   if (multi) { if (set.has(o.label)) set.delete(o.label); else set.add(o.label); }
                   else { set.clear(); set.add(o.label); }
                   for (const btn of list.querySelectorAll('.chat-ask-choice')) {
@@ -1493,6 +1529,20 @@
                 list.appendChild(b);
               }
               block.appendChild(list);
+              if (q?.isOther || !q?.options?.length) {
+                other = el('input', 'chat-ask-other');
+                other.type = q?.isSecret ? 'password' : 'text';
+                other.placeholder = q?.options?.length ? 'Other answer' : 'Your answer';
+                other.setAttribute('aria-label', str(q?.header || q?.question || 'Your answer'));
+                other.autocomplete = 'off';
+                other.addEventListener('input', () => {
+                  picks[qi].clear();
+                  if (other.value.trim()) picks[qi].add(other.value.trim());
+                  for (const btn of list.querySelectorAll('.chat-ask-choice')) btn.classList.remove('is-sel');
+                  submit.disabled = !picks.length || picks.some((picked) => picked.size === 0);
+                });
+                block.appendChild(other);
+              }
               wrap.appendChild(block);
             });
             card.appendChild(wrap);
@@ -1511,6 +1561,7 @@
               const answers = {};
               qs.forEach((q, qi) => {
                 const labels = [...picks[qi]];
+                if (q && q.id) answers[str(q.id)] = labels;
                 if (q && q.question) answers[str(q.question)] = labels;
                 if (q && q.header) answers[str(q.header)] = labels;
               });
@@ -1961,6 +2012,7 @@
       reset,
       replay,
       send(text) { return doSend(text); },
+      openModelMenu() { if (!destroyed && !exited) openModelMenu(); },
       // Puts text at the caret, the way a file attach drops a path into a
       // terminal prompt without submitting it.
       insert(text) {

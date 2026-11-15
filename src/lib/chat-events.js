@@ -25,8 +25,9 @@
 //   { type: 'plan', entries: [{ content, status, priority }] }
 //   { type: 'commands', commands: [{ name, description }] }
 //   { type: 'title', title }                     agent-chosen session title
-//   { type: 'usage', used, size }                context window tokens used / size
+//   { type: 'usage', used, size, total? }        context window tokens used / size; total is the session's running token count
 //   { type: 'billing', plan }                    'subscription' when the CLI reports plan windows
+//   { type: 'limit', rejected, window?, resetsAt?, windows: [{ window, pct, resetsAt, warning }] }   plan windows the CLI reports
 //   { type: 'mode', modeId }
 //   { type: 'turn_end', stopReason, isError?, durationMs?, costUsd?, usage? }
 //   { type: 'status', text }
@@ -260,7 +261,10 @@ function normalizeClaudeEvent(ev) {
     case 'rate_limit_event': {
       const info = ev.rate_limit_info || {};
       const kind = str(info.rateLimitType);
-      return kind === 'five_hour' || kind === 'seven_day' || info.unifiedWindows ? [{ type: 'billing', plan: 'subscription' }] : [];
+      const out = kind === 'five_hour' || kind === 'seven_day' || info.unifiedWindows ? [{ type: 'billing', plan: 'subscription' }] : [];
+      const limit = parseRateLimitInfo(info);
+      if (limit) out.push(limit);
+      return out;
     }
     case 'result':
       return [{
@@ -275,6 +279,34 @@ function normalizeClaudeEvent(ev) {
     default:
       return [];
   }
+}
+
+// parseRateLimitInfo reads a rate_limit_info object into a limit event, or
+// null when it carries nothing usable. Field names and units follow the CLI's
+// own schema for the event: utilization is a fraction of the window, resetsAt
+// is epoch seconds, and only the top-level status says a request was refused.
+//   { type: 'limit', rejected, window?, windows: [{ window: 'short' | 'weekly', pct, resetsAt, warning }] }
+const LIMIT_WINDOWS = { five_hour: 'short', seven_day: 'weekly', seven_day_opus: 'weekly', seven_day_sonnet: 'weekly' };
+function parseRateLimitInfo(info) {
+  if (!info || typeof info !== 'object') return null;
+  const ms = (sec) => (typeof sec === 'number' && isFinite(sec) && sec > 0 ? Math.round(sec * 1000) : 0);
+  const byWindow = new Map();
+  const put = (name, w, status) => {
+    if (!name || typeof w.utilization !== 'number' || !isFinite(w.utilization) || w.utilization < 0) return;
+    byWindow.set(name, { window: name, pct: w.utilization * 100, resetsAt: ms(w.resetsAt), warning: status === 'allowed_warning' || status === 'rejected' });
+  };
+  const uw = info.unifiedWindows && typeof info.unifiedWindows === 'object' ? info.unifiedWindows : {};
+  for (const key of ['five_hour', 'seven_day']) {
+    if (uw[key] && typeof uw[key] === 'object') put(LIMIT_WINDOWS[key], uw[key], uw[key].status);
+  }
+  const top = LIMIT_WINDOWS[str(info.rateLimitType)];
+  if (top && !byWindow.has(top)) put(top, info, info.status);
+  const rejected = info.status === 'rejected';
+  if (!byWindow.size && !rejected) return null;
+  const ev = { type: 'limit', rejected, windows: Array.from(byWindow.values()) };
+  if (top) ev.window = top;
+  if (rejected && ms(info.resetsAt)) ev.resetsAt = ms(info.resetsAt);
+  return ev;
 }
 
 function kindForTool(name) {
@@ -403,7 +435,7 @@ function reduceThread(state, event) {
       }
       const next = appendItem(base, {
         kind: 'permission', requestId: event.requestId, toolCallId: event.toolCallId, title: event.title,
-        detail: event.detail, input: event.input, options: event.options || [], decision: null,
+        detail: event.detail, input: event.input, options: event.options || [], decision: null, nonBlocking: !!event.nonBlocking,
       });
       return Object.assign({}, next, { pending: next.pending.concat([event.requestId]) });
     }
@@ -442,7 +474,8 @@ function reduceThread(state, event) {
       // is billed per turn, so the figure would only alarm; it is dropped.
       const costUsd = s.billing === 'subscription' ? undefined : event.costUsd;
       const meta = { kind: 'meta', stopReason: event.stopReason, isError: !!event.isError, durationMs: event.durationMs, costUsd, text: event.text };
-      return appendItem(closed, meta, { turnOpen: false, pending: [] });
+      const pending = s.pending.filter((id) => s.items.some((it) => it.kind === 'permission' && it.requestId === id && it.nonBlocking));
+      return appendItem(closed, meta, { turnOpen: false, pending });
     }
     // Edit and resend: the thread is cut from the edited prompt onward so the
     // new prompt takes its place. The agent's own memory of the old exchange
@@ -491,7 +524,7 @@ function findLastIndex(arr, pred) {
   if (typeof window !== 'undefined') window.HuskChatEvents = exports;
 })({
   normalizeAcpUpdate, normalizeAcpPermission, normalizeAcpSession,
-  normalizeClaudeEvent, toolDetail, kindForTool,
+  normalizeClaudeEvent, parseRateLimitInfo, toolDetail, kindForTool,
   emptyThread, reduceThread,
 });
 })();

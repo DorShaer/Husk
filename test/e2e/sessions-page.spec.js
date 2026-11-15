@@ -30,6 +30,35 @@ function makeIsolatedHome() {
   return dir;
 }
 
+test('long session titles keep their row height in a dense scrollable roster', async () => {
+  const homeDir = makeIsolatedHome();
+  fs.writeFileSync(path.join(homeDir, '.config/husk/config.json'), JSON.stringify({ firstRunDone: true, skipWelcome: true, resumeLastOnLaunch: false, agentCommand: 'true', theme: 'light' }));
+  const app = await electron.launch({ args: [path.join(REPO_ROOT, 'src/main.js'), '--no-sandbox'], cwd: REPO_ROOT, env: { ...process.env, HOME: homeDir, USERPROFILE: homeDir, HUSK_E2E: '1' } });
+  try {
+    const win = await app.firstWindow();
+    await win.waitForLoadState('domcontentloaded');
+    await win.waitForFunction(() => window.husk && typeof sxPaint === 'function');
+    await win.evaluate(async () => {
+      document.querySelectorAll('.modal,#whatsnew').forEach((m) => { m.hidden = true; });
+      setPage('sessions');
+      await renderSessions();
+      sxPausePoll(true);
+      Object.assign(sx, { loaded: true, supported: true, error: '', agent: 'claude', currentCwd: '/project', chips: { project: false, live: false, needs: false, work: false } });
+      sx.cache = Array.from({ length: 45 }, (_,i) => ({ id: 'long-' + i, title: 'A long conversation title describing several changes to the project and wrapping across multiple lines without touching the next session ' + i, projectPath: '/project', originalCwd: '/project', path: '/project/' + i + '.jsonl', mtime: Date.now() - i * 1000 }));
+      sxPaint();
+    });
+    await expect(win.locator('.sx-row')).toHaveCount(45);
+    const layout = await win.evaluate(() => {
+      const rows = [...document.querySelectorAll('.sx-row')];
+      return {
+        overlaps: rows.filter((r) => r.querySelector('.sx-title').getBoundingClientRect().bottom > r.getBoundingClientRect().bottom + 1).length,
+        scrolls: document.getElementById('sx-list').scrollHeight > document.getElementById('sx-list').clientHeight,
+      };
+    });
+    expect(layout).toEqual({ overlaps: 0, scrolls: true });
+  } finally { await app.close(); fs.rmSync(homeDir, { recursive: true, force: true }); }
+});
+
 test('the shared detail panel stays full width when the status panel is collapsed', async () => {
   const homeDir = makeIsolatedHome();
   const app = await electron.launch({

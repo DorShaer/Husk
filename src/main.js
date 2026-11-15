@@ -1,7 +1,7 @@
 // Husk: Electron main process.
 // Wraps a configurable agent CLI via node-pty and exposes pages: chat, skills, sessions, files, preferences.
 
-const { app, BrowserWindow, ipcMain, shell, dialog, Menu, nativeTheme } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, Menu, nativeTheme, protocol } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -31,13 +31,19 @@ const { resolveInside, isInside, realParentInside, realPathInside } = require('.
 const { openCommand: bgOpenCommand, controlArgs: bgControlArgs, controlFailure: bgControlFailure } = require('./lib/bg-agent-open');
 const { isLive: agentIsLive } = require('./lib/agent-state');
 const { createChatRuntime } = require('./lib/chat-runtime');
+const UsageMonitor = require('./lib/usage-monitor');
 const { createBrain, FILE_MAX_BYTES: BRAIN_FILE_MAX_BYTES, withoutContext: withoutBrainContext } = require('./lib/brain');
 const { deepFirstUserMessage } = require('./lib/session-head');
+const { listClaudeTranscripts, realPath: realSessionPath } = require('./lib/session-scan');
 const { createChatSessionRegistry } = require('./lib/chat-session-registry');
 const { transportFor: chatTransportFor, commandSessionId: chatCommandSessionId } = require('./lib/chat-transport');
 const { transcriptToEvents } = require('./lib/transcript-replay');
+const { createTranscriptStore, transcriptId, pruneDir, writePrivate } = require('./lib/chat-transcript-store');
+const { buildHandoff } = require('./lib/handoff');
 const { issueUrl } = require('./lib/feedback-url');
 const { sanitizeZoom } = require('./lib/ui-zoom');
+const themes = require('./lib/themes');
+const bgImage = require('./lib/background-image');
 const Subagents = require('./lib/subagents');
 const StatuslineTrust = require('./lib/statusline-trust');
 const { parseAgentMd } = require('./lib/agent-md');
@@ -59,7 +65,7 @@ const { parsePorcelain } = require('./lib/git-porcelain');
 const { parseGitStatus, groupBoard } = require('./lib/workspace-state');
 const { getAdapter: getMcpAdapter } = require('./lib/mcp');
 const SharedMcp = require('./lib/mcp/shared');
-const { deriveCopilotSessionTitleFromEventsText } = require('./lib/copilot-session-title');
+const { deriveCopilotSessionTitleFromEventsText, copilotUserMessages } = require('./lib/copilot-session-title');
 
 // A GUI-launched Electron app inherits a minimal PATH that omits the
 // npm-global, homebrew, and bun install directories where agent CLIs live.
@@ -149,6 +155,7 @@ const HOME = os.homedir();
 const COPILOT_DIR = process.env.COPILOT_HOME || path.join(HOME, '.copilot');
 const CONFIG_DIR = path.join(HOME, '.config', 'husk');
 const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
+const BACKGROUNDS_DIR = path.join(CONFIG_DIR, 'backgrounds');
 const HUSK_PROMPTS_DIR = path.join(CONFIG_DIR, 'prompts');
 const SHARED_SKILLS_DIR = path.join(HOME, '.agents', 'skills');
 const DISABLED_SHARED_SKILLS_DIR = path.join(CONFIG_DIR, 'skills-disabled');
@@ -158,8 +165,22 @@ function prepareSharedSkills() {
   catch (err) { console.warn('[husk] could not prepare shared skills:', err.message); return SharedSkills.skillLocations(HOME); }
 }
 
+// The command of the focused tab's own agent. A tab with no agent of its own
+// (none started yet, or a plain shell) reads as the configured default.
+function activeAgentCommand(tabId) {
+  const s = (tabId && sessions.get(tabId)) || activeSession();
+  const own = s && s.agentCommand ? String(s.agentCommand).trim() : '';
+  return own && own !== userShell() ? own : String(config.agentCommand || 'claude').trim();
+}
+
+function userShell() {
+  return (typeof process.env.SHELL === 'string' && process.env.SHELL)
+    ? process.env.SHELL
+    : (process.platform === 'win32' ? 'powershell.exe' : '/bin/bash');
+}
+
 function getAgentKind() {
-  const cmd = (config.agentCommand || 'claude').trim().split(/\s+/)[0].toLowerCase();
+  const cmd = activeAgentCommand().split(/\s+/)[0].toLowerCase();
   // A claude-* alias is claude (see transportFor / activeAgentName).
   return (cmd === 'claude' || /^claude[-_]/.test(cmd)) ? 'claude' : 'generic';
 }
@@ -326,6 +347,10 @@ const DEFAULT_CONFIG = {
   // already has, via the pin in loadConfig.
   theme: 'light',
   accent: 'indigo',
+  // The colour behind the 'custom' accent, as #rrggbb.
+  accentCustom: null,
+  // The stored background image: { hash, ext, dim, blur }, or null for none.
+  background: null,
   railExpanded: true,
   // The Crew chat layout starts with the status panel folded away; the
   // panel toggle saves the choice. An existing install keeps its open panel
@@ -362,24 +387,11 @@ const DEFAULT_CONFIG = {
 // keeps the look it is already displaying.
 const PRE_EXISTING_THEME = 'midnight';
 
-// Themes whose --term-light token is 1 in styles.css. The renderer derives the
-// light/dark family from that token once the stylesheet is live; the window and
-// the preload need the answer before any of that exists, so it is mirrored here.
-const LIGHT_THEMES = new Set(['light', 'sepia']);
-// Each theme's --bg, used for the window's own paint. Only the two families are
-// needed: the window is only visible behind the app for the first frame.
-const THEME_BG = { light: '#fafafa', sepia: '#f3ead6' };
-const DARK_BG = '#0c0a09';
-
 // The window frame the desktop draws (title bar, its buttons) follows the app's
 // own theme rather than the desktop's, so a dark Husk does not sit under a
 // light grey bar.
 function syncNativeTheme() {
-  try { nativeTheme.themeSource = LIGHT_THEMES.has(config.theme) ? 'light' : 'dark'; } catch (_) {}
-}
-
-function themeBackground(theme) {
-  return THEME_BG[theme] || (LIGHT_THEMES.has(theme) ? THEME_BG.light : DARK_BG);
+  try { nativeTheme.themeSource = themes.isLightTheme(config.theme) ? 'light' : 'dark'; } catch (_) {}
 }
 
 function loadConfig() {
@@ -413,6 +425,16 @@ function saveConfig(cfg) {
 }
 
 let config = loadConfig();
+config.background = bgImage.sanitizeBackground(config.background);
+const installHandlers = new Map();
+let installFoundation;
+function registerInstallHandler(channel, handler, reviewed = true) {
+  installHandlers.set(channel, handler);
+  ipcMain.handle(channel, (event, payload = {}) => reviewed
+    ? installFoundation.reviewInstall(channel, payload, handler, event)
+    : handler(event, payload));
+}
+
 
 // ─── Framework bootstrap (packaged binaries) ─────────────────────────────────
 // A packaged binary has no install.sh, so libs/lifeos is copied into ~/.claude/
@@ -529,13 +551,12 @@ function readClaudeOauthToken() {
 // Hostname and path are literals, the cache write copies a fixed allowlist of
 // fields each coerced to a primitive, and the destination path is fixed.
 // Requests past 5s are dropped.
-function _coerceISOTimestamp(s) {
-  if (typeof s !== 'string') return '';
-  // RFC 3339-ish timestamp: digits, dashes, T, colons, dot, plus, Z.
-  return /^[0-9T:\-+.Z]{1,40}$/.test(s) ? s : '';
-}
+// The endpoint is read only while the preference names it as the source of
+// plan-limit numbers.
+function planEndpointEnabled() { return config.planUsageSource !== 'cli'; }
 
 function refreshAnthropicUsageCache() {
+  if (!planEndpointEnabled()) return;
   const token = readClaudeOauthToken();
   if (!token) return;
   const https = require('https');
@@ -563,41 +584,15 @@ function refreshAnthropicUsageCache() {
         if (res.statusCode !== 200) return;
         const data = JSON.parse(body);
         if (!data || typeof data !== 'object' || !data.five_hour) return;
-        const fh = data.five_hour || {};
-        const sd = data.seven_day || null;
         const cacheDir = path.join(CLAUDE_DIR, 'MEMORY', 'STATE');
         fs.mkdirSync(cacheDir, { recursive: true });
         const cachePath = path.join(cacheDir, 'usage-cache.json');
-        // Carry scalar fields forward from a prior write: ws_cost_dollars and
-        // session_cost come from a stop hook rather than from every render.
-        let priorWsDollars = 0;
-        let priorSessionCost = '';
-        try {
-          const prior = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
-          if (prior && typeof prior.ws_cost_dollars !== 'undefined') {
-            priorWsDollars = String(prior.ws_cost_dollars).slice(0, 16);
-          }
-          if (prior && typeof prior.session_cost === 'string') {
-            priorSessionCost = prior.session_cost.slice(0, 32);
-          }
-        } catch (_) {}
-        const wsCents = data.workspace_cost && typeof data.workspace_cost.month_used_cents === 'number'
-          ? data.workspace_cost.month_used_cents
-          : null;
-        const wsCostDollars = wsCents !== null ? (wsCents / 100).toFixed(2) : priorWsDollars;
-        const sessionCost = typeof data.session_cost === 'string'
-          ? data.session_cost.slice(0, 32)
-          : priorSessionCost;
+        // ws_cost_dollars and session_cost carry forward from a prior write:
+        // they come from a stop hook rather than from every render.
+        let prior = null;
+        try { prior = JSON.parse(fs.readFileSync(cachePath, 'utf8')); } catch (_) {}
         // Allowlisted, type-coerced fields only.
-        const cache = {
-          usage_5h: Number(fh.utilization || 0),
-          usage_7d: Number(sd && sd.utilization || 0),
-          reset_5h_clock: _coerceISOTimestamp(fh.resets_at),
-          reset_7d_clock: sd ? _coerceISOTimestamp(sd.resets_at) : '',
-          ws_cost_dollars: String(wsCostDollars).slice(0, 16),
-          session_cost: sessionCost,
-          fetched_at: new Date().toISOString(),
-        };
+        const cache = UsageMonitor.planCacheFields(data, prior, new Date().toISOString());
         fs.writeFileSync(cachePath, JSON.stringify(cache, null, 2), { mode: 0o600 });
       } catch (_) {}
     });
@@ -805,7 +800,7 @@ function createWindow() {
     minHeight: 520,
     // The window paints this before the renderer has run, so it has to match the
     // theme about to be applied or the app opens on a frame of the wrong colour.
-    backgroundColor: themeBackground(config.theme),
+    backgroundColor: themes.themeBackground(config.theme),
     title: 'Husk',
     titleBarStyle: 'hiddenInset',
     // Off macOS the menu is a second bar above the app. It stays out of the
@@ -1147,6 +1142,13 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
         try { fs.mkdirSync(overrideCwd, { recursive: true }); cwd = overrideCwd; } catch (_) {}
       }
     } catch (_) {}
+  }
+
+  // The user's standing rules ride the same channel as the session directives.
+  if (!isSubcommand) {
+    const ruled = AgentInject.withRules(injectionPlan, brain.rules({ scope: cwd }).lines);
+    (injectionPlan.args || []).forEach((a, i) => { const at = agentArgs.indexOf(a); if (at >= 0) agentArgs[at] = ruled.args[i]; });
+    injectionPlan = ruled;
   }
 
   agentArgs = withCopilotContextDir({
@@ -1645,9 +1647,7 @@ ipcMain.handle('pty:start', (_e, { cols, rows, command, cwd, sessionId, resumeLa
 // List the chat PTYs that are still alive, so a reloaded renderer can rebuild
 // its tabs and reattach instead of orphaning them and minting a fresh chat.
 ipcMain.handle('terminal:defaults', () => {
-  const shell = (typeof process.env.SHELL === 'string' && process.env.SHELL)
-    ? process.env.SHELL
-    : (process.platform === 'win32' ? 'powershell.exe' : '/bin/bash');
+  const shell = userShell();
   // Same priority the chat PTY uses: active project, then the configured
   // working directory, then home.
   let dir;
@@ -1828,23 +1828,120 @@ const chatSessionRegistry = createChatSessionRegistry({
   seed: () => Object.values((config && config.lastClaudeSessions) || {}),
 });
 
+// The user's own daily count: tokens and billed dollars the chats report per
+// turn, kept per local day in the config dir.
+const DAILY_USAGE_PATH = path.join(CONFIG_DIR, 'usage-daily.json');
+let dailyUsage = null;
+const dailyTabs = new Map(); // tabId -> { subscription, total }
+function readDailyUsage() {
+  if (!dailyUsage) {
+    try { dailyUsage = JSON.parse(fs.readFileSync(DAILY_USAGE_PATH, 'utf8')); } catch (_) { dailyUsage = {}; }
+  }
+  dailyUsage = UsageMonitor.dailyCounter(dailyUsage, Date.now());
+  return dailyUsage;
+}
+function countDailyUsage(tabId, event) {
+  if (!event) return;
+  const { state, tokens, dollars } = UsageMonitor.usageDelta(dailyTabs.get(tabId), event);
+  dailyTabs.set(tabId, state);
+  if (!tokens && !dollars) return;
+  dailyUsage = UsageMonitor.addDaily(readDailyUsage(), { tokens, dollars }, Date.now());
+  try {
+    fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(DAILY_USAGE_PATH, JSON.stringify(dailyUsage), { mode: 0o600 });
+  } catch (_) {}
+  try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('usage:daily', dailyUsage); } catch (_) {}
+}
+// Plan numbers for the bell, whichever tab is active. Empty with the endpoint off.
+ipcMain.handle('usage:get', () => {
+  const cache = planEndpointEnabled() ? readJSON(path.join(CLAUDE_DIR, 'MEMORY', 'STATE', 'usage-cache.json'), null) : null;
+  const plan = cache && cache.fetched_at ? {
+    agent: 'claude',
+    at: Date.parse(cache.fetched_at) || 0,
+    windows: [
+      { window: 'short', pct: Number(cache.usage_5h) || 0, resetsAt: Date.parse(cache.reset_5h_clock) || 0 },
+      { window: 'weekly', pct: Number(cache.usage_7d) || 0, resetsAt: Date.parse(cache.reset_7d_clock) || 0 },
+    ],
+  } : null;
+  return { plan, daily: readDailyUsage() };
+});
+
 const chatRuntime = createChatRuntime({
   spawn: require('child_process').spawn,
   buildEnv: chatEnv,
   resolveExe: resolveAgentExe,
+  recordPrompt: (tabId, event) => { const t = chatTranscripts.get(tabId); if (t) transcriptStore.append(t.id, event); },
   emit: (tabId, event) => {
     try { if (event && event.type === 'session' && event.sessionId) chatSessionRegistry.add(event.sessionId); } catch (_) {}
     try { brainObserve(tabId, event); } catch (_) {}
+    try { const t = chatTranscripts.get(tabId); if (t) transcriptStore.append(t.id, event); } catch (_) {}
+    try { countDailyUsage(tabId, event); } catch (_) {}
     try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('chat:event', { tabId, event }); } catch (_) {}
   },
   emitExit: (tabId, code) => {
     try { brainTurnOver(tabId); } catch (_) {}
     try { dropChatShadowSession(tabId); } catch (_) {}
+    dailyTabs.delete(tabId);
     try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('chat:exit', { tabId, code }); } catch (_) {}
   },
   appVersion: app.getVersion(),
   log: (line) => { try { console.error(`[chat] ${line}`); } catch (_) {} },
 });
+
+// Every chat's events are kept on disk, so a discussion can be read back and
+// continued with another CLI whether or not that CLI keeps a session file.
+const transcriptStore = createTranscriptStore({ dir: path.join(CONFIG_DIR, 'transcripts'), fs });
+const HANDOFFS_DIR = path.join(CONFIG_DIR, 'handoffs');
+app.on('before-quit', () => transcriptStore.flushAll());
+// tabId -> { id, agent, cwd }: the transcript the tab's chat is written to.
+const chatTranscripts = new Map();
+// tabId -> { context, from }: a handoff waiting for the tab's first prompt.
+const pendingHandoffs = new Map();
+
+function agentLabel(command) {
+  const base = agentBaseName(command);
+  const family = (base === 'claude' || /^claude[-_]/.test(base)) ? 'claude' : base;
+  const def = KNOWN_AGENTS.find((a) => a.command === family);
+  return def ? def.label : base;
+}
+
+function pruneTranscripts() {
+  const days = config.transcriptRetentionDays === undefined ? 30 : Number(config.transcriptRetentionDays);
+  try { transcriptStore.prune(days); } catch (_) {}
+  try { pruneDir(fs, HANDOFFS_DIR, days); } catch (_) {}
+}
+
+// The events of the discussion a handoff starts from: a chat tab of this
+// window, or a past session named by its CLI and session id.
+function handoffSource(src) {
+  const o = src && typeof src === 'object' ? src : {};
+  if (o.tabId) {
+    const t = chatTranscripts.get(String(o.tabId));
+    if (!t) return { ok: false, error: 'this chat has no transcript yet' };
+    const live = chatRuntime.list().find((c) => c.tabId === String(o.tabId));
+    const kept = transcriptStore.read(t.id);
+    const events = kept.length ? kept : (live && live.events) || [];
+    return { ok: true, events, from: agentLabel(t.agent), cwd: t.cwd };
+  }
+  const agent = agentBaseName(String(o.agent || ''));
+  const kept = transcriptId(agent, o.sessionId);
+  if (kept && transcriptStore.has(kept)) return { ok: true, events: transcriptStore.read(kept), from: agentLabel(agent), cwd: typeof o.cwd === 'string' ? o.cwd : '' };
+  const hist = readSessionHistory({ agent, sessionId: o.sessionId, cwd: o.cwd });
+  if (!hist.ok) return hist;
+  return { ok: true, events: hist.events, from: agentLabel(agent), cwd: typeof o.cwd === 'string' ? o.cwd : '' };
+}
+
+// -> { ok, mode: 'inline' | 'file', context, from, turns } | { ok: false, error }
+function prepareHandoff(src) {
+  let found;
+  try { found = handoffSource(src); } catch (err) { return { ok: false, error: err.message }; }
+  if (!found.ok) return found;
+  return buildHandoff(found.events, {
+    from: found.from,
+    cwd: found.cwd,
+    save: (text) => writePrivate(fs, HANDOFFS_DIR, `${Date.now().toString(36)}-${crypto.randomBytes(6).toString('hex')}.md`, text),
+  });
+}
 
 // chatCwd applies spawnPty's cwd policy: explicit override, else the active
 // project, else the configured agentCwd, else HOME.
@@ -1890,7 +1987,7 @@ function dropChatShadowSession(tabId) {
   }
 }
 
-ipcMain.handle('chat:start', async (_e, { tabId, command, cwd, replay } = {}) => {
+ipcMain.handle('chat:start', async (_e, { tabId, command, cwd, replay, handoff } = {}) => {
   const cmd = (command || config.agentCommand || 'claude').trim();
   const dir = chatCwd(cwd);
   const transport = chatTransportFor(cmd);
@@ -1910,20 +2007,41 @@ ipcMain.handle('chat:start', async (_e, { tabId, command, cwd, replay } = {}) =>
   const byokOpenai = (config.agentVendor === 'openai' && config.agentBaseUrl && config.agentApiKey && config.agentModel)
     ? { baseUrl: String(config.agentBaseUrl).trim(), apiKey: String(config.agentApiKey).trim(), model: String(config.agentModel).trim() }
     : null;
+  // Read before the start: a tab handing off to itself is about to lose its log.
+  const carried = handoff ? prepareHandoff(handoff) : null;
+  pendingHandoffs.delete(tabId);
+  dailyTabs.set(tabId, { awaitingBaseline: !!(seed && seed.length) });
   const res = await chatRuntime.start({ tabId, command: cmd, cwd: dir, claudeSessionId, keepLog: seed, openai: byokOpenai });
   if (res && res.ok) {
     chatShadowSession(tabId, dir, res.sessionId || claudeSessionId, cmd);
     if (transport === 'claude') { try { chatSessionRegistry.add(res.sessionId || claudeSessionId); } catch (_) {} }
+    const agent = agentBaseName(cmd);
+    const id = transcriptId(agent, res.sessionId || claudeSessionId || crypto.randomUUID());
+    if (id) {
+      chatTranscripts.set(tabId, { id, agent, cwd: dir });
+      // A resumed chat's earlier turns open its transcript when it has none.
+      if (seed && !transcriptStore.has(id)) { for (const ev of seed) transcriptStore.append(id, ev); transcriptStore.flush(id); }
+    }
+    if (carried) {
+      if (carried.ok) pendingHandoffs.set(tabId, { context: carried.context, from: carried.from });
+      res.handoff = carried.ok ? { ok: true, mode: carried.mode, from: carried.from, turns: carried.turns } : { ok: false, error: carried.error };
+    }
   }
   return res;
+});
+// The handoff text itself, for a CLI that only runs in a terminal: the
+// renderer pastes it into that CLI's prompt.
+ipcMain.handle('chat:handoff', (_e, src = {}) => {
+  const r = prepareHandoff(src);
+  return r.ok ? { ok: true, mode: r.mode, context: r.context, from: r.from, turns: r.turns } : r;
 });
 
 // Who the claude CLI is signed in as, for the notice after a sign-in finishes.
 // Read from the CLI itself rather than its credential files.
-ipcMain.handle('auth:status', async () => {
-  if (activeAgentName() !== 'claude') return { ok: false, error: 'The active CLI has no sign-in status to report' };
+ipcMain.handle('auth:status', async (_e, { tabId } = {}) => {
+  if (chatTransportFor(activeAgentCommand(tabId)) !== 'claude') return { ok: false, error: 'The active CLI has no sign-in status to report' };
   const env = buildAgentEnv();
-  const exe = resolveAgentExe('claude', env.PATH);
+  const exe = resolveAgentExe(activeAgentCommand(tabId).split(/\s+/)[0], env.PATH);
   try {
     const out = await new Promise((resolve, reject) => {
       execFile(exe, ['auth', 'status', '--json'], { env, timeout: 15000, maxBuffer: 256 * 1024 }, (err, stdout) => {
@@ -1951,7 +2069,8 @@ ipcMain.handle('chat:list', () => ({ ok: true, sessions: chatRuntime.list() }));
 // Only the tail is read: the replay keeps the last few thousand events anyway,
 // and refusing the file used to drop the resume back to Terminal view.
 const HISTORY_TAIL_BYTES = 12 * 1024 * 1024;
-ipcMain.handle('chat:history', (_e, { agent, sessionId, cwd } = {}) => {
+ipcMain.handle('chat:history', (_e, opts = {}) => readSessionHistory(opts));
+function readSessionHistory({ agent, sessionId, cwd } = {}) {
   const a = String(agent || (config.agentCommand || 'claude')).trim().split(/\s+/)[0].toLowerCase();
   const id = String(sessionId || '');
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{3,120}$/.test(id)) return { ok: false, error: 'bad session id' };
@@ -2005,7 +2124,87 @@ ipcMain.handle('chat:history', (_e, { agent, sessionId, cwd } = {}) => {
   } catch (err) {
     return { ok: false, error: err.code === 'ENOENT' ? 'no session log yet' : err.message };
   }
+}
+
+// ─── Background image ────────────────────────────────────────────────────────────
+// The picked file is read and checked here, re-encoded in a sandboxed helper
+// window, and only the re-encoded copy is stored and served.
+
+function reencodeBackground(bytes, mime) {
+  return new Promise((resolve, reject) => {
+    const helper = new BrowserWindow({
+      show: false,
+      width: 64,
+      height: 64,
+      webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, devTools: false },
+    });
+    let timer = null;
+    const finish = (settle, value) => {
+      clearTimeout(timer);
+      if (!helper.isDestroyed()) helper.destroy();
+      settle(value);
+    };
+    const fail = () => finish(reject, new Error('That image could not be read.'));
+    timer = setTimeout(fail, 60_000);
+    helper.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    helper.webContents.on('will-navigate', (e) => e.preventDefault());
+    helper.webContents.on('render-process-gone', fail);
+    const call = `encodeBackground(${JSON.stringify(bytes.toString('base64'))}, ${JSON.stringify(mime)}, ${bgImage.MAX_SIDE})`;
+    helper.loadFile(path.join(__dirname, 'renderer', 'bg-encode.html'))
+      .then(() => helper.webContents.executeJavaScript(call))
+      .then((encoded) => finish(resolve, Buffer.from(String(encoded), 'base64')), fail);
+  });
+}
+
+function setBackground(next) {
+  config = { ...config, background: next };
+  saveConfig(config);
+  bgImage.pruneStored(BACKGROUNDS_DIR, next ? `${next.hash}.${next.ext}` : null);
+  return { ok: true, background: next };
+}
+
+// The file comes from the system picker, never from a path the renderer names.
+ipcMain.handle('background:choose', async () => {
+  const picked = await dialog.showOpenDialog(mainWindow, {
+    title: 'Choose a background image',
+    properties: ['openFile'],
+    filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
+  });
+  if (picked.canceled || !picked.filePaths.length) return { ok: true, canceled: true, background: config.background };
+  try {
+    const source = bgImage.readRegularFile(picked.filePaths[0]);
+    const { mime } = bgImage.inspectImage(source);
+    const stored = bgImage.storeImage(BACKGROUNDS_DIR, await reencodeBackground(source, mime));
+    return setBackground(bgImage.sanitizeBackground({ ...config.background, ...stored }));
+  } catch (err) {
+    return { ok: false, error: err.message, background: config.background };
+  }
 });
+ipcMain.handle('background:remove', () => setBackground(null));
+ipcMain.handle('background:setDisplay', (_e, { dim, blur } = {}) => {
+  if (!config.background) return { ok: true, background: null };
+  return setBackground(bgImage.sanitizeBackground({ ...config.background, dim, blur }));
+});
+
+// Answers husk-bg requests with a stored image and nothing else.
+function serveBackground(request) {
+  const file = request.method === 'GET' ? bgImage.storedPathForUrl(BACKGROUNDS_DIR, request.url) : null;
+  if (!file) return new Response(null, { status: 404 });
+  try {
+    return new Response(bgImage.readRegularFile(file), {
+      headers: {
+        'content-type': file.endsWith('.png') ? 'image/png' : 'image/jpeg',
+        'x-content-type-options': 'nosniff',
+        'cache-control': 'no-store',
+      },
+    });
+  } catch (_) {
+    return new Response(null, { status: 404 });
+  }
+}
+protocol.registerSchemesAsPrivileged([{ scheme: bgImage.SCHEME, privileges: { standard: true } }]);
+
+
 // ─── Brain ───────────────────────────────────────────────────────────────────
 // What Husk remembers, kept in one file under the config directory (see
 // src/lib/brain.js). A prompt wakes the memories that bear on it and carries
@@ -2082,7 +2281,11 @@ ipcMain.handle('chat:prompt', async (_e, { tabId, text, images } = {}) => {
   const command = ask.trimStart().startsWith('/');
   const scope = brainScope(tabId);
   const found = command ? { hits: [], context: '' } : brain.recall(ask, { scope });
-  const res = await chatRuntime.prompt({ tabId, text, images, context: found.context });
+  // A handoff rides ahead of the first real prompt, once.
+  const carried = command ? null : pendingHandoffs.get(tabId);
+  const context = [found.context, carried && carried.context].filter(Boolean).join('\n\n');
+  const res = await chatRuntime.prompt({ tabId, text, images, context, notice: carried ? `Continued from ${carried.from}` : '' });
+  if (res && res.ok && carried) pendingHandoffs.delete(tabId);
   if (res && res.ok && !command) {
     const handed = found.hits.map((h) => h.id);
     brainTurns.set(tabId, { prompt: ask, scope, cur: '', last: '', handed, touching: [], heard: '', thoughtAt: 0 });
@@ -2104,6 +2307,18 @@ ipcMain.handle('brain:addNote', (_e, { text, global } = {}) => {
   if (r.ok) brainActivity('learn', [r.node.id]);
   return r;
 });
+// A rule applies everywhere unless its author limits it to the open workspace.
+ipcMain.handle('brain:addRule', (_e, { text, workspace } = {}) => {
+  const r = brain.addRule({ text, scope: workspace ? chatCwd(null) : '' });
+  if (r.ok) brainActivity('learn', [r.node.id]);
+  return r;
+});
+ipcMain.handle('brain:rule', (_e, { id, rule, on, workspace } = {}) => brain.setRule(id, Object.assign(
+  {},
+  typeof rule === 'boolean' ? { rule } : {},
+  typeof on === 'boolean' ? { on } : {},
+  typeof workspace === 'boolean' ? { scope: workspace ? chatCwd(null) : '' } : {},
+)));
 // The files come from the system picker, never from a path the renderer names.
 ipcMain.handle('brain:addFiles', async (_e, { global } = {}) => {
   const picked = await dialog.showOpenDialog(mainWindow, { title: 'Teach the Brain from files', properties: ['openFile', 'multiSelections'] });
@@ -3670,7 +3885,9 @@ async function doStartRun(runId, payload, workspaceRoot) {
     // directive (shared goal + own lane); other runs inject the goal itself.
     const injectText = (typeof payload.injectGoal === 'string' && payload.injectGoal) ? payload.injectGoal : goal;
     whenRunPtyReady(runId, 6000).then(() => {
-      const ok = injectGoalToRunPty(runId, buildAutopilotGoal(injectText));
+      // A run works in its own worktree, so the rules of the workspace it came from ride its goal.
+      const standing = AgentInject.rulesText(brain.rules({ scope: workspaceRoot }).lines);
+      const ok = injectGoalToRunPty(runId, buildAutopilotGoal(injectText) + (standing ? '\n' + standing : ''));
       const rs = runs.get(runId);
       if (ok && rs) {
         // The TUI may still be mounting when the paste lands, eating the
@@ -4841,7 +5058,7 @@ ipcMain.handle('models:list', async (_e, opts = {}) => discoverModelCatalog({ re
 
 ipcMain.handle('config:get', () => ({ ...config }));
 // Config keys the renderer may not write.
-const CONFIG_KEYS_MAIN_OWNS = new Set(['statuslineTrust']);
+const CONFIG_KEYS_MAIN_OWNS = new Set(['statuslineTrust', 'background', 'scannerPath', 'trustedPublishers']);
 
 ipcMain.handle('config:set', (_e, partial) => {
   const incoming = {};
@@ -5115,12 +5332,12 @@ ipcMain.handle('mcp:catalog', () => MCP_CATALOG);
 // one Husk MCP set is mirrored to every write-capable vendor adapter, so
 // switching claude <-> copilot <-> gemini does not require reinstalling MCPs.
 function activeMcpAdapter() {
-  return getMcpAdapter(config.agentCommand);
+  return getMcpAdapter(activeAgentCommand());
 }
 
 ipcMain.handle('mcp:list', () => {
   const active = activeMcpAdapter();
-  const result = SharedMcp.list(config.agentCommand);
+  const result = SharedMcp.list(activeAgentCommand());
   return {
     ...result,
     agent: active.agent,
@@ -5144,7 +5361,7 @@ const projectMcpDir = () => path.join(app.getPath('userData'), 'project-mcp');
 function resolveProjectMcp(cwd) {
   const servers = (() => {
     try {
-      const r = SharedMcp.list(config.agentCommand, { sync: false });
+      const r = SharedMcp.list(activeAgentCommand(), { sync: false });
       return (r && Array.isArray(r.servers)) ? r.servers : [];
     } catch (_) { return []; }
   })();
@@ -5172,7 +5389,7 @@ ipcMain.handle('projectMcp:get', (_e, cwd) => {
     effective: resolved.servers.map((s) => s.id),
     customized: resolved.customized,
     // Tells the UI whether the active CLI can honor a per-folder set at all.
-    supported: !!ProjectMcp.agentKind(config.agentCommand),
+    supported: !!ProjectMcp.agentKind(activeAgentCommand()),
   };
 });
 
@@ -5214,14 +5431,14 @@ ipcMain.handle('mcp:update', (_e, payload = {}) => {
   return SharedMcp.update(oldId || id, { ...rest, newId: id });
 });
 ipcMain.handle('mcp:remove', (_e, id) => SharedMcp.remove(id));
-ipcMain.handle('mcp:clone', (_e, id) => SharedMcp.clone(id, config.agentCommand));
-ipcMain.handle('mcp:toggle', (_e, id) => SharedMcp.toggle(id, config.agentCommand));
+ipcMain.handle('mcp:clone', (_e, id) => SharedMcp.clone(id, activeAgentCommand()));
+ipcMain.handle('mcp:toggle', (_e, id) => SharedMcp.toggle(id, activeAgentCommand()));
 
 // addMany takes a list of canonical payloads (each already split into
 // command/args + transport per the buildServerEntry contract) and tries
 // to add() each one. Returns a per-id status map so the renderer can
 // show which succeeded vs. which already existed vs. which errored.
-ipcMain.handle('mcp:addMany', (_e, payload = {}) => {
+registerInstallHandler('mcp:addMany', (_e, payload = {}) => {
   const items = Array.isArray(payload && payload.items) ? payload.items : [];
   if (!items.length) return { ok: false, error: 'no items supplied' };
   return SharedMcp.addMany(items);
@@ -5440,7 +5657,7 @@ function parseAgentSessionUsage(agentCmd, tail) {
 // stays on the MCP page where its async probe runs.
 function mcpSummary() {
   try {
-    const r = SharedMcp.list(config.agentCommand, { sync: false });
+    const r = SharedMcp.list(activeAgentCommand(), { sync: false });
     const servers = (r && Array.isArray(r.servers)) ? r.servers : [];
     return {
       count: servers.length,
@@ -5453,8 +5670,7 @@ function mcpSummary() {
 ipcMain.handle('stats:get', () => {
   // The focused tab's own agent, so a codex tab beside a claude tab reads as
   // codex. The configured default stands in until a tab has started one.
-  const focused = activeSession();
-  const agentLine = ((focused && focused.agentCommand) || config.agentCommand || 'claude').trim();
+  const agentLine = activeAgentCommand();
   const agentCmd = agentBaseName(agentLine);
   // The model, per-session context and plan-usage caches come from ~/.claude
   // state and describe the Claude CLI only, so they are read solely when the
@@ -5488,7 +5704,7 @@ ipcMain.handle('stats:get', () => {
 
   // Reads from the same caches the statusline-command.sh consumes
   const stateDir = path.join(CLAUDE_DIR, 'MEMORY', 'STATE');
-  const usage = agentIsClaude ? readJSON(path.join(stateDir, 'usage-cache.json'), {}) : {};
+  const usage = agentIsClaude && planEndpointEnabled() ? readJSON(path.join(stateDir, 'usage-cache.json'), {}) : {};
   const location = readJSON(path.join(stateDir, 'location-cache.json'), {});
   const weather = readJSON(path.join(stateDir, 'weather-cache.json'), {});
 
@@ -5564,6 +5780,7 @@ ipcMain.handle('stats:get', () => {
       extra_limit: usage.extra_limit_dollars || 0,
       session_cost: usage.session_cost || '',
       cache_present: Object.keys(usage).length > 0,
+      plan_source_off: !planEndpointEnabled(),
       // Session model/turns read from each agent's own transcript, so the figure
       // belongs to the active agent: claude from ~/.claude, copilot from
       // ~/.copilot.
@@ -6369,7 +6586,7 @@ function wfxGitRoot(abs) {
 // anyway, since two people never share an API key.
 function wfxLocalMcpServers() {
   try {
-    const r = SharedMcp.list(config.agentCommand, { sync: false });
+    const r = SharedMcp.list(activeAgentCommand(), { sync: false });
     const servers = (r && Array.isArray(r.servers)) ? r.servers : [];
     return servers
       .filter((s) => s && s.enabled !== false)
@@ -6695,7 +6912,7 @@ ipcMain.handle('workflows:preflight', (_e, payload = {}) => {
 //
 // One call rather than a create followed by a sidecar write, so there is never a
 // window where the workflow exists and its row does not.
-ipcMain.handle('workflows:install', (_e, payload = {}) => {
+registerInstallHandler('workflows:install', (_e, payload = {}) => {
   const p = (payload && typeof payload === 'object') ? payload : {};
   const checked = WorkflowArtifact.validateArtifact(p.artifact);
   if (!checked.ok) return Object.assign({ stage: 'validate' }, checked);
@@ -8565,7 +8782,7 @@ ipcMain.handle('repoAgents:scan', async (_e, payload = {}) => {
   } catch (err) { return { ok: false, error: RepoAgents.friendlyScanError(err) }; }
 });
 
-ipcMain.handle('repoAgents:install', (_e, payload = {}) => {
+registerInstallHandler('repoAgents:install', (_e, payload = {}) => {
   const rootCheck = RepoAgents.validateLocalRoot((payload && payload.root) || '');
   if (!rootCheck.ok) return rootCheck;
   const root = rootCheck.root;
@@ -9089,7 +9306,7 @@ ipcMain.handle('projects:inspect', (_e, id) => {
     out.mcpRows = resolved.rows.filter((r) => r.on).slice(0, 24).map((r) => ({ id: r.id, source: r.source }));
     out.mcpExcluded = resolved.excluded.slice(0, 24);
     out.mcpCustomized = resolved.customized;
-    out.mcpSupported = !!ProjectMcp.agentKind(config.agentCommand);
+    out.mcpSupported = !!ProjectMcp.agentKind(activeAgentCommand());
   } catch (_) {}
   return out;
 });
@@ -9211,7 +9428,7 @@ ipcMain.handle('prompts:update', (_e, payload = {}) => {
 
 // Create a new Husk prompt. Always writes to HUSK_PROMPTS_DIR regardless of
 // agentKind. Skills are stored in the shared Agent Skills library.
-ipcMain.handle('prompts:create', (_e, payload = {}) => {
+registerInstallHandler('prompts:create', (_e, payload = {}) => {
   const { name, description, content } = payload;
   if (!name || !/^[a-z][a-z0-9-]*$/.test(name)) {
     return { ok: false, error: 'Name must be lowercase letters, digits, dashes; start with a letter.' };
@@ -9237,7 +9454,7 @@ ipcMain.handle('prompts:create', (_e, payload = {}) => {
   } catch (err) {
     return { ok: false, error: err.message };
   }
-});
+}, false);
 
 ipcMain.handle('skills:list', () => {
   try {
@@ -9266,7 +9483,7 @@ ipcMain.handle('skills:read', (_e, mdPath) => {
   catch (err) { return { ok: false, error: err.message }; }
 });
 
-ipcMain.handle('skills:create', (_e, { name, description, content }) => {
+registerInstallHandler('skills:create', (_e, { name, description, content }, bundleFiles) => {
   if (!name || !/^[a-z][a-z0-9-]*$/.test(name)) {
     return { ok: false, error: 'Name must be lowercase letters, digits, dashes; start with a letter.' };
   }
@@ -9282,14 +9499,20 @@ ipcMain.handle('skills:create', (_e, { name, description, content }) => {
     const dir = path.join(skillsDir, name);
     fs.mkdirSync(dir);
     const mdPath = path.join(dir, 'SKILL.md');
-    fs.writeFileSync(mdPath, md, { mode: 0o644 });
+    if (Array.isArray(bundleFiles)) {
+      for (const file of bundleFiles) {
+        const target = path.join(dir, file.path);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, file.content, { mode: 0o600, flag: 'wx' });
+      }
+    } else fs.writeFileSync(mdPath, md, { mode: 0o644 });
     prepareSharedSkills();
     return { ok: true, source: 'shared', id: name, path: dir, mdPath };
   } catch (err) {
     if (err && err.code === 'EEXIST') return { ok: false, error: `A skill named "${name}" already exists.` };
     return { ok: false, error: err.message };
   }
-});
+}, false);
 
 // Toggle a shared or legacy Claude skill (directory move) or a Husk prompt
 // (file rename). Renderer passes the item's `id` and `source` so we route
@@ -9374,7 +9597,7 @@ function copilotCacheDir() {
 }
 
 function activePluginContext() {
-  const agent = agentBaseName(config.agentCommand || 'claude');
+  const agent = agentBaseName(activeAgentCommand());
   if (agent === 'claude') return { agent, dir: CLAUDE_DIR, cacheDir: '' };
   if (agent === 'copilot') return { agent, dir: COPILOT_DIR, cacheDir: copilotCacheDir() };
   return null;
@@ -9425,7 +9648,7 @@ ipcMain.handle('plugins:run', (_e, payload = {}) => {
   // argv element with no shell.
   const argv = Plugins.buildPluginCliArgs(ctx.agent, verb, String(payload.id || ''));
   if (!argv) return { ok: false, error: 'invalid plugin action or identifier' };
-  const cmd = (config.agentCommand || 'claude').trim().split(/\s+/)[0];
+  const cmd = activeAgentCommand().split(/\s+/)[0];
   if (!isAllowedAgentCommand(cmd)) return { ok: false, error: `agent command "${cmd}" is not allowlisted` };
   return new Promise((resolve) => {
     let out = '';
@@ -9592,31 +9815,6 @@ function readHead(filePath, bytes) {
   return buf.toString('utf8', 0, n);
 }
 
-// Whether a transcript holds any human-typed turn, used to tell a real chat
-// (keep) from a purely SDK-driven background transcript (hide) when the 32KB
-// head was inconclusive. A real chat's first human turn can sit past the head
-// when an SDK context turn was prepended, so the whole file is scanned. Past the
-// cap a file is kept rather than hidden.
-const HUMAN_SCAN_CAP = 4 * 1024 * 1024;
-function transcriptHasHumanTurn(fullPath, fileSize) {
-  if (fileSize > HUMAN_SCAN_CAP) return true;
-  let text = '';
-  try { text = fs.readFileSync(fullPath, 'utf8'); } catch (_) { return true; }
-  return text.includes('"kind":"human"') || text.includes('"promptSource":"typed"');
-}
-
-// Both authorship markers at once, for a transcript whose first user line
-// outran the head window. Null past the cap, where the file is kept as a chat.
-function transcriptAuthorship(fullPath, fileSize) {
-  if (fileSize > HUMAN_SCAN_CAP) return null;
-  let text = '';
-  try { text = fs.readFileSync(fullPath, 'utf8'); } catch (_) { return null; }
-  return {
-    human: text.includes('"kind":"human"') || text.includes('"promptSource":"typed"'),
-    sdk: text.includes('"promptSource":"sdk"'),
-  };
-}
-
 // Agents append a title entry to the transcript once the conversation earns a
 // name, and further entries as they refine it. Both land wherever the
 // conversation had reached, which in a long session is far past the head.
@@ -9641,21 +9839,22 @@ const TITLE_DIALECTS = Object.freeze({
 });
 
 const titleScanCache = new Map(); // `${dialect}:${path}` -> { size, mtimeMs, scanned, title }
-const TITLE_CACHE_MAX = 300;
+const TITLE_CACHE_MAX = 1000;
 
-// Per-file read cache for the sessions:list poll (every 15s over up to 300
-// transcripts). Keyed on (path, size, mtime): an unchanged transcript answers
-// from memory instead of re-reading its head, tail, and whole-file authorship
-// scan each tick. Fields fill lazily; a changed file gets a fresh entry.
+// Per-file scratch for the sessions:list poll, which stats every transcript on
+// disk each tick. One entry per path, valid while the size and mtime hold, so
+// an unchanged transcript is classified and read once.
 const sessionFileCache = new Map();
-const SESSION_FILE_CACHE_MAX = 600;
+const SESSION_FILE_CACHE_MAX = 8000;
+// How many claude chats one listing returns.
+const SESSION_LIST_CAP = 300;
 function sessionFileReads(fullPath, st) {
-  const key = `${fullPath}:${st.size}:${st.mtimeMs}`;
-  let v = sessionFileCache.get(key);
-  if (v) return v;
+  const sig = `${st.size}:${st.mtimeMs}`;
+  let v = sessionFileCache.get(fullPath);
+  if (v && v.sig === sig) return v;
   if (sessionFileCache.size > SESSION_FILE_CACHE_MAX) sessionFileCache.clear();
-  v = {};
-  sessionFileCache.set(key, v);
+  v = { sig };
+  sessionFileCache.set(fullPath, v);
   return v;
 }
 
@@ -9845,7 +10044,7 @@ function readTail(filePath, bytes, fileSize) {
 // (like the title scan), so an appended megabyte blob cannot push the real turn
 // out of a tail window, and an unchanged file costs one stat.
 const lastTurnCache = new Map(); // path -> { size, mtimeMs, scanned, ms }
-const LAST_TURN_CACHE_MAX = 400;
+const LAST_TURN_CACHE_MAX = 1000;
 function lastActivityMs(filePath, fileSize, fallbackMs) {
   const prev = lastTurnCache.get(filePath);
   let fd;
@@ -10001,7 +10200,8 @@ function readCopilotSessionTitle(dir) {
       const b = Buffer.alloc(len);
       fs.readSync(fd, b, 0, len, 0);
       const raw = b.toString('utf8');
-      const value = { ...deriveCopilotSessionTitleFromEventsText(raw), autopilot: containsAutopilotCopilotText(raw) };
+      // An autopilot run is one whose own user turn opens with a marker.
+      const value = { ...deriveCopilotSessionTitleFromEventsText(raw), autopilot: copilotUserMessages(raw).some(isAutopilotCopilotText) };
       if (copilotTitleCache.size > COPILOT_CACHE_MAX) copilotTitleCache.clear();
       copilotTitleCache.set(dir, { sig, value });
       return value;
@@ -10061,19 +10261,6 @@ function isAutopilotCopilotText(text) {
     || /^Continue autonomously\./i.test(t)
     || /^Continue working toward the goal autonomously\./i.test(t)
     || /^No human is available to answer questions\./i.test(t);
-}
-
-function containsAutopilotCopilotText(text) {
-  const t = String(text || '');
-  return /\[AUTONOMOUS MODE\]/.test(t)
-    || /\[COLLAB TEAM\]/.test(t)
-    || /\[COLLAB INTEGRATION\]/.test(t)
-    || /You are an orchestrator planning a team of autonomous coding agents\b/.test(t)
-    || /Integrate the team's parallel work:/i.test(t)
-    || /\.husk-autopilot-status\.json/.test(t)
-    || /No human is available to answer questions\./i.test(t)
-    || /Continue autonomously\./i.test(t)
-    || /Continue working toward the goal autonomously\./i.test(t);
 }
 
 function isAutopilotCopilotSession(ws, eventTitle) {
@@ -10237,16 +10424,28 @@ function listCodexSessions() {
 const SESSION_LIST_AGENTS = ['claude', 'copilot', 'codex', 'gemini'];
 ipcMain.handle('sessions:list', (_e, opts = {}) => {
   const primary = listAgentSessions(opts);
+  if (opts?.selectedOnly === true) return primary;
   const sessions = [];
   let hidden = 0;
   for (const name of SESSION_LIST_AGENTS) {
     let r = null;
     try { r = name === primary.agent ? primary : listAgentSessions({ agent: name }); } catch (_) { continue; }
     hidden += Number(r.hiddenAutopilotSessions || 0);
-    for (const s of r.sessions || []) sessions.push({ ...s, agent: name });
+    // realCwd is the folder the session ran in with links resolved, so one
+    // project reached by two paths matches itself.
+    for (const s of r.sessions || []) sessions.push({ ...s, agent: name, realCwd: realSessionPath(s.originalCwd || s.projectPath) });
   }
   sessions.sort((a, b) => b.mtime - a.mtime);
-  return { ...primary, supported: true, currentCwd: activePtyCwd || '', sessions, hiddenAutopilotSessions: hidden };
+  return {
+    ...primary,
+    supported: true,
+    // False when the selected tool keeps no session list Husk reads.
+    agentSupported: primary.supported !== false,
+    currentCwd: activePtyCwd || '',
+    currentRealCwd: realSessionPath(activePtyCwd),
+    sessions,
+    hiddenAutopilotSessions: hidden,
+  };
 });
 
 function listAgentSessions(opts = {}) {
@@ -10258,7 +10457,7 @@ function listAgentSessions(opts = {}) {
   const raw = opts && typeof opts.agent === 'string' ? opts.agent.trim() : '';
   const req = raw ? agentBaseName(raw) : '';
   const reqAgent = (req === 'claude' || /^claude[-_]/.test(req)) ? 'claude' : req;
-  const agent = (reqAgent === 'claude' || reqAgent === 'copilot' || reqAgent === 'codex' || reqAgent === 'gemini') ? reqAgent : activeAgentName();
+  const agent = reqAgent || activeAgentName();
   if (agent === 'copilot') {
     const listed = listCopilotSessions({ withMeta: true });
     return {
@@ -10297,12 +10496,9 @@ function listAgentSessions(opts = {}) {
   if (agent !== 'claude') {
     return { ok: true, agent, supported: false, sessionsDir: '', sessions: [] };
   }
+  // A missing projects dir just means no sessions yet (a fresh install, or a
+  // machine that has never run claude) and lists as empty.
   const projectsDir = path.join(CLAUDE_DIR, 'projects');
-  let projects = [];
-  // A missing projects dir just means no sessions yet (e.g. a fresh install or
-  // a machine that has never run claude). Return empty, not an error.
-  try { projects = fs.readdirSync(projectsDir, { withFileTypes: true }).filter((e) => e.isDirectory()); }
-  catch (_) { return { ok: true, agent: 'claude', supported: true, sessionsDir: projectsDir, sessions: [] }; }
 
   // Pre-load PRDs for matching by timestamp
   let prds = [];
@@ -10333,124 +10529,30 @@ function listAgentSessions(opts = {}) {
     return best;
   }
 
-  // Pass 1: collect cheap stat for all files
-  const candidates = [];
-  for (const proj of projects) {
-    const projPath = path.join(projectsDir, proj.name);
-    let files = [];
-    try { files = fs.readdirSync(projPath); } catch (_) { continue; }
-    for (const f of files) {
-      if (!f.endsWith('.jsonl')) continue;
-      const id = f.slice(0, -6);
-      const fullPath = path.join(projPath, f);
-      let st;
-      try { st = fs.statSync(fullPath); } catch (_) { continue; }
-      if (st.size === 0) continue;
-      candidates.push({ id, project: proj.name, fullPath, st });
-    }
-  }
-  // Sort by mtime desc, cap to 300 most-recent. Older sessions are still on disk if user wants them.
-  candidates.sort((a, b) => b.st.mtimeMs - a.st.mtimeMs);
-  const top = candidates.slice(0, 300);
-
-  // Pass 2: read first 8KB for timestamp + first message preview
-  const out = [];
+  // Chats only, newest first. A print run or an autopilot worktree is dropped
+  // before it can take a place under the cap.
   let hiddenAutopilot = 0;
-  for (const { id, project: projName, fullPath, st } of top) {
+  const top = listClaudeTranscripts(projectsDir, {
+    cap: SESSION_LIST_CAP,
+    reads: sessionFileReads,
+    accept: ({ id, project, scan }) => {
+      // Husk's own chats are recorded as it opens them and are kept whatever
+      // their turns are marked.
+      if (scan.oneShot && !chatSessionRegistry.has(id)) return false;
+      if (isAutopilotWorkspacePath(scan.originalCwd || decodeProjectPath(project))) { hiddenAutopilot++; return false; }
+      return true;
+    },
+  });
+
+  const out = [];
+  for (const { id, project: projName, fullPath, st, scan } of top) {
     const rc = sessionFileReads(fullPath, st);
     {
-      // Read the first 32KB for how the session opened, and take the title from
-      // the whole transcript: it is appended once the conversation earns a name,
-      // which for a long session is far past the head.
-      let startedISO = '';
-      let aiTitle = latestAiTitle(fullPath);
-      let userMessage = '';
-      let queueContent = '';
-      let originalCwd = '';
-      let sawAssistant = false;
-      let headComplete = false;
-      // How this session's turns were authored. A human-typed chat carries
-      // promptSource "typed" / origin.kind "human" on at least one turn, and a
-      // purely SDK-driven background transcript carries only "sdk". Accumulated
-      // across every turn in the head, since an SDK context turn can be
-      // prepended to a real chat.
-      let sawHumanTurn = false;
-      let sawSdkTurn = false;
-      let sawPromptSource = false;
-      let sawUserLine = false;
-      try {
-        const text = rc.head !== undefined ? rc.head : (rc.head = readHead(fullPath, 32768));
-        headComplete = st.size <= 32768;
-        const lines = text.split('\n');
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          let obj;
-          try { obj = JSON.parse(line); } catch (_) { continue; }
-          if (!sawAssistant && obj.type === 'assistant') sawAssistant = true;
-          if (!startedISO && obj.timestamp) startedISO = obj.timestamp;
-          if (!originalCwd && typeof obj.cwd === 'string') originalCwd = obj.cwd;
-          if (obj.type === 'user') {
-            sawUserLine = true;
-            const originKind = obj.origin && typeof obj.origin === 'object' ? obj.origin.kind : null;
-            const ps = typeof obj.promptSource === 'string' ? obj.promptSource : null;
-            if (ps) sawPromptSource = true;
-            if (originKind === 'human' || ps === 'typed') sawHumanTurn = true;
-            else if (ps === 'sdk') sawSdkTurn = true;
-          }
-          if (!userMessage && obj.type === 'user' && obj.message) {
-            const c = obj.message.content;
-            if (typeof c === 'string') userMessage = withoutBrainContext(c).trim();
-            else if (Array.isArray(c)) {
-              const t = c.find((p) => p && p.type === 'text' && typeof p.text === 'string');
-              if (t) userMessage = withoutBrainContext(t.text).trim();
-            }
-          }
-          if (!queueContent && obj.type === 'queue-operation' && typeof obj.content === 'string') {
-            queueContent = withoutBrainContext(obj.content).trim();
-          }
-          // Short-circuit only when the head is partial (a big file), where the
-          // title fields are already in hand. For a small file that fits
-          // entirely in the window, keep scanning so sawAssistant is decided
-          // over the whole file, which the receipt-skip below reads.
-          if (!headComplete && aiTitle && startedISO && userMessage && originalCwd) break;
-        }
-      } catch (_) {}
-      // An SDK run can open with one line longer than the head window (a review
-      // prompt carrying a whole diff). That line never parses, and its origin
-      // fields sit after the message, past the window, so when the head held no
-      // user line at all the whole file is read for them, within the cap the
-      // human-turn scan uses.
-      let scannedWhole = false;
-      if (!sawUserLine && !headComplete) {
-        const a = transcriptAuthorship(fullPath, st.size);
-        if (a) {
-          scannedWhole = true;
-          if (a.human || a.sdk) sawPromptSource = true;
-          if (a.human) sawHumanTurn = true;
-          else if (a.sdk) sawSdkTurn = true;
-        }
-      }
-      // Husk drives claude over the SDK, and every enqueued prompt also writes a
-      // tiny queue-operation receipt file with no assistant turn, shadowing a
-      // prompt that ran in the real session file. A file whose whole head fits
-      // in the read window and carries no assistant turn is such a receipt: skip
-      // it, since real conversations always have assistant output.
-      if (headComplete && !sawAssistant) continue;
-
-      // The Sessions list is for chats the user actually held. Husk also spawns
-      // claude over the SDK for background work (framework hooks that shell out
-      // to `claude --print`, the autopilot and workflow orchestrators), and each
-      // leaves a transcript in this same projects dir. A transcript with SDK
-      // turns and no human turn anywhere is such a run: skip it. When the head
-      // was inconclusive on a larger file, scan the whole file first, since a
-      // real chat can open with a prepended SDK context turn. Files that predate
-      // promptSource carry no signal and are kept.
-      let background = sawSdkTurn && !sawHumanTurn && sawPromptSource;
-      // Husk's own Chat view drives claude the same way and its turns carry the
-      // same marks, so a session Husk opened itself is a chat whatever they say.
-      if (background && chatSessionRegistry.has(id)) background = false;
-      if (background && !headComplete && !scannedWhole) background = !(rc.human !== undefined ? rc.human : (rc.human = transcriptHasHumanTurn(fullPath, st.size)));
-      if (background) continue;
+      // The title comes from the whole transcript: it is appended once the
+      // conversation earns a name, which for a long session is far past the head.
+      const aiTitle = latestAiTitle(fullPath);
+      const { startedISO, queueContent, originalCwd, headComplete } = scan;
+      let userMessage = scan.userMessage;
 
       // A first line longer than the head window hides the first message from it.
       if (!aiTitle && !userMessage && !headComplete) userMessage = deepFirstUserMessage(fs, fullPath, st.size, { skip: isCommandWrapperText });
@@ -10461,10 +10563,6 @@ function listAgentSessions(opts = {}) {
 
       // Authoritative cwd is what the JSONL recorded; fall back to decoded project name
       const cwdAuthoritative = originalCwd || decodeProjectPath(projName);
-      if (isAutopilotWorkspacePath(cwdAuthoritative)) {
-        hiddenAutopilot++;
-        continue;
-      }
 
       out.push({
         id,
@@ -12970,7 +13068,8 @@ ipcMain.on('config:boot-theme', (e) => {
   e.returnValue = {
     theme: config.theme,
     accent: config.accent,
-    mode: LIGHT_THEMES.has(config.theme) ? 'light' : 'dark',
+    mode: themes.isLightTheme(config.theme) ? 'light' : 'dark',
+    accentVars: config.accent === themes.CUSTOM_ACCENT ? themes.deriveAccent(config.accentCustom, config.theme) : null,
     // Read here too, so the preload restores the saved zoom before first paint.
     uiZoom: sanitizeZoom(config.uiZoom),
   };
@@ -13049,6 +13148,21 @@ const gotLock = app.requestSingleInstanceLock();
 // different version (warn, since the new binary quits and the running window
 // takes focus).
 const instanceInfoPath = () => path.join(app.getPath('userData'), 'instance.json');
+installFoundation = require('./lib/install-foundation').registerFoundation({
+  ipcMain, dialog, window: () => mainWindow,
+  getConfig: () => config,
+  setConfig: (partial) => { config = { ...config, ...partial }; saveConfig(config); },
+  installers: installHandlers,
+  agentDir: path.join(CLAUDE_DIR, 'agents'), skillsDir: SHARED_SKILLS_DIR, promptsDir: HUSK_PROMPTS_DIR,
+  prepareSkills: prepareSharedSkills, resolveAgents: resolveRepoAgentsDir,
+  listWorkflows: () => loadWorkflows(),
+  workflowExport: (id) => {
+    const workflow = loadWorkflows().find((w) => w.id === id);
+    const built = WorkflowArtifact.buildArtifact(workflow, { huskVersion: app.getVersion() });
+    return built.ok ? built.artifact : null;
+  },
+});
+
 if (!gotLock) {
   let runningVersion = null;
   try { runningVersion = JSON.parse(fs.readFileSync(instanceInfoPath(), 'utf8')).version || null; } catch (_) {}
@@ -13079,6 +13193,7 @@ if (!gotLock) {
   process.on('unhandledRejection', (err) => { try { console.error('[husk] unhandledRejection:', err); } catch (_) {} });
 
   app.whenReady().then(async () => {
+    protocol.handle(bgImage.SCHEME, serveBackground);
     applyPaiState(config.paiEnabled !== false);
     bootstrapPaiIfNeeded();
     prepareSharedSkills();
@@ -13093,6 +13208,7 @@ if (!gotLock) {
     // Recover or prune worktrees left behind by a crash before any new run
     // can create one. Guarded so it never blocks the window from opening.
     try { reconcileOrphanWorktrees(); } catch (_) {}
+    pruneTranscripts();
     createWindow();
     setupAutoUpdater();
   });

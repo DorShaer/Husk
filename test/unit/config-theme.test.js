@@ -51,7 +51,7 @@ test('a first install defaults to the light theme with the indigo accent', () =>
 });
 
 test('an update never changes the theme of an install that has one saved', () => {
-  for (const theme of ['midnight', 'dark', 'nord', 'dracula', 'light', 'ember']) {
+  for (const theme of require('../../src/lib/themes').THEME_IDS) {
     const cfg = loadConfigWith(JSON.stringify({ firstRunDone: true, theme }));
     assert.equal(cfg.theme, theme, `${theme} must survive an update`);
   }

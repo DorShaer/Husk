@@ -7,6 +7,15 @@ const {
   normalizeClaudeEvent, emptyThread, reduceThread,
 } = require('../../src/lib/chat-events');
 
+test('non-blocking questions remain answerable after a turn ends until explicitly resolved', () => {
+  let s = reduceThread(emptyThread(), { type: 'permission', requestId: 'q1', title: 'AskUserQuestion', nonBlocking: true, input: { questions: [] } });
+  s = reduceThread(s, { type: 'permission', requestId: 'approval', title: 'Shell' });
+  s = reduceThread(s, { type: 'turn_end' });
+  assert.deepEqual(s.pending, ['q1']);
+  s = reduceThread(s, { type: 'permission_resolved', requestId: 'q1', optionId: 'allow' });
+  assert.deepEqual(s.pending, []);
+});
+
 function fold(events, start) {
   return events.reduce((s, e) => reduceThread(s, e), start || emptyThread());
 }

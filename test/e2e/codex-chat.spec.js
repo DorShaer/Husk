@@ -50,6 +50,37 @@ async function chatReady(win) {
   });
 }
 
+test('Codex questions support choices, typed answers, reload and dismissal while Allow all is on', async () => {
+  const { homeDir, bin } = makeHome();
+  const { app, win } = await launch(homeDir, bin);
+  try {
+    await chatReady(win);
+    await win.evaluate(() => window.husk.chat.allowAll({ tabId: activeTabId, on: true }));
+    const pane = win.locator('.chat-pane.show');
+    const input = pane.locator('.chat-input');
+    await input.fill('questions: ask about the panel');
+    await input.press('Enter');
+    let card = pane.locator('.chat-perm:not(.is-resolved)');
+    await expect(card).toContainText('Waiting for your answer');
+    await expect(pane).toContainText('I can keep checking the layout while you choose.');
+    await expect(input).toHaveAttribute('placeholder', /Enter to send/);
+    await win.reload();
+    await chatReady(win);
+    card = pane.locator('.chat-perm:not(.is-resolved)');
+    await expect(card.getByRole('button', { name: 'Submit', exact: true })).toBeDisabled();
+    await card.getByRole('button', { name: /Both/ }).click();
+    await card.getByRole('textbox', { name: 'Details', exact: true }).fill('Remember the width');
+    await card.getByRole('button', { name: 'Submit', exact: true }).click();
+    await expect(pane).toContainText('"panel":{"answers":["Both"]}');
+    await expect(pane).toContainText('"note":{"answers":["Remember the width"]}');
+    await expect(input).toHaveAttribute('placeholder', /Enter to send/);
+    await input.fill('questions: dismiss this one');
+    await input.press('Enter');
+    await pane.locator('.chat-perm:not(.is-resolved)').getByRole('button', { name: 'Dismiss', exact: true }).click();
+    await expect(pane).toContainText('Question reply: {"answers":{}}');
+  } finally { await app.close(); fs.rmSync(homeDir, { recursive: true, force: true }); }
+});
+
 test('codex opens as a Husk thread and answers an approval', async () => {
   const { homeDir, bin } = makeHome();
   const { app, win } = await launch(homeDir, bin);

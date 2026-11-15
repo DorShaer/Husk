@@ -55,7 +55,7 @@ test('terminal entry points open renameable shared tabs and the shell answers', 
   await win.locator('.chat-tab-rename').press('Enter');
   await expect(win.locator('#tab-strip .chat-tab.active .chat-tab-label')).toHaveText('Build logs');
   await win.locator('#cs-new').click();
-  await win.locator('#new-tab-menu').getByRole('menuitem', { name: 'Open Terminal' }).click();
+  await win.locator('#new-tab-menu').getByRole('menuitem', { name: 'Terminal', exact: true }).click();
   await expect(win.locator('#tab-strip .chat-tab')).toHaveCount(before + 2);
   await expect(win.locator('#tab-strip .chat-tab.active .chat-tab-label')).toHaveText('Terminal');
   await expect(win.locator('#tab-strip')).toContainText('Build logs');

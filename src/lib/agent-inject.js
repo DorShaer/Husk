@@ -160,7 +160,34 @@ function planInjection({ agentCommand, agentName, paiEnabled, recap } = {}) {
   return { method: 'instructions-file', filePath: channel.filePath, body, refresh };
 }
 
+const RULES_INTRO = 'Standing rules from the user. Follow each of them in every reply:';
+
+// The user's standing rules as directive text: one line each under a heading.
+function rulesText(lines) {
+  const list = (Array.isArray(lines) ? lines : [])
+    .map((l) => String(l).split(HUSK_SESSION_START).join('').split(HUSK_SESSION_END).join('').trim())
+    .filter(Boolean);
+  return list.length ? `${RULES_INTRO}\n${list.join('\n')}` : '';
+}
+
+// A plan with the rules added to every directive it carries: the file bodies
+// and the system prompt argument.
+function withRules(plan, lines) {
+  const text = rulesText(lines);
+  if (!plan || !text) return plan;
+  const add = (body) => `${String(body || '').trim()}\n\n${text}`;
+  const out = Object.assign({}, plan);
+  if (typeof plan.body === 'string') out.body = add(plan.body);
+  if (plan.refresh) out.refresh = Object.assign({}, plan.refresh, { body: add(plan.refresh.body) });
+  if (plan.method === 'system-prompt-arg') {
+    out.args = plan.args.map((a, i) => (plan.args[i - 1] === '--append-system-prompt' ? add(a) : a));
+  }
+  return out;
+}
+
 module.exports = {
+  rulesText,
+  withRules,
   HUSK_SESSION_START,
   HUSK_SESSION_END,
   buildGenericDirectives,

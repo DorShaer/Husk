@@ -300,6 +300,187 @@
   --elev-4: var(--shadow-overlay);
 }
 
+/* Solarized Light: the palette's base3 paper with base02 ink. The four state
+   hues are the palette's own, lowered until they hold as ink on paper. */
+[data-theme="solarized-light"] {
+  --bg: #fdf6e3;
+  --bg-1: #fffbef;
+  --bg-2: #f5eedb;
+  --bg-3: #eee8d5;
+  --bg-4: #e2dbc6;
+  --line: #e9e2cc;
+  --line-2: #d6cfb8;
+  --line-3: #93a1a1;
+  --text: #073642;
+  --text-2: #4f656c;
+  --text-3: #5d7279;
+  --rose: #c9302c;
+  --emerald: #5f6e00;
+  --amber: #8a6800;
+  --info: #1f76b8;
+  --notif-bg: #fffbef;
+  --surface: var(--bg-1);
+  --surface-raised: var(--bg-1);
+  --hl-top: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  --hl-top-strong: inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  --shadow-raised:  var(--hl-top), 0 1px 2px rgba(7, 54, 66, 0.05), 0 4px 12px rgba(7, 54, 66, 0.07);
+  --shadow-overlay: var(--hl-top-strong), 0 4px 14px rgba(7, 54, 66, 0.08), 0 24px 56px rgba(7, 54, 66, 0.12);
+  --shadow: var(--shadow-overlay);
+  --shadow-soft: var(--shadow-raised);
+  --elev-1: var(--shadow-raised);
+  --elev-2: var(--shadow-raised);
+  --elev-3: var(--shadow-overlay);
+  --elev-4: var(--shadow-overlay);
+  --bg-radial: radial-gradient(1200px 720px at 100% 100%, rgba(38, 139, 210, 0.03), transparent 62%);
+  --term-bg: #fdf6e3;
+  --term-fg: #073642;
+  --term-light: 1;
+}
+
+/* Solarized Dark: base03 ground, base2 ink, base1 and base0 for the quieter steps. */
+[data-theme="solarized-dark"] {
+  --bg: #002b36;
+  --text: #eee8d5;
+  --text-2: #a3b1b1;
+  --text-3: #93a1a1;
+  --rose: #e8615e;
+  --emerald: #98ad1a;
+  --amber: #c79a14;
+  --info: #4aa3e0;
+  --notif-bg: #073642;
+  --bg-radial: radial-gradient(900px circle at 12% 0%, rgba(38, 139, 210, 0.05), transparent 65%),
+    radial-gradient(820px circle at 84% 16%, rgba(42, 161, 152, 0.04), transparent 60%);
+  --term-bg: #002b36;
+  --term-fg: #eee8d5;
+}
+
+/* One Dark: cool grey-blue ground with the palette's soft syntax hues. */
+[data-theme="one-dark"] {
+  --bg: #282c34;
+  --text: #d7dae0;
+  --text-2: #abb2bf;
+  --text-3: #9da5b4;
+  --rose: #e06c75;
+  --emerald: #98c379;
+  --amber: #e5c07b;
+  --info: #61afef;
+  --notif-bg: #21252b;
+  --bg-radial: radial-gradient(900px circle at 12% 0%, rgba(97, 175, 239, 0.045), transparent 65%),
+    radial-gradient(820px circle at 84% 16%, rgba(198, 120, 221, 0.036), transparent 60%);
+  --term-bg: #282c34;
+  --term-fg: #abb2bf;
+}
+
+/* Monokai: olive black with the palette's vivid marks. */
+[data-theme="monokai"] {
+  --bg: #272822;
+  --text: #f8f8f2;
+  --text-2: rgba(248, 248, 242, 0.74);
+  --text-3: rgba(248, 248, 242, 0.58);
+  --rose: #f92672;
+  --emerald: #a6e22e;
+  --amber: #e6db74;
+  --info: #66d9ef;
+  --notif-bg: #3e3d32;
+  --bg-radial: radial-gradient(900px circle at 12% 0%, rgba(253, 151, 31, 0.04), transparent 65%),
+    radial-gradient(820px circle at 84% 16%, rgba(174, 129, 255, 0.036), transparent 60%);
+  --term-bg: #272822;
+  --term-fg: #f8f8f2;
+}
+
+/* Everforest: soft green-grey dark with warm cream ink. */
+[data-theme="everforest"] {
+  --bg: #2d353b;
+  --text: #e4dcc4;
+  --text-2: #d3c6aa;
+  --text-3: rgba(211, 198, 170, 0.78);
+  --rose: #e67e80;
+  --emerald: #a7c080;
+  --amber: #dbbc7f;
+  --info: #7fbbb3;
+  --notif-bg: #343f44;
+  --bg-radial: radial-gradient(900px circle at 12% 0%, rgba(167, 192, 128, 0.045), transparent 65%),
+    radial-gradient(820px circle at 84% 16%, rgba(127, 187, 179, 0.036), transparent 60%);
+  --term-bg: #2d353b;
+  --term-fg: #d3c6aa;
+}
+
+/* Kanagawa: ink-wash navy with parchment text. */
+[data-theme="kanagawa"] {
+  --bg: #1f1f28;
+  --text: #dcd7ba;
+  --text-2: rgba(220, 215, 186, 0.74);
+  --text-3: rgba(220, 215, 186, 0.62);
+  --rose: #e46876;
+  --emerald: #98bb6c;
+  --amber: #e6c384;
+  --info: #7e9cd8;
+  --notif-bg: #2a2a37;
+  --bg-radial: radial-gradient(900px circle at 12% 0%, rgba(126, 156, 216, 0.05), transparent 65%),
+    radial-gradient(820px circle at 84% 16%, rgba(149, 127, 184, 0.04), transparent 60%);
+  --term-bg: #1f1f28;
+  --term-fg: #dcd7ba;
+}
+
+/* High contrast dark: white on black, every text step and rule at full strength. */
+[data-theme="hc-dark"] {
+  --bg: #000000;
+  --bg-1: rgba(255, 255, 255, 0.07);
+  --bg-2: rgba(255, 255, 255, 0.11);
+  --bg-3: rgba(255, 255, 255, 0.15);
+  --bg-4: rgba(255, 255, 255, 0.2);
+  --line:   rgba(255, 255, 255, 0.36);
+  --line-2: rgba(255, 255, 255, 0.52);
+  --line-3: rgba(255, 255, 255, 0.72);
+  --text: #ffffff;
+  --text-2: rgba(255, 255, 255, 0.9);
+  --text-3: rgba(255, 255, 255, 0.78);
+  --rose: #ff9492;
+  --emerald: #26cd4d;
+  --amber: #f0b72f;
+  --info: #71b7ff;
+  --notif-bg: #0d0d0d;
+  --bg-radial: none;
+  --term-bg: #000000;
+  --term-fg: #ffffff;
+}
+
+/* High contrast light: black on white, every text step and rule at full strength. */
+[data-theme="hc-light"] {
+  --bg: #ffffff;
+  --bg-1: #ffffff;
+  --bg-2: #f2f2f2;
+  --bg-3: #e6e6e6;
+  --bg-4: #d4d4d4;
+  --line: #767676;
+  --line-2: #595959;
+  --line-3: #1a1a1a;
+  --text: #000000;
+  --text-2: #262626;
+  --text-3: #404040;
+  --rose: #a0111f;
+  --emerald: #055d20;
+  --amber: #744500;
+  --info: #0349b4;
+  --notif-bg: #ffffff;
+  --surface: var(--bg-1);
+  --surface-raised: var(--bg-1);
+  --hl-top: inset 0 1px 0 rgba(255, 255, 255, 1);
+  --hl-top-strong: inset 0 1px 0 rgba(255, 255, 255, 1);
+  --shadow-raised:  var(--hl-top), 0 1px 2px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.10);
+  --shadow-overlay: var(--hl-top-strong), 0 4px 14px rgba(0, 0, 0, 0.12), 0 24px 56px rgba(0, 0, 0, 0.18);
+  --shadow: var(--shadow-overlay);
+  --shadow-soft: var(--shadow-raised);
+  --elev-1: var(--shadow-raised);
+  --elev-2: var(--shadow-raised);
+  --elev-3: var(--shadow-overlay);
+  --elev-4: var(--shadow-overlay);
+  --bg-radial: none;
+  --term-bg: #ffffff;
+  --term-fg: #000000;
+  --term-light: 1;
+}
+
 /* Accent palettes. Orange is the default. */
 :root,
 [data-accent="orange"] {
@@ -348,14 +529,50 @@
   --on-accent: #3f0d16;
 }
 
-/* The same five accents on a light ground. Each palette above is picked to sit
-   on a near-black field, and the light themes inherited them unchanged: the
-   default orange lands at 2.51:1 on #fafafa, which is a tint rather than an
-   accent and cannot carry a control, a rim or a piece of text. Each hue keeps
-   its identity and drops in lightness until it holds against paper, and the
-   ink on top of it flips to white. Declared after the palettes so a light theme
-   and an accent choice resolve in that order. */
-[data-theme="light"], [data-theme="sepia"] {
+[data-accent="violet"] {
+  --accent: #c084fc;
+  --accent-2: #d8b4fe;
+  --accent-3: #9333ea;
+  --accent-glow: rgba(192, 132, 252, 0.32);
+  --focus-ring: 0 0 0 3px var(--accent-glow);
+  --grad: linear-gradient(135deg, #c084fc, #d8b4fe);
+  --on-accent: #2a0f47;
+}
+[data-accent="amber"] {
+  --accent: #fbbf24;
+  --accent-2: #fcd34d;
+  --accent-3: #d97706;
+  --accent-glow: rgba(251, 191, 36, 0.32);
+  --focus-ring: 0 0 0 3px var(--accent-glow);
+  --grad: linear-gradient(135deg, #fbbf24, #fcd34d);
+  --on-accent: #3b2503;
+}
+[data-accent="teal"] {
+  --accent: #2dd4bf;
+  --accent-2: #5eead4;
+  --accent-3: #0d9488;
+  --accent-glow: rgba(45, 212, 191, 0.32);
+  --focus-ring: 0 0 0 3px var(--accent-glow);
+  --grad: linear-gradient(135deg, #2dd4bf, #5eead4);
+  --on-accent: #04342f;
+}
+[data-accent="slate"] {
+  --accent: #94a3b8;
+  --accent-2: #cbd5e1;
+  --accent-3: #64748b;
+  --accent-glow: rgba(148, 163, 184, 0.32);
+  --focus-ring: 0 0 0 3px var(--accent-glow);
+  --grad: linear-gradient(135deg, #94a3b8, #cbd5e1);
+  --on-accent: #0f172a;
+}
+
+/* The same accents on a light ground, for every theme in the light family.
+   Each palette above is picked to sit on a near-black field, where it is a tint
+   on paper rather than an accent. Each hue keeps its identity and drops in
+   lightness until it holds against paper, and the ink on top of it flips to
+   white. Declared after the palettes so a light theme and an accent choice
+   resolve in that order. */
+[data-mode="light"] {
   --accent: #cf4600;
   --accent-2: #e65719;
   --accent-3: #a33500;
@@ -364,7 +581,7 @@
   --grad: linear-gradient(135deg, #cf4600 0%, #e65719 100%);
   --on-accent: #ffffff;
 }
-:is([data-theme="light"], [data-theme="sepia"])[data-accent="cyan"] {
+[data-mode="light"][data-accent="cyan"] {
   --accent: #0e7490;
   --accent-2: #0891b2;
   --accent-3: #155e75;
@@ -372,7 +589,7 @@
   --grad: linear-gradient(135deg, #0e7490, #0891b2);
   --on-accent: #ffffff;
 }
-:is([data-theme="light"], [data-theme="sepia"])[data-accent="indigo"] {
+[data-mode="light"][data-accent="indigo"] {
   --accent: #4f46e5;
   --accent-2: #6366f1;
   --accent-3: #3730a3;
@@ -380,7 +597,7 @@
   --grad: linear-gradient(135deg, #4f46e5, #6366f1);
   --on-accent: #ffffff;
 }
-:is([data-theme="light"], [data-theme="sepia"])[data-accent="emerald"] {
+[data-mode="light"][data-accent="emerald"] {
   --accent: #047857;
   --accent-2: #059669;
   --accent-3: #065f46;
@@ -388,12 +605,45 @@
   --grad: linear-gradient(135deg, #047857, #059669);
   --on-accent: #ffffff;
 }
-:is([data-theme="light"], [data-theme="sepia"])[data-accent="rose"] {
+[data-mode="light"][data-accent="rose"] {
   --accent: #be123c;
   --accent-2: #e11d48;
   --accent-3: #9f1239;
   --accent-glow: rgba(190, 18, 60, 0.22);
   --grad: linear-gradient(135deg, #be123c, #e11d48);
+  --on-accent: #ffffff;
+}
+
+[data-mode="light"][data-accent="violet"] {
+  --accent: #7e22ce;
+  --accent-2: #9333ea;
+  --accent-3: #6b21a8;
+  --accent-glow: rgba(126, 34, 206, 0.22);
+  --grad: linear-gradient(135deg, #7e22ce, #9333ea);
+  --on-accent: #ffffff;
+}
+[data-mode="light"][data-accent="amber"] {
+  --accent: #92400e;
+  --accent-2: #b45309;
+  --accent-3: #78350f;
+  --accent-glow: rgba(146, 64, 14, 0.22);
+  --grad: linear-gradient(135deg, #92400e, #b45309);
+  --on-accent: #ffffff;
+}
+[data-mode="light"][data-accent="teal"] {
+  --accent: #0f766e;
+  --accent-2: #0d9488;
+  --accent-3: #115e59;
+  --accent-glow: rgba(15, 118, 110, 0.22);
+  --grad: linear-gradient(135deg, #0f766e, #0d9488);
+  --on-accent: #ffffff;
+}
+[data-mode="light"][data-accent="slate"] {
+  --accent: #475569;
+  --accent-2: #64748b;
+  --accent-3: #334155;
+  --accent-glow: rgba(71, 85, 105, 0.22);
+  --grad: linear-gradient(135deg, #475569, #64748b);
   --on-accent: #ffffff;
 }
 
@@ -662,7 +912,7 @@ body {
 
   /* A switch that is on takes the success hue on its track and the page ground on
      its knob, so enabled reads by colour rather than by knob position. Both sides
-     resolve per theme, so all ten keep their own green. */
+     resolve per theme, so every theme keeps its own green. */
   --switch-on: var(--state-success-ink);
   --switch-knob-on: var(--bg);
   /* Off stays the quiet state: page-level track, muted knob. */
@@ -1683,7 +1933,7 @@ body[data-page="boot"] .page { display: none !important; }
   margin-bottom: var(--space-4);
 }
 /* The head selector carries the page step past the dark family's own title rule,
-   so all ten themes print the title at one size. */
+   so every theme prints the title at one size. */
 .page-agents .page-head .page-title,
 .page-skills .page-head .page-title,
 .page-sessions .page-head .page-title,
@@ -4778,6 +5028,12 @@ body[data-page="chat"] #chats-panel { display: flex; }
 .chat-ask-choice:hover:not(:disabled) { border-color: var(--accent); }
 .chat-ask-choice.is-sel { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, var(--bg-1)); }
 .chat-ask-choice:disabled { opacity: 0.6; cursor: default; }
+.chat-ask-other {
+  width: 100%; min-width: 0; padding: 9px 11px;
+  border: 1px solid var(--line-2); border-radius: 8px;
+  background: var(--bg-1); color: var(--text); font: inherit;
+}
+.chat-ask-other:focus-visible { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
 .chat-perm-verdict[data-verdict="allow"] { color: var(--emerald); }
 .chat-perm-verdict[data-verdict="deny"] { color: var(--rose); }
 
@@ -7187,7 +7443,7 @@ textarea.pr-body-edit:focus-visible {
 /* ── Skills library ──────────────────────────────────────────────────────────
    One filter bar over one full-width list, with the width going to the
    descriptions. Every surface, rule and dim tone resolves from the active theme, so
-   all ten themes render this page in their own neutrals, and accent marks only the
+   every theme renders this page in its own neutrals, and accent marks only the
    filter you are in and the switch. */
 .page-skills {
   /* The bar collapses against this panel's own width, not the window's: the status
@@ -7686,6 +7942,7 @@ body[data-mode="light"] .sx {
 
 .sx-row {
   position: relative;
+  flex-shrink: 0;
   display: grid;
   grid-template-columns: var(--sx-gut) minmax(0, 1fr) auto var(--sx-time-w);
   grid-template-areas: "gut title runs time";
@@ -8873,11 +9130,6 @@ body[data-mode="light"] .sx {
 }
 .accent-swatch:hover { transform: scale(1.1); }
 .accent-swatch.selected { border-color: var(--text); box-shadow: 0 0 0 2px var(--bg-3), 0 0 0 3px var(--text); }
-.accent-swatch[data-c="orange"]  { background: linear-gradient(135deg, #ff7847, #ff5a3c); }
-.accent-swatch[data-c="cyan"]    { background: linear-gradient(135deg, #67e8f9, #5eead4); }
-.accent-swatch[data-c="indigo"]  { background: linear-gradient(135deg, #818cf8, #a78bfa); }
-.accent-swatch[data-c="emerald"] { background: linear-gradient(135deg, #34d399, #6ee7b7); }
-.accent-swatch[data-c="rose"]    { background: linear-gradient(135deg, #fb7185, #f9a8d4); }
 
 /* ─── MCP page ──────────────────────────────────────────────────────────── */
 .mcp-body { display: flex; flex-direction: column; gap: 22px; padding: 14px 0 22px 24px; overflow: auto; }
@@ -10437,17 +10689,6 @@ body[data-mode="light"] .ob-wordmark span {
 }
 .ob-theme-sw:hover { transform: scale(1.08); }
 .ob-theme-sw.active { border-color: var(--text); box-shadow: 0 0 0 2px var(--bg-3), 0 0 0 3px var(--text); }
-.ob-theme-sw[data-mode="dark"]        { background: #0c0a09; }
-.ob-theme-sw[data-mode="light"]       { background: #fafafa; }
-.ob-theme-sw[data-mode="midnight"]    { background: #0a0e17; }
-.ob-theme-sw[data-mode="nord"]        { background: #2e3440; }
-.ob-theme-sw[data-mode="dracula"]     { background: #282a36; }
-.ob-theme-sw[data-mode="sepia"]       { background: #f3ead6; }
-.ob-theme-sw[data-mode="tokyo-night"] { background: #1a1b26; }
-.ob-theme-sw[data-mode="catppuccin"]  { background: #11111b; }
-.ob-theme-sw[data-mode="rose-pine"]   { background: #1f1d2e; }
-.ob-theme-sw[data-mode="gruvbox"]     { background: #282828; }
-.ob-theme-sw[data-mode="ember"]       { background: #171311; }
 .ob-prefs .accent-picker { gap: 10px; flex: 0 0 auto; }
 
 .ob-dots {
@@ -12026,7 +12267,7 @@ kbd {
   font-family: var(--font-mono);
   font-size: var(--fs-nano); letter-spacing: 0.24em; text-transform: uppercase;
   /* Pulling the accent toward the theme's text colour keeps this readable at 11px
-     on both near-white and near-black panels, in all ten themes. */
+     on both near-white and near-black panels, in every theme. */
   color: color-mix(in srgb, var(--accent) 60%, var(--text));
   font-weight: 600;
   margin-bottom: var(--space-3);
@@ -12574,8 +12815,8 @@ kbd {
 .wfx-fig {
   display: flex; flex-direction: column; gap: var(--space-1);
   padding: var(--space-3);
-  /* Opaque surface: see the note on .wfx-hero. --bg-1 is a white alpha in seven of
-     the ten themes, so a single-layer fill would let the ambient corner pools read
+  /* Opaque surface: see the note on .wfx-hero. --bg-1 is a white alpha in the dark
+     themes, so a single-layer fill would let the ambient corner pools read
      through and the tile's brightness would track its scroll position. The 1px gap
      over a --line ground is the divider, so there are no border rules to keep in
      sync. */
@@ -16853,7 +17094,7 @@ body[data-mode="light"] .am-node.is-running:not(.is-holder) .am-node-glyph {
 }
 /* An 8% wash sits under the paper on Light and Sepia, so the two diff grounds
    take the strength the dark family does not need. Every other value is shared,
-   so ten themes are covered by these two declarations. */
+   so every theme is covered by these two declarations. */
 body[data-mode="light"] .sc {
   --sc-add-bg: color-mix(in srgb, var(--emerald) 14%, transparent);
   --sc-del-bg: color-mix(in srgb, var(--rose) 14%, transparent);
@@ -17595,8 +17836,8 @@ body.is-resizing-status iframe, body.is-resizing-status .term-pane { pointer-eve
 .chat-queue-x:hover { background: var(--bg-3); color: var(--text); }
 
 /* Model picker on the composer footer chip. */
-.chat-model-btn { cursor: pointer; border-color: var(--line-2); }
-.chat-model-btn:hover { background: var(--bg-3); color: var(--text); }
+:is(.chat-model-btn, .chat-context-btn) { cursor: pointer; border-color: var(--line-2); }
+:is(.chat-model-btn, .chat-context-btn):hover { background: var(--bg-3); color: var(--text); }
 .chat-model-menu {
   position: absolute; right: 16px; bottom: 100%; margin-bottom: 8px; z-index: 40;
   min-width: 260px; max-width: 420px; max-height: 320px; overflow-y: auto;
@@ -17690,7 +17931,7 @@ body:not([data-page="chat"]) .topbar-help + .tb-sep { display: none; }
 /* They float over the top of the field, on glass. */
 .br-stats { position: absolute; top: var(--space-3); left: var(--space-3); right: var(--space-3); z-index: 2; display: flex; gap: var(--space-3); }
 .br-stat-group {
-  flex: 1 1 0; min-width: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  flex: 1 1 0; min-width: 0; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr);
   border: 1px solid var(--line); border-radius: var(--radius-card, 12px);
   background: color-mix(in srgb, var(--br-ground) 64%, transparent); backdrop-filter: blur(10px);
 }
@@ -17863,7 +18104,8 @@ body[data-mode="light"] .br-stage {
 .br-detail-title { font-size: var(--fs-body-lg); font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
 .br-detail-text { font-size: var(--fs-body); color: var(--text-2); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .br-detail-meta { font-size: var(--fs-label); color: var(--text-3); }
-.br-detail-acts { display: flex; gap: var(--space-2); }
+.br-detail-acts { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.br-rules-held { padding: 6px 8px; }
 .br-forget:hover { color: var(--rose); }
 @media (max-width: 900px) {
   .br-body { flex-direction: column; overflow-y: auto; }
@@ -18085,3 +18327,38 @@ body[data-mode="light"] .br-stage {
 /* In a narrow window the canvas takes the whole stage, since two columns would
    leave neither wide enough to read. */
 @media (max-width: 1100px) { .chat-stage { --cc-w: 100%; } }
+
+.usage-bell { position: relative; }
+.usage-bell[data-state="close"], .usage-bell[data-state="critical"] { color: var(--amber); }
+.usage-bell[data-state="reached"] { color: var(--rose); }
+.usage-bell-count { position: absolute; top: -3px; right: -4px; min-width: 14px; padding: 1px 3px; border-radius: 8px; background: var(--accent); color: var(--on-accent, #fff); font-size: 9px; }
+.usage-panel { position: absolute; right: 12px; top: 48px; width: 340px; max-height: 70vh; overflow: auto; padding: 16px; z-index: 250; }
+.usage-panel-title { margin-bottom: 12px; }
+.usage-panel-empty, .usage-row-foot, .usage-row-detail { color: var(--text-3); font-size: 11px; }
+.usage-row { padding: 10px 0; border-bottom: 1px solid var(--line); }
+.usage-row-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+.usage-row-name { font-size: 12px; }
+.usage-row-detail { display: block; }
+.usage-row-value { white-space: nowrap; font-size: 12px; }
+.usage-row-bar { margin: 6px 0; }
+.usage-row[data-state="close"] .sp-progress-fill, .usage-row[data-state="critical"] .sp-progress-fill { background: var(--amber); }
+.usage-row[data-state="reached"] .sp-progress-fill { background: var(--rose); }
+.usage-toast-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.usage-panel-prefs { margin-top: 10px; }
+#bg-layer { position: fixed; inset: 0; pointer-events: none; z-index: -1; overflow: hidden; }
+#bg-layer-image { position: absolute; inset: -48px; background-size: cover; background-position: center; filter: blur(var(--bg-image-blur, 0px)); }
+#bg-layer::after { content: ''; position: absolute; inset: 0; background: var(--bg); opacity: var(--bg-image-dim, .7); }
+body:has(#bg-layer:not([hidden])) { isolation: isolate; }
+body:has(#bg-layer:not([hidden])) .term-pane { background: var(--term-bg); }
+
+.accent-picker { flex-wrap: wrap; max-width: 300px; justify-content: flex-end; }
+.install-review { width: min(760px, 90vw); max-height: 85vh; overflow: auto; padding: 24px; }
+.install-review pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; max-height: 300px; overflow: auto; background: var(--bg-1); padding: 12px; }
+.install-review details { margin: 10px 0; }
+.install-review summary { cursor: pointer; }
+.pref-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.chat-handoff-offer { margin: 8px 24px; padding: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; border: 1px solid var(--line-2); border-radius: 12px; background: var(--bg-1); font-size: 12px; }
+.chat-handoff-offer > span { flex-basis: 100%; }
+
+.pref-row .accent-picker { display: grid; grid-template-columns: repeat(5, 24px); gap: 10px; }

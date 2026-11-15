@@ -71,6 +71,7 @@ function askPermission(sessionId, toolCallId, flavor) {
 async function runTurn(id, params) {
   const sessionId = params.sessionId;
   const text = (params.prompt || []).map((b) => (b && b.type === 'text' ? b.text : '')).join('');
+  if (process.env.HUSK_FAKE_ACP_PROMPTS) require('node:fs').appendFileSync(process.env.HUSK_FAKE_ACP_PROMPTS, JSON.stringify({ text }) + '\n', { mode: 0o600 });
   const imageCount = (params.prompt || []).filter((b) => b && b.type === 'image' && b.data).length;
   cancelled = false;
   // A prompt starting 'copilot:' plays the copilot and kiro shape: a session
@@ -79,7 +80,7 @@ async function runTurn(id, params) {
   const flavor = text.startsWith('copilot:');
   if (flavor) {
     notify(sessionId, { sessionUpdate: 'session_info_update', title: 'Greeting file' });
-    notify(sessionId, { sessionUpdate: 'usage_update', used: 3200, size: 128000 });
+    notify(sessionId, { sessionUpdate: 'usage_update', used: text.includes('high context') ? 122000 : 3200, size: 128000 });
   }
   // A prompt of exactly 'exit now' ends the process mid-turn, for tests of
   // an agent that goes away on its own.

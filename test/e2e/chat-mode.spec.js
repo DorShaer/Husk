@@ -393,7 +393,7 @@ test('the Sessions column lists live tabs with their state, + New adds a second 
 
   // + New opens a second tab, which gets its own card and becomes the active one.
   await col.locator('#cs-new').click();
-  await win.locator('#new-tab-menu').getByRole('menuitem', { name: 'New chat' }).click();
+  await win.locator('#new-tab-menu').locator('[data-kind="chat"][data-cmd="gemini"]').click();
   await expect(win.locator('.chat-tab')).toHaveCount(2);
   await expect(live).toHaveCount(2);
   await expect(col.locator('.cs-card.is-active')).toHaveCount(1);
@@ -440,7 +440,7 @@ test('a tool row opens into its card, Formatted and Raw switch, the top bar coun
   await setWindowContentSize(app, 1500, 900);
   await expect(win.locator('body')).toHaveAttribute('data-theme', 'ember');
   await expect(win.locator('#pref-theme option[value="ember"]')).toHaveText('Ember');
-  expect(await win.locator('#pref-theme').inputValue()).toBe('ember');
+  await expect(win.locator('#pref-theme')).toHaveValue('ember');
   const bg = await win.evaluate(() => getComputedStyle(document.body).getPropertyValue('--bg').trim());
   expect(bg).toBe('#171311');
   const bodyBg = await win.evaluate(() => getComputedStyle(document.body).backgroundColor);
@@ -550,7 +550,7 @@ test('a cold boot resumes the newest session into Chat instead of opening an emp
   await expect(pane.locator('.chat-item-user')).toHaveCount(2);
   // + New still opens a fresh chat beside it.
   await win.locator('#cs-new').click();
-  await win.locator('#new-tab-menu').getByRole('menuitem', { name: 'New chat' }).click();
+  await win.locator('#new-tab-menu').locator('[data-kind="chat"][data-cmd="gemini"]').click();
   await expect(win.locator('.chat-tab')).toHaveCount(2);
   await expect(win.locator('.chat-pane.show .chat-item-user')).toHaveCount(0);
   await app.close();
@@ -836,7 +836,7 @@ test('Report a bug and Request a feature live in the top bar and the Help menu, 
   await expect(win.locator('#btn-report-bug')).toBeHidden();
   // Right side reads as groups: agents/status, help, then the two actions.
   const groups = await win.evaluate(() => [...document.querySelectorAll('.topbar-side-right > *')].map((n) => n.id || n.className.split(' ')[0]));
-  expect(groups).toEqual(['topbar-agents', 'topbar-chatstat', 'tb-sep', 'topbar-help', 'tb-sep', 'btn-status-toggle']);
+  expect(groups).toEqual(['topbar-agents', 'topbar-chatstat', 'tb-sep', 'topbar-usage', 'topbar-help', 'tb-sep', 'btn-status-toggle']);
   const bug = await win.evaluate(() => window.husk.feedback.url('bug'));
   expect(bug.ok).toBe(true);
   const u = new URL(bug.url);
@@ -1059,7 +1059,7 @@ test('an AskUserQuestion permission renders selectable options and submits a pic
 
   const perm = pane.locator('.chat-perm');
   await expect(perm).toBeVisible();
-  await expect(perm.locator('.chat-perm-title')).toHaveText('AskUserQuestion');
+  await expect(perm.locator('.chat-perm-title')).toHaveText('Question');
   // The question and its options render as text, not a scrolling JSON <pre>.
   await expect(perm.locator('.chat-ask-question')).toHaveText('Retire the old welcome page?');
   await expect(perm.locator('.chat-ask-tag')).toHaveText('Legacy views');

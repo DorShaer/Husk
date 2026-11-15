@@ -38,6 +38,22 @@ function ask(method, params) {
 
 async function playTurn(turnId, prompt) {
   note('turn/started', { threadId: THREAD, turn: { id: turnId, status: 'inProgress' } });
+  if (prompt.startsWith('questions:')) {
+    const response = ask('item/tool/requestUserInput', {
+      threadId: THREAD, turnId, itemId: 'question-' + turnId, isBlocking: false,
+      questions: [
+        { id: 'panel', header: 'Panel', question: 'Which left panel should be resizable?', isOther: true, options: [{ label: 'Navigation sidebar', description: 'Chat, Agents and Brain' }, { label: 'Sessions list', description: 'The list beside the chat' }, { label: 'Both', description: 'Resize both panels' }] },
+        { id: 'note', header: 'Details', question: 'Any other details?', options: null },
+      ],
+    });
+    note('item/agentMessage/delta', { threadId: THREAD, turnId, itemId: 'progress-' + turnId, delta: 'I can keep checking the layout while you choose.' });
+    note('turn/completed', { threadId: THREAD, turn: { id: turnId, status: 'completed' } });
+    const answer = await response;
+    note('turn/started', { threadId: THREAD, turn: { id: turnId + '-reply', status: 'inProgress' } });
+    note('item/agentMessage/delta', { threadId: THREAD, turnId: turnId + '-reply', itemId: 'answer-' + turnId, delta: 'Question reply: ' + JSON.stringify(answer) });
+    note('turn/completed', { threadId: THREAD, turn: { id: turnId + '-reply', status: 'completed' } });
+    return;
+  }
   note('item/started', { threadId: THREAD, turnId, item: { type: 'agentMessage', id: 'm1', text: '' } });
   for (const delta of ['Running ', 'the **command**.']) note('item/agentMessage/delta', { threadId: THREAD, turnId, itemId: 'm1', delta });
   note('item/completed', { threadId: THREAD, turnId, item: { type: 'agentMessage', id: 'm1', text: 'Running the **command**.' } });
@@ -53,7 +69,7 @@ async function playTurn(turnId, prompt) {
   note('item/completed', { threadId: THREAD, turnId, item: { ...exec, status: ok ? 'completed' : 'declined', exitCode: ok ? 0 : null, aggregatedOutput: ok ? 'hi\n' : null } });
   note('thread/tokenUsage/updated', { threadId: THREAD, turnId, tokenUsage: { total: { totalTokens: 20000 }, last: { totalTokens: 20000 }, modelContextWindow: 200000 } });
   note('item/started', { threadId: THREAD, turnId, item: { type: 'agentMessage', id: 'm2', text: '' } });
-  const closing = process.env.HUSK_E2E_REPLY || `decision was ${answer && answer.decision} brain=${/Husk Brain/.test(prompt) ? 'yes' : 'no'}`;
+  const closing = process.env.HUSK_E2E_REPLY || `decision was ${answer && answer.decision} brain=${/Husk Brain/.test(prompt) ? 'yes' : 'no'} rules=${/^\[Husk Brain rules:/.test(prompt) ? 'yes' : 'no'}`;
   note('item/agentMessage/delta', { threadId: THREAD, turnId, itemId: 'm2', delta: closing });
   note('item/completed', { threadId: THREAD, turnId, item: { type: 'agentMessage', id: 'm2', text: closing } });
   note('turn/completed', { threadId: THREAD, turn: { id: turnId, status: 'completed', error: null, durationMs: 1200 } });

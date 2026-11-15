@@ -203,9 +203,9 @@ a cleanup path such as `~/.local/share/husk`, the uninstaller skips that path.
 
 ### Pages
 
-- **Chat**: the conversation as a native thread, with a Sessions column beside it (or the CLI's own terminal when Preferences says so, or the CLI has no chat protocol). Open the Changes canvas to inspect the working-tree diff, the branch's pull request, and its checks beside the conversation. Drag-drop files and images; the status panel folds out on the right and its width is yours to drag. Split the view to run two chats side by side (`Ctrl+\`).
+- **Chat**: the conversation as a native thread, with a Sessions column beside it (or the CLI's own terminal when Preferences says so, or the CLI has no chat protocol). Open the Changes canvas to inspect the working-tree diff, the branch's pull request, and its checks beside the conversation. Drag-drop files and images; the status panel folds out on the right and its width is yours to drag. Split the view to run two chats side by side (`Ctrl+\`). The New menu lists installed CLIs; the composer's CLI and folder chips switch the conversation context, with an option to carry its history into the new session.
 - **Terminal**: a real shell in your project, in tabs, pinned in the rail above the tool selector.
-- **Brain**: what Husk remembers. Save notes, teach it from text files, or let it capture a short record after a chat; the memories that fit are recalled into your next message. Every memory can be pinned, edited, or removed, and the Synapses view shows how they connect.
+- **Brain**: what Husk remembers. Save notes, teach it from text files, or let it capture a short record after a chat; the memories that fit are recalled into your next message. Mark a note as a rule to send it with unrelated chat prompts too. Rules default to global scope, can be limited to a workspace, and are included when a terminal session starts. The Rules tab shows disabled rules and rules held back by the prompt budget. Every memory can be pinned, edited, or removed, and the Synapses view shows how they connect.
 - **Agents**: pick which agent personas activate for the next session. Multiple can be active at once; import from any local CLI's agent dir, or install an agent pack from a local repo folder or a repo URL (e.g. `https://github.com/dev/agent-repo`).
 - **Workflows**: a visual graph editor for chained steps with conditional branching and AI-decided routing.
 - **Projects**: switch the agent cwd between known project directories (so Claude's "remember this folder" trust prompts work).
@@ -348,7 +348,11 @@ All settings live in `~/.config/husk/config.json` and are editable from the Pref
 - **Active agent profiles**: one or more agent personas applied to the next session
 - **Chat view** (`chatView`: `chat` or `terminal`): how a new chat opens, native chat or the agent's own terminal. Chat is the default for CLIs with a protocol
 - **Active project**: drives the agent's working directory so per-folder trust prompts work
-- **Theme** (11 themes: Light, the default for a new install with the indigo accent, Sepia, Ember, Midnight, Dark, Tokyo Night, Catppuccin, Rose Pine, Gruvbox, Nord, Dracula) and **accent color** (orange / cyan / indigo / emerald / rose)
+- **Theme and accent color**: the existing palettes plus Solarized Light and Dark, One Dark, Monokai, Everforest, Kanagawa, and high contrast light and dark. Pick a built-in accent or a custom color.
+- **Background image**: choose a local PNG, JPEG or WebP. Husk checks its byte and pixel limits, re-encodes it in a sandboxed helper, and stores a private copy without the source path. Dim and blur are adjustable.
+- **Usage**: a bell shows context, plan and daily budget readings when available. Warnings have configurable thresholds. An optional daily-budget confirmation asks before sending.
+- **Transcript retention**: keep local chat history for continuation between CLIs, with a default retention of 30 days.
+- **Sharing**: bundle import/export and an optional local scanner. Imported bundles, agent packs, workflow artifacts and pasted MCP sets require an installation review.
 - **Voice** (enable, voice model, speaking rate)
 - **Show recap line** (when off, suppresses end-of-response summaries)
 - **Reopen the last session on launch** (`resumeLastOnLaunch`, on by default)
@@ -356,7 +360,7 @@ All settings live in `~/.config/husk/config.json` and are editable from the Pref
 
 ## Privacy
 
-Husk runs entirely on your machine. No telemetry. No analytics. The only network calls are made by the agent CLI itself when it talks to its model provider, and by the optional voice installer when it downloads Piper and a voice model from their public release.
+Husk stores your data on your machine. No telemetry. No analytics. Network requests support configured integrations such as GitHub, updates, voice downloads and plan-usage readings, alongside each agent CLI's model calls. Usage preferences can disable direct plan-usage requests and rely on events reported by the CLI. Transcript storage, background processing and bundle staging run locally; a configured external scanner runs on the staged files.
 
 ## License
 
@@ -367,3 +371,6 @@ Husk is source-available under the [Elastic License 2.0](LICENSE). You can use i
 Husk's reasoning, thinking format, and Algorithm phase machine come from [LifeOS](https://github.com/danielmiessler/LifeOS) (formerly PAI) and Telos by **Daniel Miessler**. If you find Husk useful go show him some love.
 
 The terminal embedding uses [`xterm.js`](https://github.com/xtermjs/xterm.js) plus [`node-pty`](https://github.com/microsoft/node-pty). On Linux the PTY is established through `script(1)` so `claude --resume` gets its controlling terminal. Voice is via [Piper TTS](https://github.com/rhasspy/piper). The workflow editor uses [Drawflow](https://github.com/jerosoler/Drawflow).
+
+
+More detail: [chat continuation, Brain rules and usage](docs/chat-continuation.md), [local sharing](docs/local-sharing.md), and [local review scope and verification](docs/roadmap-review.md).

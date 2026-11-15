@@ -65,13 +65,14 @@ function isOlder(session, now) {
 }
 
 function normPath(p) {
-  return String(p || '').replace(/\/+$/, '');
+  return String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').replace(/^([A-Z]):/, (_, drive) => `${drive.toLowerCase()}:`) || (String(p || '').startsWith('/') ? '/' : '');
 }
 
-// The directory the session actually ran in. The recorded cwd is authoritative;
-// the project path is a decode of the directory name and only a fallback.
+// The directory the session actually ran in. The main process resolves links
+// into realCwd; without it the recorded cwd is authoritative, and the project
+// path is a decode of the directory name and only a fallback.
 function sessionCwd(s) {
-  return normPath((s && s.originalCwd) || (s && s.projectPath));
+  return normPath((s && s.realCwd) || (s && s.originalCwd) || (s && s.projectPath));
 }
 
 function basename(p) {
@@ -79,9 +80,12 @@ function basename(p) {
   return segs.length ? segs[segs.length - 1] : '';
 }
 
+// A session belongs to a project when it ran in the project folder or in a
+// folder inside it.
 function inCurrentProject(s, currentCwd) {
   const cur = normPath(currentCwd);
-  return cur !== '' && sessionCwd(s) === cur;
+  const cwd = sessionCwd(s);
+  return cur !== '' && (cwd === cur || cwd.startsWith(cur.endsWith('/') ? cur : `${cur}/`));
 }
 
 const norm = (x) => String(x == null ? '' : x).toLowerCase().replace(/\s+/g, ' ').trim();

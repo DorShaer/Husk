@@ -47,3 +47,13 @@ test('prefers explicit session title events over first prompt', () => {
   assert.equal(r.title, 'MCP connection fix');
   assert.equal(r.firstMessage, 'very long raw request');
 });
+
+test('extracts user messages without treating tool output as user content', () => {
+  const { copilotUserMessages } = require('../../src/lib/copilot-session-title');
+  const text = [
+    JSON.stringify({ type: 'user.message', data: { content: 'Read the workflow source' } }),
+    JSON.stringify({ type: 'tool.execution_complete', data: { content: '[AUTONOMOUS MODE]' } }),
+    JSON.stringify({ type: 'user.message', data: { content: 'Explain [AUTONOMOUS MODE] in that source' } }),
+  ].join('\n');
+  assert.deepEqual(copilotUserMessages(text), ['Read the workflow source', 'Explain [AUTONOMOUS MODE] in that source']);
+});

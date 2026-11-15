@@ -22,7 +22,7 @@ function fakeChild() {
   return child;
 }
 
-function harness() {
+function harness(options = {}) {
   const spawned = [];
   const events = [];
   const exits = [];
@@ -36,6 +36,7 @@ function harness() {
     appVersion: '2.12.0',
     platform: 'win32',
     controlTimeoutMs: 50,
+    recordPrompt: options.recordPrompt,
   });
   return { rt, spawned, events, exits, children };
 }
@@ -506,4 +507,43 @@ test('Allow all belongs to one chat and ends with its agent', async () => {
   fresh.feed({ type: 'control_request', request_id: 'r9', request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'ls' } } });
   assert.equal(fresh.stdinLines.some((l) => l.type === 'control_response' && l.response.response && l.response.response.behavior), false);
   assert.equal(events.filter((e) => e.tabId === 'a' && e.ev.type === 'permission').length, 2);
+});
+
+test('streaming cost totals become deltas and reset with the session', async () => {
+  const { rt, events, children } = harness();
+  await rt.start({ tabId: 'cost', command: 'claude', cwd: '/w' });
+  const child = children[0];
+  child.feed({ type: 'system', subtype: 'init', session_id: 'first-session' });
+  child.feed({ type: 'result', total_cost_usd: 0.1 });
+  child.feed({ type: 'result', total_cost_usd: 0.16 });
+  child.feed({ type: 'result', total_cost_usd: 0 });
+  child.feed({ type: 'result', total_cost_usd: 0.2 });
+  child.feed({ type: 'system', subtype: 'init', session_id: 'next-session' });
+  child.feed({ type: 'result', total_cost_usd: 0.03 });
+  assert.deepStrictEqual(events.filter((e) => e.ev.type === 'turn_end').map((e) => Number(e.ev.costUsd.toFixed(2))), [0.1, 0.06, 0, 0.04, 0.03]);
+  await rt.stop({ tabId: 'cost' });
+});
+test('a resumed streaming cost establishes a baseline before counting growth', async () => {
+  const { rt, events, children } = harness();
+  await rt.start({ tabId: 'cost', command: 'claude --resume previous-session', cwd: '/w' });
+  children[0].feed({ type: 'result', total_cost_usd: 10 });
+  children[0].feed({ type: 'result', total_cost_usd: 10.2 });
+  const costs = events.filter((e) => e.ev.type === 'turn_end').map((e) => e.ev.costUsd);
+  assert.strictEqual(costs[0], undefined);
+  assert.strictEqual(Number(costs[1].toFixed(2)), 0.2);
+  await rt.stop({ tabId: 'cost' });
+});
+
+
+test('only accepted user prompts reach durable recording and injected context stays out', async () => {
+  const recorded = [];
+  const { rt } = harness({ recordPrompt: (tabId, event) => recorded.push({ tabId, event }) });
+  assert.strictEqual((await rt.prompt({ tabId: 'missing', text: 'not sent' })).ok, false);
+  await rt.start({ tabId: 'record', command: 'claude', cwd: '/w' });
+  assert.strictEqual((await rt.prompt({ tabId: 'record', text: '' })).ok, false);
+  assert.strictEqual(recorded.length, 0);
+  assert.strictEqual((await rt.prompt({ tabId: 'record', text: 'My message', context: 'PRIVATE CONTEXT' })).ok, true);
+  assert.strictEqual(recorded.length, 1);
+  assert.strictEqual(recorded[0].event.text, 'My message');
+  await rt.stop({ tabId: 'record' });
 });

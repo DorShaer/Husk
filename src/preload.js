@@ -53,6 +53,7 @@ try {
       document.body.dataset.theme = boot.theme;
       document.body.dataset.mode = boot.mode;
       if (boot.accent) document.body.dataset.accent = boot.accent;
+      for (const [name, value] of Object.entries(boot.accentVars || {})) document.body.style.setProperty(name, value);
       return true;
     };
     if (!stamp()) {
@@ -69,6 +70,16 @@ try {
 } catch (_) { /* the renderer still applies the theme from config on load */ }
 
 contextBridge.exposeInMainWorld('husk', {
+  foundation: {
+    chooseScanner: () => ipcRenderer.invoke('scanner:choose'),
+    removeScanner: () => ipcRenderer.invoke('scanner:remove'),
+    importBundle: () => ipcRenderer.invoke('bundles:import'),
+    bundleItems: (kind) => ipcRenderer.invoke('bundles:items', { kind }),
+    exportBundle: (item) => ipcRenderer.invoke('bundles:export', item),
+    onReview: (fn) => ipcRenderer.on('installReview:request', (_event, details) => fn(details)),
+    answerReview: (answer) => ipcRenderer.invoke('installReview:answer', answer),
+  },
+
   pty: {
     // sessionId threads through every channel so multiple PTYs run in
     // parallel; when omitted the main process targets the active session.
@@ -104,6 +115,9 @@ contextBridge.exposeInMainWorld('husk', {
     // Past session log as chat events, for resuming into Chat view with the
     // conversation shown. { agent, sessionId, cwd } -> { ok, agent, events, error? }
     history: (opts) => ipcRenderer.invoke('chat:history', opts || {}),
+    // A discussion as text for another CLI. { tabId } | { agent, sessionId, cwd }
+    // -> { ok, mode, context, from, turns, error? }
+    handoff: (src) => ipcRenderer.invoke('chat:handoff', src || {}),
     // { tabId, text, images? [{ mimeType, data (base64) }] } -> { ok, error? }
     prompt: (opts) => ipcRenderer.invoke('chat:prompt', opts || {}),
     // { tabId } -> { ok }
@@ -195,6 +209,11 @@ contextBridge.exposeInMainWorld('husk', {
     list: (opts) => ipcRenderer.invoke('models:list', opts || {}),   // opts.command targets a specific vendor
   },
   stats: { get: () => ipcRenderer.invoke('stats:get') },
+  // Plan windows and the user's daily count, for the usage bell.
+  usage: {
+    get: () => ipcRenderer.invoke('usage:get'),
+    onDaily: (cb) => ipcRenderer.on('usage:daily', (_e, p) => cb(p)),
+  },
   skills: {
     list: () => ipcRenderer.invoke('skills:list'),
     read: (mdPath) => ipcRenderer.invoke('skills:read', mdPath),
@@ -214,7 +233,7 @@ contextBridge.exposeInMainWorld('husk', {
   // `agents` below, which detects which agent CLIs are installed, and from the
   // Agents page, which edits reusable agent definitions.
   auth: {
-    status: () => ipcRenderer.invoke('auth:status'),
+    status: (opts) => ipcRenderer.invoke('auth:status', opts || {}),
   },
   bgAgents: {
     list: (payload) => ipcRenderer.invoke('bgAgents:list', payload || {}),
@@ -319,9 +338,18 @@ contextBridge.exposeInMainWorld('husk', {
   // The Brain: what Husk remembers and recalls into a prompt (src/lib/brain.js).
   // graph -> { ok, scope, scopeName, enabled, nodes, edges }. onActivity fires
   // with { kind: 'recall'|'capture'|'learn'|'idle', ids, busy } as it works.
+  // The background image. choose opens the system picker in main; every call
+  // resolves to { ok, background: { hash, ext, dim, blur } | null, error? }.
+  background: {
+    choose: () => ipcRenderer.invoke('background:choose'),
+    remove: () => ipcRenderer.invoke('background:remove'),
+    setDisplay: (display) => ipcRenderer.invoke('background:setDisplay', display || {}),
+  },
   brain: {
     graph: (opts) => ipcRenderer.invoke('brain:graph', opts || {}),
     addNote: (opts) => ipcRenderer.invoke('brain:addNote', opts || {}),
+    addRule: (opts) => ipcRenderer.invoke('brain:addRule', opts || {}),
+    rule: (id, patch) => ipcRenderer.invoke('brain:rule', Object.assign({}, patch, { id })),
     addFiles: (opts) => ipcRenderer.invoke('brain:addFiles', opts || {}),
     remove: (id) => ipcRenderer.invoke('brain:remove', { id }),
     pin: (id, pinned) => ipcRenderer.invoke('brain:pin', { id, pinned }),

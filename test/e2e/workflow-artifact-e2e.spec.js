@@ -115,7 +115,9 @@ test('a workflow exports, re-imports, installs, gates, runs, and leaves evidence
   expect(pf.blocking, `preflight blocked: ${JSON.stringify(pf.checks)}`).toBe(0);
 
   // 4. Install.
-  const inst = await win.evaluate(([a, cwd]) => window.husk.workflows.install({ artifact: a, cwd }), [read.artifact, env.proj]);
+  const installing = win.evaluate(([a, cwd]) => window.husk.workflows.install({ artifact: a, cwd }), [read.artifact, env.proj]);
+  await win.getByRole('dialog', { name: 'Review installation' }).getByRole('button', { name: 'Install after review' }).click();
+  const inst = await installing;
   expect(inst.ok, `install refused: ${JSON.stringify(inst)}`).toBe(true);
   const newId = inst.workflow.id;
   expect(inst.sidecar.origin).toBe('imported');

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <title>Husk</title>
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self';" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: husk-bg:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self';" />
     <link rel="stylesheet" href="vendor/xterm.css" />
     <link rel="stylesheet" href="vendor/drawflow.min.css" />
     <link rel="stylesheet" href="styles.css" />
@@ -13,6 +13,8 @@
     <script src="vendor/drawflow.min.js"></script>
   </head>
   <body data-theme="midnight" data-mode="dark" data-accent="orange" data-page="boot" data-rail="expanded">
+    <!-- The user's background image, under every other layer. -->
+    <div id="bg-layer" aria-hidden="true" hidden><div id="bg-layer-image"></div></div>
 
     <!-- First-run onboarding -->
     <div id="onboarding" class="onboarding" hidden data-step="0">
@@ -215,17 +217,6 @@
                 <span class="ob-pref-desc">Pick a look. Hover for the name.</span>
               </span>
               <div class="ob-themes" id="ob-theme">
-                <button type="button" class="ob-theme-sw" data-mode="dark" title="Dark" aria-label="Dark"></button>
-                <button type="button" class="ob-theme-sw" data-mode="light" title="Light" aria-label="Light"></button>
-                <button type="button" class="ob-theme-sw" data-mode="midnight" title="Midnight" aria-label="Midnight"></button>
-                <button type="button" class="ob-theme-sw" data-mode="tokyo-night" title="Tokyo Night" aria-label="Tokyo Night"></button>
-                <button type="button" class="ob-theme-sw" data-mode="catppuccin" title="Catppuccin" aria-label="Catppuccin"></button>
-                <button type="button" class="ob-theme-sw" data-mode="rose-pine" title="Rose Pine" aria-label="Rose Pine"></button>
-                <button type="button" class="ob-theme-sw" data-mode="gruvbox" title="Gruvbox" aria-label="Gruvbox"></button>
-                <button type="button" class="ob-theme-sw" data-mode="nord" title="Nord" aria-label="Nord"></button>
-                <button type="button" class="ob-theme-sw" data-mode="dracula" title="Dracula" aria-label="Dracula"></button>
-                <button type="button" class="ob-theme-sw" data-mode="sepia" title="Sepia" aria-label="Sepia"></button>
-                <button type="button" class="ob-theme-sw" data-mode="ember" title="Ember" aria-label="Ember"></button>
               </div>
             </div>
             <div class="ob-pref-row">
@@ -234,11 +225,6 @@
                 <span class="ob-pref-desc">Highlight color across the interface.</span>
               </span>
               <div class="accent-picker" id="ob-accent">
-                <div class="accent-swatch" data-c="orange" title="Orange"></div>
-                <div class="accent-swatch" data-c="cyan" title="Cyan"></div>
-                <div class="accent-swatch" data-c="indigo" title="Indigo"></div>
-                <div class="accent-swatch" data-c="emerald" title="Emerald"></div>
-                <div class="accent-swatch" data-c="rose" title="Rose"></div>
               </div>
             </div>
             <label class="ob-pref-row">
@@ -498,6 +484,15 @@
           </span>
         </div>
         <span class="tb-sep" aria-hidden="true"></span>
+        <!-- Usage limits: quiet while every source is fine, and a count of the
+             sources that are not. The panel lists each one. -->
+        <div class="topbar-help topbar-usage" id="topbar-usage">
+          <button class="iconbtn iconbtn-square usage-bell" id="usage-bell" type="button" data-state="ok" title="Usage limits" aria-label="Usage limits" aria-haspopup="dialog" aria-expanded="false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9a6 6 0 0 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9z"/><path d="M10 20a2.2 2.2 0 0 0 4 0"/></svg>
+            <span class="usage-bell-count" id="usage-bell-count" hidden></span>
+          </button>
+          <div class="tb-menu usage-panel" id="usage-panel" role="dialog" aria-label="Usage limits" hidden></div>
+        </div>
         <div class="topbar-help">
           <button class="iconbtn iconbtn-square" id="btn-help" title="Help and feedback" aria-label="Help and feedback" aria-haspopup="menu" aria-expanded="false">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .9-1 1.7"/><path d="M12 17h.01"/></svg>
@@ -2452,6 +2447,7 @@
                 <span>Recall into chats</span>
               </label>
               <button class="ghost-btn" id="br-add-note" type="button"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span class="btn-label">Add note</span></button>
+              <button class="ghost-btn" id="br-add-rule" type="button" title="An instruction sent with every message, in chat and terminal"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span class="btn-label">Add rule</span></button>
               <button class="btn-primary" id="br-add-files" type="button"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg> Add files</button>
             </div>
           </div>
@@ -2463,7 +2459,7 @@
               <form class="br-note" id="br-note-form" hidden>
                 <textarea id="br-note-text" rows="4" maxlength="4000" placeholder="Something worth remembering: a rule, a fact about this project, how a thing is done here"></textarea>
                 <div class="br-note-row">
-                  <label class="br-switch"><input type="checkbox" id="br-note-global" /><span>All workspaces</span></label>
+                  <label class="br-switch"><input type="checkbox" id="br-note-global" /><span id="br-note-reach">All workspaces</span></label>
                   <span class="br-note-acts">
                     <button class="ghost-btn" id="br-note-cancel" type="button">Cancel</button>
                     <button class="btn-primary" type="submit">Remember</button>
@@ -2472,6 +2468,7 @@
               </form>
               <div class="br-tabs" role="tablist" aria-label="Brain lists">
                 <button class="br-tab is-active" type="button" role="tab" data-tab="memories" aria-selected="true">Memories</button>
+                <button class="br-tab" type="button" role="tab" data-tab="rules" aria-selected="false">Rules <span class="br-tab-count" id="br-tab-rules-count"></span></button>
                 <button class="br-tab" type="button" role="tab" data-tab="activity" aria-selected="false">Activity <span class="br-tab-count" id="br-tab-activity-count"></span></button>
               </div>
               <input class="br-search" id="br-search" type="search" placeholder="Search memories" aria-label="Search memories" />
@@ -2782,6 +2779,10 @@
                     <span class="pni-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg></span>
                     Behavior
                   </button>
+                  <button class="prefs-nav-item" data-prefs-section="usage">
+                    <span class="pni-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9a6 6 0 0 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9z"/><path d="M10 20a2.2 2.2 0 0 0 4 0"/></svg></span>
+                    Usage
+                  </button>
                   <button class="prefs-nav-item" data-prefs-section="files">
                     <span class="pni-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg></span>
                     Files
@@ -2806,6 +2807,10 @@
                   </button>
                 </div>
                 <div class="prefs-nav-group is-standalone">
+                  <button class="prefs-nav-item" data-prefs-section="foundation">
+                    <span class="pni-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 10h18M7 15h4"/></svg></span>
+                    Sharing
+                  </button>
                   <button class="prefs-nav-item" data-prefs-section="about">
                     <span class="pni-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 7.8h.01"/></svg></span>
                     About
@@ -2949,6 +2954,60 @@
                 </section>
               </div><!-- /pref-section behavior -->
 
+              <div class="pref-section" data-prefs-section="usage">
+                <section class="pref-card">
+                  <div class="pref-card-title section-label">Plan limits</div>
+                  <label class="pref-row">
+                    <span class="pref-row-text">
+                      <span class="pref-label">Where plan limit numbers come from</span>
+                      <span class="pref-desc">With the direct request on, Husk asks the plan's usage endpoint every 30 seconds, using the sign-in the CLI already holds on this machine. With it off, Husk makes no such request and shows only what a CLI reports in its own chat stream.</span>
+                    </span>
+                    <select id="pref-usage-source">
+                      <option value="endpoint">Direct request and CLI reports</option>
+                      <option value="cli">CLI reports only (direct request off)</option>
+                    </select>
+                  </label>
+                  <label class="pref-row">
+                    <span class="pref-row-text">
+                      <span class="pref-label">Warn at</span>
+                      <span class="pref-desc">Percent of a limit at which the usage bell turns amber.</span>
+                    </span>
+                    <input type="text" id="pref-usage-close" inputmode="numeric" maxlength="2" placeholder="75" />
+                  </label>
+                  <label class="pref-row">
+                    <span class="pref-row-text">
+                      <span class="pref-label">Critical at</span>
+                      <span class="pref-desc">Percent of a limit at which the bell marks a source critical. Must be above the warning level.</span>
+                    </span>
+                    <input type="text" id="pref-usage-critical" inputmode="numeric" maxlength="2" placeholder="90" />
+                  </label>
+                </section>
+                <section class="pref-card">
+                  <div class="pref-card-title section-label">Your own budget</div>
+                  <label class="pref-row">
+                    <span class="pref-row-text">
+                      <span class="pref-label">Tokens per day</span>
+                      <span class="pref-desc">Usage recorded in Husk, including cached input when reported. Resumed counters start from an observed baseline. Resets at local midnight; empty means no budget.</span>
+                    </span>
+                    <input type="text" id="pref-usage-tokens" inputmode="numeric" maxlength="12" placeholder="No budget" />
+                  </label>
+                  <label class="pref-row">
+                    <span class="pref-row-text">
+                      <span class="pref-label">Dollars per day</span>
+                      <span class="pref-desc">Based on cost estimates reported by the CLI, with subscription list prices excluded. Resumed sessions establish a new observed baseline. Empty means no budget.</span>
+                    </span>
+                    <input type="text" id="pref-usage-dollars" inputmode="decimal" maxlength="8" placeholder="No budget" />
+                  </label>
+                  <label class="pref-row">
+                    <span class="pref-row-text">
+                      <span class="pref-label">Ask before sending once a budget is reached</span>
+                      <span class="pref-desc">In chat view, Send asks for confirmation when your own daily budget is used up. Plan limits never block a send.</span>
+                    </span>
+                    <input type="checkbox" id="pref-usage-hardstop" />
+                  </label>
+                </section>
+              </div><!-- /pref-section usage -->
+
               <div class="pref-section" data-prefs-section="pai">
                 <section class="pref-card">
                   <div class="pref-card-title section-label">LifeOS</div>
@@ -2985,17 +3044,6 @@
                       <span class="pref-desc">Light or dark interface.</span>
                     </span>
                     <select id="pref-theme">
-                      <option value="midnight">Midnight</option>
-                      <option value="dark">Dark</option>
-                      <option value="tokyo-night">Tokyo Night</option>
-                      <option value="catppuccin">Catppuccin</option>
-                      <option value="rose-pine">Rose Pine</option>
-                      <option value="gruvbox">Gruvbox</option>
-                      <option value="nord">Nord</option>
-                      <option value="dracula">Dracula</option>
-                      <option value="light">Light</option>
-                      <option value="sepia">Sepia</option>
-                      <option value="ember">Ember</option>
                     </select>
                   </label>
                   <label class="pref-row">
@@ -3008,18 +3056,28 @@
                       <option value="terminal">Agent terminal</option>
                     </select>
                   </label>
+                  <label class="pref-row">
+                    <span class="pref-row-text"><span class="pref-label">Transcript retention</span><span class="pref-desc">Keep local chat transcripts for continuing discussions. Zero keeps them until removed.</span></span>
+                    <input id="pref-transcript-days" type="text" inputmode="numeric" maxlength="4" aria-label="Transcript retention in days" />
+                  </label>
                   <div class="pref-row">
                     <span class="pref-row-text">
                       <span class="pref-label">Accent color</span>
                       <span class="pref-desc">Highlight color used across the interface.</span>
                     </span>
                     <div class="accent-picker" id="accent-picker">
-                      <div class="accent-swatch" data-c="orange" title="Orange"></div>
-                      <div class="accent-swatch" data-c="cyan" title="Cyan"></div>
-                      <div class="accent-swatch" data-c="indigo" title="Indigo"></div>
-                      <div class="accent-swatch" data-c="emerald" title="Emerald"></div>
-                      <div class="accent-swatch" data-c="rose" title="Rose"></div>
                     </div>
+                  </div>
+                  <div class="pref-row" id="pref-accent-custom-row" hidden>
+                    <span class="pref-row-text">
+                      <span class="pref-label">Custom accent</span>
+                      <span class="pref-desc">Slide to a hue or type a hex colour. Husk adjusts it to stay readable on the current theme.</span>
+                    </span>
+                    <span class="pref-rate-group">
+                      <span class="pref-accent-chip" id="pref-accent-chip"></span>
+                      <input type="range" id="pref-accent-hue" min="0" max="359" step="1" aria-label="Accent hue" />
+                      <input type="text" id="pref-accent-hex" maxlength="7" spellcheck="false" autocomplete="off" aria-label="Accent hex colour" />
+                    </span>
                   </div>
                   <label class="pref-row">
                     <span class="pref-row-text">
@@ -3035,6 +3093,39 @@
                     </span>
                     <button class="ghost-btn" id="pref-replay-onboarding" type="button">Replay</button>
                   </div>
+                </section>
+                <section class="pref-card">
+                  <div class="pref-card-title section-label">Background</div>
+                  <div class="pref-row">
+                    <span class="pref-row-text">
+                      <span class="pref-label">Background image</span>
+                      <span class="pref-desc">A PNG, JPEG or WebP picture behind the interface, up to 15 MB. Husk keeps its own resized copy.</span>
+                    </span>
+                    <span class="pref-inline-group">
+                      <button class="ghost-btn" id="pref-bg-remove" type="button" hidden>Remove image</button>
+                      <button class="ghost-btn" id="pref-bg-choose" type="button">Choose image</button>
+                    </span>
+                  </div>
+                  <label class="pref-row">
+                    <span class="pref-row-text">
+                      <span class="pref-label">Dim</span>
+                      <span class="pref-desc">How much of the theme colour covers the image.</span>
+                    </span>
+                    <span class="pref-rate-group">
+                      <span class="pref-range-value" id="pref-bg-dim-display"></span>
+                      <input type="range" id="pref-bg-dim" min="30" max="95" step="1" />
+                    </span>
+                  </label>
+                  <label class="pref-row">
+                    <span class="pref-row-text">
+                      <span class="pref-label">Blur</span>
+                      <span class="pref-desc">Softens the image so it stays behind the text.</span>
+                    </span>
+                    <span class="pref-rate-group">
+                      <span class="pref-range-value" id="pref-bg-blur-display"></span>
+                      <input type="range" id="pref-bg-blur" min="0" max="24" step="1" />
+                    </span>
+                  </label>
                 </section>
               </div><!-- /pref-section appearance -->
 
@@ -3058,6 +3149,19 @@
                 </section>
               </div><!-- /pref-section files -->
 
+              <div class="pref-section" data-prefs-section="foundation">
+                <section class="pref-card">
+                  <div class="pref-card-title section-label">Local scanner</div>
+                  <div class="pref-row"><span class="pref-row-text"><span class="pref-label" id="pref-scanner-status">No scanner configured</span><span class="pref-desc">Imported items are staged and reviewed before installation. Without a scanner, items are marked unscanned.</span></span><div class="pref-actions"><button class="ghost-btn" id="pref-scanner-choose">Choose scanner</button><button class="ghost-btn" id="pref-scanner-remove">Remove</button></div></div>
+                </section>
+                <section class="pref-card">
+                  <div class="pref-card-title section-label">Share items</div>
+                  <div class="pref-row"><span class="pref-row-text"><span class="pref-label">Import a bundle</span><span class="pref-desc">Review its publisher, permissions, scan and files before installing.</span></span><button class="ghost-btn" id="pref-bundle-import">Import bundle</button></div>
+                  <label class="pref-row"><span class="pref-row-text"><span class="pref-label">Item type</span></span><select id="pref-bundle-kind"><option value="skill">Skill</option><option value="agent">Agent</option><option value="workflow">Workflow</option><option value="prompt">Prompt</option></select></label>
+                  <label class="pref-row"><span class="pref-row-text"><span class="pref-label">Item</span><span class="pref-desc">Choose a local item to export.</span></span><select id="pref-bundle-name" aria-label="Item to export"></select></label>
+                  <div class="pref-row"><span class="pref-row-text"><span class="pref-desc">Exports declare command, network and file access for review by the recipient.</span></span><button class="ghost-btn" id="pref-bundle-export">Export bundle</button></div>
+                </section>
+              </div>
               <div class="pref-section" data-prefs-section="about">
                 <section class="pref-card">
                   <div class="pref-card-title section-label">About</div>
@@ -4156,12 +4260,17 @@ Write the smallest patch that makes that one assertion pass. Touch no other file
     <script src="brain-page.js"></script>
     <script src="sc-dom.js"></script>
     <script src="sc-page.js"></script>
+    <script src="../lib/themes.js"></script>
     <script src="../lib/chat-events.js"></script>
+    <script src="../lib/usage-monitor.js"></script>
     <script src="../lib/turn-changes.js"></script>
     <script src="chat-canvas.js"></script>
     <script src="chat-md.js"></script>
+    <script src="../lib/new-chat-menu.js"></script>
     <script src="chat-ui.js"></script>
     <script src="app.js"></script>
+    <script src="usage-bell.js"></script>
+    <script src="foundation.js"></script>
     <!-- Run log. The transcript lives on disk beside the audit log, so this
          reads a finished run's output back from there. -->
     <div class="aut-transcript" id="aut-transcript" hidden>

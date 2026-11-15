@@ -1400,12 +1400,13 @@ function appearanceSnapshot() {
   return {
     theme: cfg.theme || 'midnight',
     accent: cfg.accent || 'orange',
+    accentCustom: HuskThemes.normalizeHex(cfg.accentCustom) || HuskThemes.DEFAULT_CUSTOM_ACCENT,
     railExpanded: cfg.railExpanded !== false,
   };
 }
 function restoreAppearanceSnapshot(snap) {
   applyTheme(snap.theme);
-  applyAccent(snap.accent);
+  applyAccent(snap.accent, snap.accentCustom);
   document.body.dataset.rail = snap.railExpanded ? 'expanded' : 'collapsed';
   syncRailToggleTitle();
   bindPrefs();
@@ -1422,7 +1423,10 @@ function syncAppearanceActionsBar() {
 function previewAppearance(patch) {
   pendingAppearance = Object.assign(pendingAppearance || {}, patch);
   if ('theme' in patch) applyTheme(patch.theme);
-  if ('accent' in patch) applyAccent(patch.accent);
+  if ('accent' in patch || 'accentCustom' in patch) {
+    const next = { ...appearanceSnapshot(), ...pendingAppearance };
+    applyAccent(next.accent, next.accentCustom);
+  }
   if ('railExpanded' in patch) {
     document.body.dataset.rail = patch.railExpanded ? 'expanded' : 'collapsed';
     syncRailToggleTitle();
@@ -1829,6 +1833,171 @@ async function openTerminalTab() {
   } catch (err) { toast('Could not open terminal: ' + err.message, 'error'); }
 }
 
+// A menu shared by the composer and session actions.
+function contextMenu(anchor, entries) {
+  document.getElementById('chat-context-menu')?.closeMenu?.();
+  const menu = csEl('div', 'cs-menu');
+  menu.id = 'chat-context-menu';
+  menu.setAttribute('role', 'menu');
+  const rect = anchor?.getBoundingClientRect();
+  Object.assign(menu.style, { position: 'fixed', left: `${Math.max(8, Math.min(rect?.left || 320, innerWidth - 290))}px`, top: '0px', right: 'auto', bottom: 'auto', maxHeight: '70vh', overflowY: 'auto', width: '280px', zIndex: '250' });
+  let listenerTimer;
+  const close = () => { clearTimeout(listenerTimer); menu.remove(); document.removeEventListener('click', outside); document.removeEventListener('keydown', key); };
+  menu.closeMenu = close;
+  const outside = (ev) => { if (!menu.contains(ev.target)) close(); };
+  const key = (ev) => {
+    if (ev.key === 'Escape') { close(); anchor?.focus(); }
+    if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+      ev.preventDefault();
+      const buttons = [...menu.querySelectorAll('button')];
+      const at = buttons.indexOf(document.activeElement);
+      buttons[(at + (ev.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]?.focus();
+    }
+  };
+  for (const entry of entries) {
+    const button = csEl('button', 'cs-menu-item', entry.label);
+    button.type = 'button';
+    button.setAttribute('role', 'menuitem');
+    button.addEventListener('click', (ev) => { ev.stopPropagation(); close(); Promise.resolve(entry.run()).catch((err) => toast(err.message, 'error')); });
+    menu.append(button);
+  }
+  if (!entries.length) menu.append(csEl('div', 'cs-menu-note', 'No other installed CLI found.'));
+  document.body.append(menu);
+  const height = menu.getBoundingClientRect().height;
+  let top = rect ? rect.top - height - 6 : innerHeight - height - 24;
+  if (top < 8 && rect) top = rect.bottom + 6;
+  menu.style.bottom = 'auto';
+  menu.style.top = `${Math.max(8, Math.min(top, innerHeight - height - 8))}px`;
+  menu.querySelector('button')?.focus();
+  listenerTimer = setTimeout(() => { document.addEventListener('click', outside); document.addEventListener('keydown', key); }, 0);
+}
+
+async function switchDiscussion(tab, command, cwd, carry) {
+  if (!TABS.has(tab.id)) return;
+  if (tab.chatRunning) {
+    const confirmed = await openConfirmDialog({ title: 'Stop the current reply?', bodyHtml: 'The current reply must stop before switching.', confirmLabel: 'Stop and switch' });
+    if (!confirmed) return;
+  }
+  let prepared = null;
+  if (carry) {
+    prepared = await window.husk.chat.handoff({ tabId: tab.id });
+    if (!prepared?.ok) { toast(prepared?.error || 'No discussion to continue', 'error'); return; }
+  }
+  activateTab(tab.id);
+  if (chatProtocolFor(command)) {
+    tab.handoff = carry ? { tabId: tab.id } : null;
+    tab.agentId = null;
+    tab.resumedSessionId = null;
+    await restartChat(tab, { command, cwd, skipWelcome: true });
+  } else {
+    await restartPty({ command, cwd, silent: true });
+    if (prepared) {
+      const paste = prepared.context + "\n\nContinue the discussion from where it stopped.";
+      setTimeout(() => { try { tab.term.paste(paste); } catch (_) {} }, 1000);
+    }
+  }
+  noteAgentUsed(command);
+}
+
+function chooseContinuation(tab, anchor, command, cwd) {
+  contextMenu(anchor, [
+    { label: 'Continue this discussion', run: () => switchDiscussion(tab, command, cwd, true) },
+    { label: 'Start fresh', run: () => switchDiscussion(tab, command, cwd, false) },
+  ]);
+}
+
+async function offerAgentSwitch(tab, anchor) {
+  await refreshAgentMenu();
+  contextMenu(anchor, detectedAgents().filter((a) => a.command !== tabAgentCommand(tab).split(/\s+/)[0]).map((a) => ({
+    label: a.label, run: () => chooseContinuation(tab, anchor, a.command, chatWorkDir(tab)),
+  })));
+}
+async function offerFolderSwitch(tab, anchor) {
+  const folders = projectsCache.filter((p) => p && p.path).map((p) => ({
+    label: p.name || p.path, run: () => chooseContinuation(tab, anchor, tabAgentCommand(tab), p.path),
+  }));
+  folders.push({ label: 'Other folder', run: async () => {
+    const picked = await window.husk.dialog2.pickDir();
+    const cwd = typeof picked === 'string' ? picked : picked?.path;
+    if (cwd) chooseContinuation(tab, anchor, tabAgentCommand(tab), cwd);
+  } });
+  contextMenu(anchor, folders);
+}
+window.huskOfferHandoff = async (tabId, info = {}) => {
+  const tab = TABS.get(tabId);
+  if (!tab?.chat) return;
+  await refreshAgentMenu();
+  const pane = tab.chat.el;
+  pane.querySelector('.chat-handoff-offer')?.remove();
+  const card = csEl('div', 'chat-handoff-offer');
+  card.setAttribute('role', 'status');
+  card.append(csEl('span', '', info.reason === 'possible-limit'
+    ? 'This CLI may have reached a usage limit. Continue the discussion with another CLI.'
+    : 'Continue this discussion with another CLI.'));
+  for (const agent of detectedAgents().filter((a) => a.command !== tabAgentCommand(tab).split(/\s+/)[0])) {
+    const button = csEl('button', 'ghost-btn', agent.label);
+    button.type = 'button';
+    button.addEventListener('click', () => { card.remove(); switchDiscussion(tab, agent.command, chatWorkDir(tab), true).catch((err) => toast(err.message, 'error')); });
+    card.append(button);
+  }
+  const dismiss = csEl('button', 'ghost-btn', 'Dismiss');
+  dismiss.type = 'button'; dismiss.addEventListener('click', () => card.remove()); card.append(dismiss);
+  const composer = pane.querySelector('.chat-composer');
+  if (composer) composer.before(card); else pane.append(card);
+};
+
+async function offerSavedHandoff(session, anchor) {
+  await refreshAgentMenu();
+  contextMenu(anchor, detectedAgents().map((a) => ({ label: `Continue with ${a.label}`, run: async () => {
+    const source = { agent: session.agent || session.owner, sessionId: session.id, cwd: session.originalCwd || session.projectPath || session.project };
+    const prepared = await window.husk.chat.handoff(source);
+    if (!prepared?.ok) { toast(prepared?.error || 'No discussion to continue', 'error'); return; }
+    setPage('chat');
+    const tab = await openNewChatTab({ command: a.command, cwd: source.cwd, forceChat: true, skipWelcome: true, handoff: source });
+    if (tab && tab.mode !== 'chat') setTimeout(() => { try { tab.term.paste(prepared.context + "\n\nContinue the discussion from where it stopped."); } catch (_) {} }, 1000);
+  } })));
+}
+
+// When each CLI last started a chat here, so menus can list the latest first.
+const AGENT_USED_KEY = 'husk.agentLastUsed';
+function agentLastUsed() {
+  try { const v = JSON.parse(localStorage.getItem(AGENT_USED_KEY) || '{}'); return v && typeof v === 'object' ? v : {}; } catch (_) { return {}; }
+}
+function noteAgentUsed(command) {
+  const base = String(command || '').trim().split(/\s+/)[0];
+  if (!base) return;
+  try { localStorage.setItem(AGENT_USED_KEY, JSON.stringify({ ...agentLastUsed(), [base]: Date.now() })); } catch (_) {}
+}
+// The CLIs found on this machine, the one used last first.
+function detectedAgents() {
+  return window.HuskNewChatMenu.detectedAgents(agentsCache, agentLastUsed());
+}
+
+// Fills a menu with the new-chat entries: one per detected CLI, then Terminal.
+// Every menu that starts a chat is painted here.
+function paintNewChatMenu(menu, done) {
+  const entries = window.HuskNewChatMenu.newChatEntries({
+    agents: agentsCache, lastUsed: agentLastUsed(), folder: shortPath(homeRelativePath(chatWorkDir(null))),
+  });
+  menu.replaceChildren(...entries.map((entry) => {
+    const b = csEl('button', 'cs-menu-item');
+    b.type = 'button';
+    b.setAttribute('role', 'menuitem');
+    b.dataset.kind = entry.kind;
+    b.dataset.cmd = entry.command;
+    b.appendChild(csEl('span', 'cs-menu-label', entry.label));
+    if (entry.sub) b.appendChild(csEl('span', 'cs-menu-sub', entry.sub));
+    b.addEventListener('click', () => {
+      done();
+      if (entry.kind === 'terminal') { openTerminalTab(); return; }
+      setPage('chat');
+      openNewChatTab(entry.command ? { command: entry.command, preferChat: true } : {});
+    });
+    return b;
+  }));
+  if (!agentsCache.length) menu.appendChild(csEl('div', 'cs-menu-note', 'Looking for installed agents...'));
+}
+
 function openNewTabMenu(event) {
   event?.stopPropagation();
   document.getElementById('new-tab-menu')?.closeMenu?.();
@@ -1838,28 +2007,20 @@ function openNewTabMenu(event) {
   menu.setAttribute('role', 'menu');
   const anchor = event?.currentTarget;
   const rect = anchor?.getBoundingClientRect();
-  Object.assign(menu.style, { position: 'fixed', top: `${Math.min((rect?.bottom || 80) + 6, innerHeight - 110)}px`, left: `${Math.max(8, Math.min(rect?.left || 300, innerWidth - 230))}px`, zIndex: '200', width: '220px' });
+  Object.assign(menu.style, { position: 'fixed', top: `${Math.min((rect?.bottom || 80) + 6, innerHeight - 110)}px`, left: `${Math.max(8, Math.min(rect?.left || 300, innerWidth - 270))}px`, zIndex: '200', width: '260px' });
   const close = () => { menu.remove(); anchor?.setAttribute('aria-expanded', 'false'); document.removeEventListener('click', outside); document.removeEventListener('keydown', key); };
   menu.closeMenu = close;
   anchor?.setAttribute('aria-haspopup', 'menu');
   anchor?.setAttribute('aria-expanded', 'true');
   const outside = (e) => { if (!menu.contains(e.target)) close(); };
   const key = (e) => { if (e.key === 'Escape') { close(); anchor?.focus(); } };
-  const active = TABS.get(activeTabId);
-  const source = active && !active.isShell ? (active.launchCommand || active.command) : '';
-  // Carry the active chat's CLI into the new tab without carrying a resume id.
-  const newChatCommand = String(source || (cfg && cfg.agentCommand) || 'claude').trim().split(/\s+/)[0];
-  for (const [label, action] of [['New chat', () => { setPage('chat'); openNewChatTab({ command: newChatCommand, preferChat: true }); }], ['Open Terminal', openTerminalTab]]) {
-    const button = document.createElement('button');
-    button.type = 'button'; button.className = 'cs-menu-item'; button.textContent = label;
-    button.setAttribute('role', 'menuitem');
-    button.addEventListener('click', () => { close(); action(); });
-    menu.appendChild(button);
-  }
+  paintNewChatMenu(menu, close);
   document.body.appendChild(menu);
   menu.firstElementChild.focus();
   document.addEventListener('click', outside);
   document.addEventListener('keydown', key);
+  // The list is repainted once the CLIs on this machine have been looked up.
+  Promise.resolve(refreshAgentMenu()).then(() => { if (menu.isConnected) { paintNewChatMenu(menu, close); menu.firstElementChild.focus(); } }).catch(() => {});
 }
 
 async function openNewChatTab(opts = {}) {
@@ -1873,6 +2034,7 @@ async function openNewChatTab(opts = {}) {
   if (tab.isShell) { tab.title = 'Terminal'; tab.titleEarned = true; }
   tab.launchCommand = opts.command || null;
   tab.cwd = opts.cwd || null;
+  tab.handoff = opts.handoff || null;
   // A session resumed into Chat: its past events are painted before the agent
   // starts, and the tab is that session from the first frame.
   if (Array.isArray(opts.history)) tab.chatHistory = opts.history;
@@ -2620,7 +2782,10 @@ function ensureChatPane(tab) {
     host: $('#terminal'),
     agentName: cmd.split(/\s+/)[0],
     agentCommand: cmd,
+    onAgentPick: (anchor) => offerAgentSwitch(tab, anchor),
+    onFolderPick: (anchor) => offerFolderSwitch(tab, anchor),
     onModelChange: () => { try { refreshStats(); } catch (_) {} },
+    sendGate: () => (window.HuskUsageBell ? window.HuskUsageBell.sendGate() : null),
     cwd: chatWorkDir(tab),
     onAttach: () => { shareFilesViaPicker(); },
     // After the agent exits on its own, the composer offers this in place of
@@ -3036,7 +3201,7 @@ function startChatForTab(tab) {
   renderChatModeToggle();
   const run = (async () => {
     let res;
-    try { res = await window.husk.chat.start({ tabId: tab.id, command: cmd, cwd: tab.cwd || null, replay: replaySeed }); }
+    try { res = await window.husk.chat.start({ tabId: tab.id, command: cmd, cwd: tab.cwd || null, replay: replaySeed, handoff: tab.handoff }); }
     catch (err) { res = { ok: false, error: (err && err.message) || String(err) }; }
     // Closed or switched away while starting: nothing here to update.
     if (!TABS.has(tab.id) || tab.chat !== c || tab.mode !== 'chat') return false;
@@ -3055,6 +3220,9 @@ function startChatForTab(tab) {
     // user sees, whatever id the CLI reports for its own continuation.
     if (res.sessionId && !tab.resumedSessionId) { tab.agentId = String(res.sessionId); tab.agentIdProvisional = false; }
     if (res.cwd) c.setInfo({ cwd: String(res.cwd) });
+    tab.handoff = null;
+    noteAgentUsed(cmd);
+    if (res.handoff && !res.handoff.ok) toast(res.handoff.error, 'error');
     tab.chatAlive = true;
     csSchedule();
     if (tab.id === activeTabId) refreshTopbarChatStat();
@@ -3149,10 +3317,12 @@ async function restartChat(tab, opts = {}) {
 }
 
 function renderChatModeToggle() {
-  const wrap = $('#chat-mode-toggle');
-  if (!wrap) return;
   const tab = TABS.get(activeTabId) || null;
   const mode = tab ? tab.mode : preferredTabMode();
+  const footer = $('#sp-foot');
+  if (footer) footer.hidden = mode === 'chat';
+  const wrap = $('#chat-mode-toggle');
+  if (!wrap) return;
   const cmd = tabAgentCommand(tab);
   const cli = cmd.split(/\s+/)[0] || 'This CLI';
   const can = !!chatProtocolFor(cmd);
@@ -3369,6 +3539,11 @@ function csCardEl(c) {
   if (c.tabId) b.dataset.tab = c.tabId;
   if (c.sessionId) b.dataset.session = c.sessionId;
   if (c.state) b.dataset.state = c.state;
+  b.addEventListener('contextmenu', (ev) => {
+    ev.preventDefault();
+    const saved = cs.list.find((s) => s.id === c.sessionId || s.id === c.id);
+    if (saved) offerSavedHandoff(saved, b);
+  });
   const top = csEl('div', 'cs-card-top');
   top.appendChild(csEl('span', 'cs-card-agent', c.agent));
   const when = window.husk.sessionView.formatWhen(c.mtime, Date.now());
@@ -3460,7 +3635,7 @@ async function csLoad() {
       if (r && r.ok !== false) {
         cs.list = Array.isArray(r.sessions) ? r.sessions : [];
         cs.agent = String(r.agent || '');
-        cs.currentCwd = String(r.currentCwd || '');
+        cs.currentCwd = String(r.currentRealCwd || r.currentCwd || '');
       }
     } catch (_) { /* the column keeps what it had */ }
     cs.lastSig = '';
@@ -3580,23 +3755,7 @@ function csCloseMenus() {
 
 function csPaintAgentMenu() {
   const menu = document.getElementById('cs-agent-menu');
-  if (!menu) return;
-  menu.replaceChildren();
-  const terminal = csEl('button', 'cs-menu-item', 'Open Terminal');
-  terminal.type = 'button'; terminal.dataset.terminal = '1'; terminal.setAttribute('role', 'menuitem');
-  menu.appendChild(terminal);
-  const current = String((cfg && cfg.agentCommand) || 'claude').trim().split(/\s+/)[0];
-  if (!agentsCache.length) menu.appendChild(csEl('div', 'cs-menu-note', 'Looking for installed agents...'));
-  for (const a of agentsCache) {
-    const b = csEl('button', 'cs-menu-item');
-    b.type = 'button';
-    b.setAttribute('role', 'menuitem');
-    b.dataset.cmd = a.command;
-    b.disabled = !a.available;
-    b.appendChild(csEl('span', 'cs-menu-label', a.label || a.command));
-    b.appendChild(csEl('span', 'cs-menu-sub', a.available ? (a.command === current ? `${a.command} · current` : a.command) : 'not installed'));
-    menu.appendChild(b);
-  }
+  if (menu) paintNewChatMenu(menu, csCloseMenus);
 }
 
 (function wireSessionsColumn() {
@@ -3636,15 +3795,6 @@ function csPaintAgentMenu() {
     menu.hidden = false;
     e.currentTarget.setAttribute('aria-expanded', 'true');
     Promise.resolve(refreshAgentMenu()).then(() => { if (!menu.hidden) csPaintAgentMenu(); }).catch(() => {});
-  });
-  document.getElementById('cs-agent-menu')?.addEventListener('click', (e) => {
-    const b = e.target.closest('.cs-menu-item');
-    if (!b || b.disabled) return;
-    csCloseMenus();
-    if (b.dataset.terminal) { openTerminalTab(); return; }
-    const cmd = b.dataset.cmd;
-    const current = String((cfg && cfg.agentCommand) || 'claude').trim().split(/\s+/)[0];
-    openNewChatTab(cmd && cmd !== current ? { command: cmd, preferChat: true } : {});
   });
   document.getElementById('cs-kebab')?.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -3752,6 +3902,7 @@ if (window.husk.chat) {
     }
     if (ev && ev.type === 'title') adoptChatTitle(tab, ev.title);
     tab.chat.apply(ev);
+    if (window.HuskUsageBell) window.HuskUsageBell.onChatEvent(tab, ev);
     // The bar names the model the agent reports, so a switch shows at once.
     if (ev && ev.type === 'session' && tabId === activeTabId) refreshShellStatusBar();
   });
@@ -3800,14 +3951,111 @@ function applyTheme(theme) {
   // theme picks its side automatically from that token.
   const isLight = getComputedStyle(document.body).getPropertyValue('--term-light').trim() === '1';
   document.body.dataset.mode = isLight ? 'light' : 'dark';
+  applyAccentVars();
   retintAllTabs();
 }
-function applyAccent(accent) {
-  const valid = ['orange', 'cyan', 'indigo', 'emerald', 'rose'];
-  const a = valid.includes(accent) ? accent : 'orange';
+// The accent in effect: a registry id, or 'custom' with its picked colour.
+let activeAccent = { id: 'orange', hex: HuskThemes.DEFAULT_CUSTOM_ACCENT };
+// A custom accent is derived for the current theme and set on the body; a
+// registry accent leaves the tokens to the stylesheet.
+function applyAccentVars() {
+  const vars = activeAccent.id === HuskThemes.CUSTOM_ACCENT
+    ? HuskThemes.deriveAccent(activeAccent.hex, document.body.dataset.theme) : {};
+  for (const name of HuskThemes.ACCENT_VARS) {
+    if (vars[name]) document.body.style.setProperty(name, vars[name]);
+    else document.body.style.removeProperty(name);
+  }
+}
+function applyAccent(accent, hex = cfg && cfg.accentCustom) {
+  const a = HuskThemes.isAccent(accent) ? accent : 'orange';
+  activeAccent = { id: a, hex: HuskThemes.normalizeHex(hex) || HuskThemes.DEFAULT_CUSTOM_ACCENT };
   document.body.dataset.accent = a;
+  applyAccentVars();
   retintAllTabs();
   $$('.accent-swatch').forEach((sw) => sw.classList.toggle('selected', sw.dataset.c === a));
+  syncCustomAccentControls();
+}
+function syncCustomAccentControls() {
+  const row = $('#pref-accent-custom-row');
+  if (!row) return;
+  row.hidden = activeAccent.id !== HuskThemes.CUSTOM_ACCENT;
+  const hexInput = $('#pref-accent-hex');
+  const hueInput = $('#pref-accent-hue');
+  if (document.activeElement !== hexInput) hexInput.value = activeAccent.hex;
+  if (document.activeElement !== hueInput) {
+    hueInput.value = String(Math.round(HuskThemes.rgbToHsl(HuskThemes.hexToRgb(activeAccent.hex))[0]));
+  }
+  $('#pref-accent-chip').style.background = getComputedStyle(document.body).getPropertyValue('--accent');
+}
+
+// The theme menu and the theme and accent swatches, one per registry entry.
+function buildAppearancePickers() {
+  for (const t of HuskThemes.THEMES) {
+    $('#pref-theme').add(new Option(t.name, t.id));
+    const sw = document.createElement('button');
+    sw.type = 'button';
+    sw.className = 'ob-theme-sw';
+    sw.dataset.mode = t.id;
+    sw.title = t.name;
+    sw.setAttribute('aria-label', t.name);
+    sw.style.background = t.bg;
+    $('#ob-theme').appendChild(sw);
+  }
+  const swatch = (id, name, background) => {
+    const sw = document.createElement('button');
+    sw.type = 'button';
+    sw.setAttribute('aria-label', name);
+    sw.className = 'accent-swatch';
+    sw.dataset.c = id;
+    sw.title = name;
+    if (background) sw.style.background = background;
+    return sw;
+  };
+  for (const picker of $$('.accent-picker')) {
+    for (const a of HuskThemes.ACCENTS) {
+      picker.appendChild(swatch(a.id, a.name, `linear-gradient(135deg, ${a.swatch[0]}, ${a.swatch[1]})`));
+    }
+  }
+  $('#accent-picker').appendChild(swatch(HuskThemes.CUSTOM_ACCENT, 'Custom'));
+}
+buildAppearancePickers();
+
+// ─── Background image ────────────────────────────────────────────────────────────
+// `bg` is the stored image main reports: { hash, ext, dim, blur }, or null.
+function applyBackground(bg) {
+  const layer = $('#bg-layer');
+  layer.hidden = !bg;
+  $('#bg-layer-image').style.backgroundImage = bg ? `url("husk-bg://image/${bg.hash}.${bg.ext}")` : '';
+  layer.style.setProperty('--bg-image-dim', bg ? String(bg.dim / 100) : '1');
+  layer.style.setProperty('--bg-image-blur', `${bg ? bg.blur : 0}px`);
+}
+function bindBackgroundPrefs() {
+  const bg = cfg.background;
+  $('#pref-bg-remove').hidden = !bg;
+  for (const [id, value, unit] of [['dim', bg ? bg.dim : 70, '%'], ['blur', bg ? bg.blur : 0, 'px']]) {
+    const input = $(`#pref-bg-${id}`);
+    input.disabled = !bg;
+    input.value = String(value);
+    $(`#pref-bg-${id}-display`).textContent = `${value}${unit}`;
+  }
+}
+function takeBackgroundResult(r) {
+  if (r && r.ok === false) toast(r.error || 'That image could not be used.', 'error');
+  cfg.background = (r && r.background) || null;
+  applyBackground(cfg.background);
+  bindBackgroundPrefs();
+}
+$('#pref-bg-choose').addEventListener('click', async () => takeBackgroundResult(await window.husk.background.choose()));
+$('#pref-bg-remove').addEventListener('click', async () => takeBackgroundResult(await window.husk.background.remove()));
+for (const id of ['dim', 'blur']) {
+  const display = () => ({ dim: Number($('#pref-bg-dim').value), blur: Number($('#pref-bg-blur').value) });
+  $(`#pref-bg-${id}`).addEventListener('input', () => {
+    if (!cfg.background) return;
+    applyBackground({ ...cfg.background, ...display() });
+    $('#pref-bg-dim-display').textContent = `${display().dim}%`;
+    $('#pref-bg-blur-display').textContent = `${display().blur}px`;
+  });
+  $(`#pref-bg-${id}`).addEventListener('change', async () => takeBackgroundResult(await window.husk.background.setDisplay(display())));
 }
 
 // ─── Router ──────────────────────────────────────────────────────────────────────
@@ -4371,6 +4619,8 @@ async function refreshStatusline() {
         <div class="sp-row" style="margin-top:6px;"><span class="sp-muted">Weekly Limit ${spInfo('Share of your weekly usage allowance consumed.')}</span><span class="sp-mono">${fmtPct(u.week_pct)}</span></div>
         <div class="sp-progress"><div class="sp-progress-fill" style="width:${Math.min(100, u.week_pct||0)}%"></div></div>
         ${u.week_reset ? `<div class="sp-row"><span class="sp-muted">Resets ${spInfo('When the weekly usage window resets.')}</span><span class="sp-mono" title="${escapeHtml(u.week_reset)}">${escapeHtml(fmtUntil(u.week_reset))}</span></div>` : ''}
+        ` : u.plan_source_off ? `
+        <div class="sp-row sp-tiny sp-muted">Plan limits come from what the CLI reports in chat. The usage bell in the top bar lists them.</div>
         ` : `
         <div class="sp-row"><span class="sp-muted">5h / Weekly</span><span class="sp-mono sp-muted">warming up…</span></div>
         <div class="sp-row sp-tiny sp-muted">First sample takes a few seconds after launch, then refreshes automatically.</div>
@@ -11162,7 +11412,7 @@ async function sxLoad(opts = {}) {
   let res = null;
   let agents = null;
   try {
-    [res, agents] = await Promise.all([sessionsFetch(), sxLoadAgents()]);
+    [res, agents] = await Promise.all([window.husk.sessions.list({ agent: activeSessionsAgent(), selectedOnly: true }), sxLoadAgents()]);
   } catch (err) {
     if (seq !== sx.loadSeq) return;
     sx.error = (err && err.message) || String(err || 'unknown error');
@@ -12004,7 +12254,7 @@ function sxDetailPaint() {
   const untitled = !rawTitle || rawTitle === '(empty)';
   const title = untitled ? 'Untitled session' : rawTitle;
 
-  const eyebrow = [(s.agent || sx.agent) ? `${s.agent || sx.agent} session` : 'session', sig ? sig.tok : '']
+  const eyebrow = [sx.agent ? `${sx.agent} session` : 'session', sig ? sig.tok : '']
     .filter(Boolean).join(' · ');
   sxText(full, '#sx-d-eyebrow', eyebrow);
 
@@ -12521,7 +12771,7 @@ async function sxFileSession(sessionId, folderId) {
 function sxPrimary(s) {
   if (!s) return;
   const holder = sx.agents.bySession.get(s.id) || null;
-  const owned = { ...s, owner: s.agent || sx.agent, project: s.projectPath, prdpath: s.prdPath };
+  const owned = { ...s, owner: sx.agent, project: s.projectPath, prdpath: s.prdPath };
   if (holder && holder.held) { resumeSessionInChat(owned); return; }
   if (focusOpenSession(s.id)) return;
   resumeSessionInChat(owned);
@@ -12529,7 +12779,7 @@ function sxPrimary(s) {
 
 function sxAct(act, el) {
   const s = sxSessionById(sx.detailId);
-  const owned = s ? { ...s, owner: s.agent || sx.agent, project: s.projectPath, prdpath: s.prdPath } : null;
+  const owned = s ? { ...s, owner: sx.agent, project: s.projectPath, prdpath: s.prdPath } : null;
   // Filing carries the folder in the action, so one branch answers every
   // folder rather than the switch growing a case per folder.
   if (typeof act === 'string' && act.startsWith('file:') && s) {
@@ -14222,6 +14472,8 @@ function bindPrefs() {
   if ($('#pref-agent-model')) $('#pref-agent-model').value = cfg.agentModel || '';
   bindOrchestratorConfig();
   $('#pref-recap').checked = cfg.recap !== false;
+  $('#pref-transcript-days').value = String(cfg.transcriptRetentionDays ?? 30);
+  if (window.HuskUsageBell) window.HuskUsageBell.bindPrefs();
   if ($('#pref-pai')) $('#pref-pai').checked = cfg.paiEnabled !== false;
   $('#pref-theme').value = cfg.theme || 'midnight';
   if ($('#pref-chat-view')) $('#pref-chat-view').value = cfg.chatView === 'terminal' ? 'terminal' : 'chat';
@@ -14229,6 +14481,7 @@ function bindPrefs() {
   $('#pref-root').value = cfg.treeRoot || '';
   $('#pref-hidden').checked = !!cfg.showHidden;
   $$('.accent-swatch').forEach((sw) => sw.classList.toggle('selected', sw.dataset.c === (cfg.accent || 'orange')));
+  bindBackgroundPrefs();
   const v = cfg.voice || {};
   $('#pref-voice-enabled').checked = !!v.enabled;
   $('#pref-voice-name').value = v.name || 'en_US-amy-medium';
@@ -14757,6 +15010,12 @@ $('#btn-pref-models')?.addEventListener('click', async () => {
     } else toast(`Could not load models: ${(r && r.error) || 'none returned'}`, 'error');
   } catch (_) { toast('Could not load models', 'error'); }
 });
+$('#pref-transcript-days').addEventListener('change', async (ev) => {
+  const days = Number(ev.target.value);
+  if (!Number.isInteger(days) || days < 0 || days > 3650) { bindPrefs(); return; }
+  cfg = await window.husk.config.set({ transcriptRetentionDays: days });
+  toast('Saved', 'success');
+});
 $('#pref-chat-view')?.addEventListener('change', async (e) => {
   const v = e.target.value === 'terminal' ? 'terminal' : 'chat';
   cfg = await window.husk.config.set({ chatView: v });
@@ -14768,8 +15027,17 @@ $('#pref-theme').addEventListener('change', (e) => {
   previewAppearance({ theme: e.target.value });
 });
 $$('.accent-swatch').forEach((sw) => sw.addEventListener('click', () => {
-  previewAppearance({ accent: sw.dataset.c });
+  previewAppearance(sw.dataset.c === HuskThemes.CUSTOM_ACCENT
+    ? { accent: sw.dataset.c, accentCustom: activeAccent.hex }
+    : { accent: sw.dataset.c });
 }));
+$('#pref-accent-hue').addEventListener('input', (e) => {
+  previewAppearance({ accentCustom: HuskThemes.hslToHex([Number(e.target.value), 0.8, 0.6]) });
+});
+$('#pref-accent-hex').addEventListener('input', (e) => {
+  const hex = HuskThemes.normalizeHex(e.target.value);
+  if (hex) previewAppearance({ accentCustom: hex });
+});
 $('#pref-rail').addEventListener('change', (e) => {
   previewAppearance({ railExpanded: e.target.checked });
 });
@@ -15092,10 +15360,9 @@ async function refreshRecentList() {
   // Scope Recent to the active chat's project. The full Sessions page still
   // lists every project; the rail should only surface this project's chats, so
   // a session from another cwd (e.g. a "Hi" chat in $HOME) never shows here.
-  const norm = (p) => (p || '').replace(/\/+$/, '');
-  const here = norm(r.currentCwd);
+  const here = r.currentRealCwd || r.currentCwd;
   const scoped = here
-    ? r.sessions.filter((s) => norm(s.originalCwd || s.projectPath || s.cwd) === here)
+    ? r.sessions.filter((s) => window.husk.sessionView.inCurrentProject(s, here))
     : r.sessions;
   if (!scoped.length) {
     section.hidden = true;
@@ -20404,6 +20671,7 @@ async function boot() {
   profilesCache = await window.husk.profiles.list();
   applyTheme(cfg.theme || 'midnight');
   applyAccent(cfg.accent || 'orange');
+  applyBackground(cfg.background);
   document.body.dataset.rail = cfg.railExpanded === false ? 'collapsed' : 'expanded';
   syncRailFold();
   // A fresh install starts with the side panel folded (main's default); the

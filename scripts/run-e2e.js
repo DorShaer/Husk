@@ -52,9 +52,14 @@ if (virtualise) {
   }
 }
 
-// A borrowed DISPLAY would pull the windows onto the desktop and out of the framebuffer.
+// Keep Electron on the framebuffer even when the desktop uses Wayland.
 const env = { ...process.env };
-if (cmd === 'xvfb-run') delete env.DISPLAY;
+if (cmd === 'xvfb-run') {
+  delete env.DISPLAY;
+  delete env.WAYLAND_DISPLAY;
+  env.XDG_SESSION_TYPE = 'x11';
+  env.ELECTRON_OZONE_PLATFORM_HINT = 'x11';
+}
 
 const run = spawnSync(cmd, argv, { stdio: 'inherit', env });
 if (run.error) {
