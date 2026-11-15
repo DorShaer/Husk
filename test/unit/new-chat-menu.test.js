@@ -24,9 +24,9 @@ test('the CLI used last comes first and unused ones keep their order', () => {
   assert.deepStrictEqual(order, ['gemini', 'aider', 'claude']);
 });
 
-test('a single detected CLI gets one plain entry', () => {
+test('a single detected CLI still names its vendor', () => {
   const entries = newChatEntries({ agents: agents.slice(0, 2), folder: '/w' });
-  assert.deepStrictEqual(entries.map((e) => [e.label, e.command]), [['New chat', 'claude'], ['Terminal', '']]);
+  assert.deepStrictEqual(entries.map((e) => [e.label, e.command]), [['New chat with Claude Code', 'claude'], ['Terminal', '']]);
 });
 
 test('nothing detected still offers a plain new chat on the default CLI', () => {

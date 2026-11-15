@@ -628,11 +628,11 @@
           </nav>
         </div>
 
-        <!-- Tool selector: which CLI is active. No section label to avoid confusing with LLM "agents". -->
+        <!-- Start another chat without changing existing chats or jobs. -->
         <div class="rail-section rail-section-tool">
-          <button class="rail-agent" id="rail-agent-pill" title="Switch AI tool">
+          <button class="rail-agent" id="rail-agent-pill" title="Start a chat" aria-label="Start a chat">
             <span class="ra-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="7" width="15" height="12" rx="3"/><path d="M12 4v3"/><circle cx="12" cy="3.2" r="0.9" fill="currentColor" stroke="none"/><circle cx="9.5" cy="12.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="14.5" cy="12.5" r="1.1" fill="currentColor" stroke="none"/><path d="M9.5 16h5"/><path d="M2.5 12.5h2M19.5 12.5h2"/></svg></span>
-            <span class="ra-name" id="ra-name">claude</span>
+            <span class="ra-name" id="ra-name">New chat</span>
             <span class="ra-chev">▾</span>
           </button>
           <div class="rail-agent-menu" id="rail-agent-menu" hidden></div>
@@ -2835,8 +2835,8 @@
                   </label>
                   <label class="pref-row">
                     <span class="pref-row-text">
-                      <span class="pref-label">Command</span>
-                      <span class="pref-desc">The CLI Husk launches. Pick one Husk found on this machine, or name your own.</span>
+                      <span class="pref-label">Default CLI for new chats</span>
+                      <span class="pref-desc">Used when a new chat does not name a vendor. Existing chats and job assignments keep their own selections.</span>
                     </span>
                     <span class="pref-field-group">
                       <select id="pref-agent-pick" aria-label="Command"></select>
@@ -2846,7 +2846,7 @@
                   <label class="pref-row">
                     <span class="pref-row-text">
                       <span class="pref-label">Working directory</span>
-                      <span class="pref-desc">Where the agent starts. Empty uses your home directory; a project folder restores its remembered trust.</span>
+                      <span class="pref-desc">Default folder for new chats. Existing chats keep their own folders. Empty uses your home directory.</span>
                     </span>
                     <span class="pref-field-group">
                       <input type="text" id="pref-agent-cwd" placeholder="e.g. /path/to/project" />
@@ -2855,11 +2855,11 @@
                   </label>
                   <label class="pref-row">
                     <span class="pref-row-text">
-                      <span class="pref-label">Provider</span>
-                      <span class="pref-desc">Claude uses the default CLI. OpenAI-compatible talks straight to an endpoint (OpenAI, or a local Ollama) with your key and model, shown natively in Husk.</span>
+                      <span class="pref-label">Default chat connection</span>
+                      <span class="pref-desc">Use an installed CLI, or a configured OpenAI-compatible endpoint for new default chats. Choosing a CLI explicitly always uses that CLI.</span>
                     </span>
-                    <select id="pref-agent-vendor" aria-label="Provider">
-                      <option value="claude">Claude (default)</option>
+                    <select id="pref-agent-vendor" aria-label="Default chat connection">
+                      <option value="claude">Installed CLI</option>
                       <option value="openai">OpenAI-compatible (bring your own key)</option>
                     </select>
                   </label>

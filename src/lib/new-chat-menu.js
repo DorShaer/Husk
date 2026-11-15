@@ -19,9 +19,9 @@ function detectedAgents(agents, lastUsed) {
 function newChatEntries({ agents, lastUsed, folder } = {}) {
   const found = detectedAgents(agents, lastUsed);
   const sub = String(folder || '');
-  const chats = found.length > 1
+  const chats = found.length
     ? found.map((a) => ({ kind: 'chat', command: a.command, label: `New chat with ${a.label}`, sub }))
-    // One CLI, or none found yet: a plain entry that opens the default.
+    // Nothing found yet: offer the configured default.
     : [{ kind: 'chat', command: found.length ? found[0].command : '', label: 'New chat', sub }];
   return chats.concat([{ kind: 'terminal', command: '', label: 'Terminal', sub: '' }]);
 }

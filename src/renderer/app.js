@@ -460,6 +460,7 @@ function createTab(idOverride) {
     mode: 'terminal',
     ptyStarted: false,
     launchCommand: null,
+    connection: null,
     cwd: null,
     chat: null,
     chatRunning: false,
@@ -1731,6 +1732,7 @@ async function listLiveChats() {
 // pane cannot be mounted.
 function restoreChatTab(tab, chat) {
   tab.mode = 'chat';
+  tab.connection = chat.connection || (chat.transport === 'openai' ? 'endpoint' : 'cli');
   tab.launchCommand = chat.command || null;
   tab.command = chat.command || (cfg && cfg.agentCommand) || null;
   tab.cwd = chat.cwd || null;
@@ -1743,7 +1745,7 @@ function restoreChatTab(tab, chat) {
   const c = ensureChatPane(tab);
   if (!c) { tab.mode = 'terminal'; return false; }
   const cli = tabAgentCommand(tab).split(/\s+/)[0];
-  c.setInfo({ agentName: cli, cwd: chatWorkDir(tab) });
+  c.setInfo({ agentName: tab.connection === 'endpoint' ? 'API endpoint' : cli, cwd: chatWorkDir(tab) });
   const events = Array.isArray(chat.events) ? chat.events : [];
   if (typeof c.replay === 'function') c.replay(events, { turnOpen: !!chat.turnOpen });
   else { for (const ev of events) c.apply(ev); c.flush(); }
@@ -1973,12 +1975,20 @@ function detectedAgents() {
   return window.HuskNewChatMenu.detectedAgents(agentsCache, agentLastUsed());
 }
 
+function endpointChatAvailable() {
+  return !!(cfg && cfg.agentVendor === 'openai' && cfg.agentBaseUrl && cfg.agentModel);
+}
+
 // Fills a menu with the new-chat entries: one per detected CLI, then Terminal.
 // Every menu that starts a chat is painted here.
 function paintNewChatMenu(menu, done) {
   const entries = window.HuskNewChatMenu.newChatEntries({
     agents: agentsCache, lastUsed: agentLastUsed(), folder: shortPath(homeRelativePath(chatWorkDir(null))),
   });
+  if (endpointChatAvailable()) {
+    if (entries[0]?.kind === 'chat' && !entries[0].command) entries.shift();
+    entries.unshift({ kind: 'chat', command: (cfg && cfg.agentCommand) || 'claude', connection: 'endpoint', label: 'New chat with API endpoint', sub: cfg.agentModel });
+  }
   menu.replaceChildren(...entries.map((entry) => {
     const b = csEl('button', 'cs-menu-item');
     b.type = 'button';
@@ -1991,7 +2001,7 @@ function paintNewChatMenu(menu, done) {
       done();
       if (entry.kind === 'terminal') { openTerminalTab(); return; }
       setPage('chat');
-      openNewChatTab(entry.command ? { command: entry.command, preferChat: true } : {});
+      openNewChatTab(entry.command ? { command: entry.command, connection: entry.connection || 'cli', preferChat: true } : {});
     });
     return b;
   }));
@@ -2033,6 +2043,7 @@ async function openNewChatTab(opts = {}) {
   tab.isShell = !!opts.shell;
   if (tab.isShell) { tab.title = 'Terminal'; tab.titleEarned = true; }
   tab.launchCommand = opts.command || null;
+  tab.connection = opts.connection || (opts.command ? 'cli' : (cfg && cfg.agentVendor === 'openai' ? 'endpoint' : 'cli'));
   tab.cwd = opts.cwd || null;
   tab.handoff = opts.handoff || null;
   // A session resumed into Chat: its past events are painted before the agent
@@ -2046,7 +2057,7 @@ async function openNewChatTab(opts = {}) {
   }
   // A new chat with another CLI (the Sessions column's New menu) opens in Chat
   // like any new chat when that CLI can; a plain launch command stays a PTY.
-  const requestedMode = opts.forceChat
+  const requestedMode = tab.connection === 'endpoint' ? 'chat' : opts.forceChat
     ? (chatProtocolFor(String(opts.command || (cfg && cfg.agentCommand) || 'claude')) ? 'chat' : 'terminal')
     : initialTabMode(opts.command || (cfg && cfg.agentCommand));
   if ((!opts.command || opts.preferChat || opts.forceChat) && !opts.resumeAttempt
@@ -2114,15 +2125,16 @@ async function openNewChatTab(opts = {}) {
 async function restartPty(opts = {}) {
   const tab = TABS.get(activeTabId);
   if (!tab) return;
+  const command = opts.command || tabAgentCommand(tab);
   if (tab.mode === 'chat') {
-    const next = String(opts.command || (cfg && cfg.agentCommand) || 'claude').trim();
+    const next = String(command).trim();
     if (chatProtocolFor(next)) { await restartChat(tab, opts); return; }
     // The CLI it restarts into has no chat protocol, so the tab goes back to
     // its terminal, spawning one if it never had a PTY.
     await leaveChatMode(tab);
     if (!tab.ptyStarted) {
-      tab.launchCommand = opts.command || null;
-      tab.command = opts.command || (cfg && cfg.agentCommand) || null;
+      tab.launchCommand = command;
+      tab.command = command;
       if (opts.cwd) tab.cwd = opts.cwd;
       await startTabPty(tab);
       if (!opts.silent) toast('New session', 'success');
@@ -2138,10 +2150,10 @@ async function restartPty(opts = {}) {
   clearSessionContext();
   // First wipe so any earlier scrollback is gone before kill output starts.
   try { tab.term.reset(); } catch (_) { try { tab.term.clear(); } catch (_) {} }
-  tab.command = opts.command || (cfg && cfg.agentCommand) || null;
+  tab.command = command;
   tab.exited = false;
   tab.ptyStarted = true;
-  await window.husk.pty.restart({ cols, rows, command: opts.command || null, cwd: opts.cwd || null, sessionId: tab.id });
+  await window.husk.pty.restart({ cols, rows, command, cwd: opts.cwd || tab.cwd || null, sessionId: tab.id });
   // Quiet window that lets the closing PTY drain its tail notice into the
   // suppressed handlers before output is re-enabled.
   await new Promise((r) => setTimeout(r, 200));
@@ -3174,6 +3186,7 @@ async function openNativeCommand(tab, text) {
 // agent took the start; tab.chatStart holds the same promise so a prompt typed
 // while it boots waits for it instead of being refused.
 function startChatForTab(tab) {
+  if (!tab.connection) tab.connection = tab.launchCommand ? 'cli' : (cfg && cfg.agentVendor === 'openai' ? 'endpoint' : 'cli');
   const c = ensureChatPane(tab);
   if (!c) return Promise.resolve(false);
   tab.mode = 'chat';
@@ -3182,7 +3195,7 @@ function startChatForTab(tab) {
   const cmd = tabAgentCommand(tab);
   const cli = cmd.split(/\s+/)[0];
   c.reset();
-  c.setInfo({ agentName: cli, cwd: chatWorkDir(tab) });
+  c.setInfo({ agentName: tab.connection === 'endpoint' ? 'API endpoint' : cli, cwd: chatWorkDir(tab) });
   c.setStarting(true);
   tab.chatAlive = false;
   // Carried into chat.start so the runtime's own replay log holds the resumed
@@ -3201,7 +3214,7 @@ function startChatForTab(tab) {
   renderChatModeToggle();
   const run = (async () => {
     let res;
-    try { res = await window.husk.chat.start({ tabId: tab.id, command: cmd, cwd: tab.cwd || null, replay: replaySeed, handoff: tab.handoff }); }
+    try { res = await window.husk.chat.start({ tabId: tab.id, command: cmd, connection: tab.connection, cwd: tab.cwd || null, replay: replaySeed, handoff: tab.handoff }); }
     catch (err) { res = { ok: false, error: (err && err.message) || String(err) }; }
     // Closed or switched away while starting: nothing here to update.
     if (!TABS.has(tab.id) || tab.chat !== c || tab.mode !== 'chat') return false;
@@ -3278,6 +3291,7 @@ async function startTabPty(tab) {
 // running behind its hidden pane; Chat to Terminal stops the headless agent.
 async function setTabMode(tab, mode) {
   if (!tab || tab.modeBusy || mode === tab.mode) { renderChatModeToggle(); return; }
+  if (mode === 'terminal' && tab.connection === 'endpoint') { toast('Endpoint chats use Native Chat', 'info'); renderChatModeToggle(); return; }
   if (mode === 'chat' && !chatProtocolFor(tabAgentCommand(tab))) { renderChatModeToggle(); return; }
   tab.modeBusy = true;
   renderChatModeToggle();
@@ -3301,9 +3315,11 @@ async function setTabMode(tab, mode) {
 }
 
 async function restartChat(tab, opts = {}) {
+  const command = opts.command || tabAgentCommand(tab);
   await stopChatForTab(tab);
-  tab.launchCommand = opts.command || null;
-  tab.command = opts.command || (cfg && cfg.agentCommand) || null;
+  tab.launchCommand = command;
+  tab.command = command;
+  if (opts.connection) tab.connection = opts.connection;
   if (opts.cwd) tab.cwd = opts.cwd;
   chatHasInput = false;
   tab.chatHasInput = false;
@@ -3331,7 +3347,7 @@ function renderChatModeToggle() {
     const on = b.dataset.mode === mode;
     b.classList.toggle('active', on);
     b.setAttribute('aria-pressed', on ? 'true' : 'false');
-    b.disabled = busy || (b.dataset.mode === 'chat' && !can);
+    b.disabled = busy || (b.dataset.mode === 'chat' && !can) || (b.dataset.mode === 'terminal' && tab?.connection === 'endpoint');
   }
   const chatBtn = wrap.querySelector('[data-mode="chat"]');
   if (chatBtn) chatBtn.title = can ? 'Show this chat as a native thread' : `${cli} has no chat protocol yet, Terminal only`;
@@ -14953,8 +14969,7 @@ $('#pref-save').addEventListener('click', async () => {
   renderSkills();
   updateAgentPill();
   paintAgentMenu();
-  toast('Saved, restarting agent', 'success');
-  await restartPty();
+  toast('Defaults saved for new chats', 'success');
 });
 
 // paintAgentCommandPicker only reveals the free-text field on first paint, so
@@ -16632,12 +16647,12 @@ $('#plugins-zero-cmd')?.addEventListener('click', async (e) => {
   }
 });
 
-// ─── Agent quick-switch (rail pill + dropdown) ──────────────────────────────────
+// ─── Start a chat with a vendor (rail button + dropdown) ────────────────────────
 let agentMenuOpen = false;
 let agentsCache = [];
 function updateAgentPill() {
   const cmd = (cfg && cfg.agentCommand) ? cfg.agentCommand.trim().split(/\s+/)[0] : 'claude';
-  $('#ra-name').textContent = cmd || 'agent';
+  $('#ra-name').textContent = 'New chat';
   const ceToolName = $('#ce-tool-name');
   if (ceToolName) ceToolName.textContent = cmd || 'agent';
 }
@@ -16652,17 +16667,17 @@ async function refreshAgentMenu() {
 function paintAgentMenu() {
   const menu = $('#rail-agent-menu');
   if (!menu) return;
-  const activeCmd = (cfg && cfg.agentCommand) ? cfg.agentCommand.trim().split(/\s+/)[0] : 'claude';
+  const endpoint = endpointChatAvailable() ? `<button class="rail-agent-item" data-connection="endpoint" data-cmd="${escapeAttr(cfg.agentCommand || 'claude')}" data-available="1"><span class="rai-name">New chat with API endpoint</span><span class="rai-cmd">${escapeHtml(cfg.agentModel)}</span></button>` : '';
   const rows = agentsCache.map((a) => `
-    <button class="rail-agent-item" data-cmd="${escapeAttr(a.command)}" data-available="${a.available ? '1' : '0'}" data-active="${a.command === activeCmd ? '1' : '0'}">
-      <span class="rai-name">${escapeHtml(a.label)}</span>
+    <button class="rail-agent-item" data-cmd="${escapeAttr(a.command)}" data-available="${a.available ? '1' : '0'}">
+      <span class="rai-name">New chat with ${escapeHtml(a.label)}</span>
       <span class="rai-cmd">${escapeHtml(a.command)}</span>
     </button>
   `).join('');
   // eslint-disable-next-line no-unsanitized/property -- Agent row values are escaped via escapeHtml/escapeAttr.
-  menu.innerHTML = `${rows}
+  menu.innerHTML = `${endpoint}${rows}
     <div class="rail-agent-divider"></div>
-    <button class="rail-agent-config" id="rai-config">Configure custom command…</button>`;
+    <button class="rail-agent-config" id="rai-config">New chat defaults…</button>`;
   menu.querySelectorAll('.rail-agent-item').forEach((el) => {
     el.addEventListener('click', async () => {
       if (el.dataset.available === '0') {
@@ -16670,14 +16685,9 @@ function paintAgentMenu() {
         return;
       }
       const cmd = el.dataset.cmd;
-      cfg = await window.husk.config.set({ agentCommand: cmd });
-      updateAgentPill();
-      paintAgentMenu();
-      bindPrefs();
-      renderSkills();
       closeAgentMenu();
-      await restartPty({ silent: true });
-      toast(`Switched to ${cmd}`, 'success');
+      setPage('chat');
+      await openNewChatTab({ command: cmd, preferChat: true, connection: el.dataset.connection || 'cli' });
     });
   });
   const cfgBtn = menu.querySelector('#rai-config');
