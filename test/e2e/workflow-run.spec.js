@@ -27,7 +27,7 @@ function setup() {
   fs.mkdirSync(path.join(homeDir, '.claude'), { recursive: true });
   fs.writeFileSync(path.join(binDir, 'claude'), FAKE_AGENT, { mode: 0o755 });
   fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'),
-    JSON.stringify({ firstRunDone: true, theme: 'light', skipWelcome: true }));
+    JSON.stringify({ firstRunDone: true, theme: 'light', skipWelcome: true, taskRouting: { cheap: { vendor: 'claude', model: '' }, smart: { vendor: 'claude', model: '' } } }));
   fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'workflows.json'), JSON.stringify([{
     id: 'wf-test',
     name: 'Test flow',
