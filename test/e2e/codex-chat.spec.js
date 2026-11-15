@@ -201,3 +201,31 @@ test(`resuming a ${archived ? 'archived' : 'saved'} Codex rollout shows history 
   } finally { await app.close(); }
 });
 }
+
+test('job model selectors use chat protocol names and discover Codex models without an open chat', async () => {
+  const { homeDir, bin } = makeHome();
+  const { app, win } = await launch(homeDir, bin);
+  try {
+    await chatReady(win);
+    await win.evaluate(() => {
+      cfg = { ...cfg, taskRouting: { cheap: { vendor: 'codex', model: '' } } };
+      openOrchestratorModal();
+    });
+    await expect(win.locator('#aut-mr-simple option[value="gpt-fake"]')).toHaveText('GPT Fake');
+    await expect(win.locator('#aut-mr-simple option[value="gpt-5.3-codex"]')).toHaveCount(0);
+    await win.evaluate(async () => {
+      const live = await window.husk.chat.list();
+      for (const s of live.sessions) await window.husk.chat.stop({ tabId: s.tabId });
+    });
+    const catalog = await win.evaluate(() => window.husk.models.list({ command: 'codex', refresh: true }));
+    expect(catalog.source).toBe('app-server');
+    expect(catalog.models).toEqual([{ value: 'gpt-fake', label: 'GPT Fake' }]);
+    await win.evaluate(async () => {
+      closeOrchestratorModal();
+      await bindAutopilotRunRouting();
+      document.querySelector('#aut-run-vendor').value = 'codex';
+      await loadAutopilotRunModels();
+    });
+    await expect(win.locator('#aut-run-model option[value="gpt-fake"]')).toHaveText('GPT Fake');
+  } finally { await app.close(); fs.rmSync(homeDir, { recursive: true, force: true }); }
+});

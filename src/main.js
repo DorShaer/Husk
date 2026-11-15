@@ -4986,6 +4986,48 @@ function catalogModelLabel(id, command = null) {
     .trim();
 }
 
+// Codex chat obtains names from app-server, without scraping its terminal UI.
+async function runCodexModelProbe(command) {
+  const { createAcpClient } = require('./lib/acp-client');
+  const { createFramer, encodeLine } = require('./lib/jsonrpc-stdio');
+  const { codexSession, APP_SERVER_ARGS } = require('./lib/codex-app-server');
+  const head = safeAgentCommandHead(command);
+  const env = buildAgentEnv(command);
+  let child, client, timer;
+  try {
+    child = spawn(resolveAgentExe(head.exe, env.PATH), APP_SERVER_ARGS, {
+      cwd: modelProbeCwd(), env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
+    });
+    client = createAcpClient({ send: (msg) => child.stdin.write(encodeLine(msg)) });
+    const framer = createFramer((msg) => client.receive(msg));
+    child.stdout.on('data', (chunk) => framer.push(chunk));
+    child.stderr.resume();
+    child.stdin.on('error', () => client.close());
+    const failed = new Promise((_, reject) => {
+      child.once('error', reject);
+      child.once('close', () => reject(new Error('Codex model discovery exited before replying.')));
+      timer = setTimeout(() => reject(new Error('Codex model discovery timed out.')), MODEL_PROBE_TIMEOUT_MS);
+    });
+    const read = async () => {
+      await client.request('initialize', { clientInfo: { name: 'husk', title: 'Husk', version: app.getVersion() }, capabilities: { experimentalApi: true } });
+      client.notify('initialized');
+      const models = [];
+      let cursor;
+      const seen = new Set();
+      do {
+        const page = await client.request('model/list', cursor ? { cursor } : {});
+        models.push(...(Array.isArray(page.data) ? page.data : []));
+        cursor = page.nextCursor;
+        if (cursor && seen.has(cursor)) break;
+        if (cursor) seen.add(cursor);
+      } while (cursor && seen.size < 20);
+      return (codexSession({}, models).models?.available || []).map((m) => ({ value: m.id, label: m.name }));
+    };
+    return { ok: true, models: await Promise.race([read(), failed]) };
+  } catch (err) { return { ok: false, models: [], error: err.message || String(err) }; }
+  finally { clearTimeout(timer); if (client) client.close(); if (child) { try { child.kill(); } catch (_) {} } }
+}
+
 async function discoverModelCatalog({ refresh = false, command = null, fast = false } = {}) {
   // `command` lets a caller ask for a specific vendor's models, since a workflow
   // step can run a different agent than the active one. Falls back to the active
@@ -5012,6 +5054,20 @@ async function discoverModelCatalog({ refresh = false, command = null, fast = fa
     });
   }
 
+  // Reuse the same protocol catalog the chat picker displays, including its names.
+  for (const chat of chatRuntime.list()) {
+    if (chat.transport === 'openai' || agentBaseName(chat.command) !== vendor) continue;
+    for (const ev of [...chat.events].reverse()) {
+      const available = ev.models && ev.models.available;
+      if (!Array.isArray(available) || !available.length) continue;
+      if (available.length === 1) break; // Chat also augments single-entry catalogs.
+      return Object.assign({}, base, {
+        models: available.map((m) => ({ value: m.id, label: m.name || m.id })),
+        source: 'chat-protocol', sourceLabel: `Listed by ${providerLabel(vendor)}`,
+      });
+    }
+  }
+
   // Fast path: the known catalog plus any saved selections, with no live probe.
   // The live probe spawns the CLI in a PTY and drives its /model picker, which
   // takes seconds. Callers use fast for the dropdown and pass refresh only on an
@@ -5035,22 +5091,22 @@ async function discoverModelCatalog({ refresh = false, command = null, fast = fa
     return Object.assign({}, cached.value, { cached: true });
   }
 
-  const probe = vendor === 'aider'
+  const probe = vendor === 'codex' ? await runCodexModelProbe(rawCommand) : vendor === 'aider'
     ? await runAiderModelProbe(rawCommand)
     : (vendor === 'kiro-cli' ? await runKiroModelProbe(rawCommand) : await runSlashModelProbe(rawCommand, vendor));
   const probeOutput = probe.output || '';
   const authBlocked = (vendor === 'copilot' && /not logged in to select a model|use \/login to authenticate/i.test(probeOutput))
     || (vendor === 'kiro-cli' && /not logged in|opening browser|kiro-cli login/i.test(probeOutput));
   const partialCopilotCatalog = vendor === 'copilot' && !/Model\b[\s\S]{0,80}\bReasoning/i.test(probeOutput);
-  const liveModels = (authBlocked || partialCopilotCatalog) ? [] : parseModelCatalog(probeOutput, vendor);
+  const liveModels = (authBlocked || partialCopilotCatalog) ? [] : (Array.isArray(probe.models) ? probe.models : parseModelCatalog(probeOutput, vendor));
   const savedModels = savedRoutingModels(vendor);
   const fallbackModels = (!liveModels.length && !authBlocked) ? fallbackModelsFor(vendor) : [];
   const models = uniqueModels([...liveModels, ...fallbackModels, ...savedModels]);
   const value = Object.assign(base, {
     models,
-    source: liveModels.length ? (vendor === 'aider' || vendor === 'kiro-cli' ? 'list-models' : 'slash-model') : (fallbackModels.length ? 'fallback' : (savedModels.length ? 'saved' : 'none')),
+    source: liveModels.length ? (vendor === 'codex' ? 'app-server' : vendor === 'aider' || vendor === 'kiro-cli' ? 'list-models' : 'slash-model') : (fallbackModels.length ? 'fallback' : (savedModels.length ? 'saved' : 'none')),
     sourceLabel: liveModels.length
-      ? (vendor === 'aider' ? 'Read from aider --list-models' : (vendor === 'kiro-cli' ? 'Read from kiro-cli chat --list-models' : 'Read from /model'))
+      ? (vendor === 'codex' ? 'Listed by OpenAI Codex' : vendor === 'aider' ? 'Read from aider --list-models' : (vendor === 'kiro-cli' ? 'Read from kiro-cli chat --list-models' : 'Read from /model'))
       : (fallbackModels.length ? 'Known provider catalog' : (savedModels.length ? 'Saved selections' : 'No models discovered')),
     error: (liveModels.length || fallbackModels.length) ? '' : (authBlocked
       ? (vendor === 'kiro-cli' ? 'Kiro requires login before it will list models.' : 'Copilot requires login before it will list models.')

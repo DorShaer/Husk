@@ -14846,7 +14846,7 @@ async function orchLoadVendor(vendor, refresh = false) {
   orchCatalogs.set(vendor, { loading: true, seq, models: existing?.models || [] });
   bindOrchestratorConfig();
   let catalog;
-  try { catalog = await window.husk.models.list({ command: vendor, refresh, fast: !refresh }); }
+  try { catalog = await window.husk.models.list({ command: vendor, refresh }); }
   catch (err) { catalog = { error: err.message || 'Could not read models.', models: [] }; }
   if (orchCatalogs.get(vendor)?.seq !== seq) return;
   orchCatalogs.set(vendor, { ...catalog, models: catalog?.models || [], loading: false, loaded: true, seq });
@@ -14913,7 +14913,7 @@ async function loadAutopilotRunModels() {
   if (status) status.textContent = vendor === 'auto' ? 'Simple and complex jobs use Models routing. Team planner and integrator keep their own choices.' : 'Loading models...';
   if (vendor === 'auto') return;
   let catalog;
-  try { catalog = await window.husk.models.list({ command: vendor, fast: true }); }
+  try { catalog = await window.husk.models.list({ command: vendor }); }
   catch (err) { catalog = { error: err.message }; }
   if (seq !== autRunCatalogSeq || $('#aut-run-vendor').value !== vendor) return;
   for (const model of catalog?.models || []) {

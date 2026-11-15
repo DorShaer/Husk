@@ -12,7 +12,7 @@ Assign a vendor and model independently to:
 - **Planner**, which splits team work.
 - **Integrator**, which combines team results.
 
-Choose a vendor to load its model catalog, or leave the vendor on **Automatic**. An Automatic model uses the selected CLI's default model. Available catalogs come from the selected vendor; an unavailable catalog leaves Automatic usable. Existing explicit model pins are retained when migrating settings.
+Choose a vendor to load its model catalog, or leave the vendor on **Automatic**. An Automatic model uses the selected CLI's default model. Model dropdowns load the same live lists and display names as chat, reusing an open chat's catalog when available. Codex can also list models without opening a discussion. Available catalogs come from the selected vendor; an unavailable catalog leaves Automatic usable. Existing explicit model pins are retained when migrating settings.
 
 Automatic vendor selection considers installed CLIs in this stable order: Claude, Codex, Gemini, Copilot, Kiro, Aider. Simple tasks and planning use the first installed option; complex tasks and integration use the second when available. Automatic team workers are distributed across installed vendors unless a configured assignment or planner-selected vendor applies. This is a deterministic starting policy, not a quality or price ranking.
 
