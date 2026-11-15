@@ -104,4 +104,4 @@ function normalizeTier(t) {
   return t === 'cheap' ? 'cheap' : 'smart';
 }
 
-module.exports = { DEFAULT_VENDOR_MODELS, modelArgsFor, classifyTier, normalizeTier, isTrivialFileTask };
+module.exports = { DEFAULT_VENDOR_MODELS, modelArgsFor, classifyTier, normalizeTier, isTrivialFileTask, isExplicitModelValueUsable };

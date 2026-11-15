@@ -173,3 +173,14 @@ console.log(JSON.stringify({
     assert.equal(result.agents.length, 2);
   });
 });
+
+test('planner sees installed vendor candidates and preserves explicit worker assignments', () => {
+  const prompt = buildPlanPrompt('fix the app', 2, '', '', ['claude', 'codex']);
+  assert.match(prompt, /Available installed vendors: claude, codex/);
+  assert.match(prompt, /Do not invent model ids/);
+  const agents = extractPlan(JSON.stringify({ agents: [
+    { role: 'api', tier: 'smart', vendor: 'codex', subgoal: 'fix the API' },
+    { role: 'ui', tier: 'smart', vendor: 'claude', subgoal: 'fix the renderer' },
+  ] }), 2);
+  assert.deepEqual(agents.map((a) => a.vendor), ['codex', 'claude']);
+});

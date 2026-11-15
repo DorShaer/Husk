@@ -1987,38 +1987,38 @@ function dropChatShadowSession(tabId) {
   }
 }
 
-ipcMain.handle('chat:start', async (_e, { tabId, command, cwd, replay, handoff } = {}) => {
+ipcMain.handle('chat:start', async (_e, { tabId, command, cwd, replay, handoff, connection } = {}) => {
+  const selected = resolveChatConnection({ config, connection, command });
+  if (!selected.ok) return selected;
   const cmd = (command || config.agentCommand || 'claude').trim();
   const dir = chatCwd(cwd);
   const transport = chatTransportFor(cmd);
   // A fresh chat is pinned to an id Husk picks; a resume already names its
   // session, and that is the id the shadow session, the per-project binding
   // and the chat record must carry, not a second one nothing ever wrote.
-  const claudeSessionId = transport === 'claude' ? (chatCommandSessionId(cmd) || crypto.randomUUID()) : null;
+  const claudeSessionId = selected.connection === 'cli' && transport === 'claude' ? (chatCommandSessionId(cmd) || crypto.randomUUID()) : null;
   // A resumed chat paints its past turns in the renderer from the on-disk log,
   // but the runtime starts with an empty replay log, so a later reload rebuilt
   // an empty thread. Seeding the runtime log with those same turns means a
   // reload reconstructs the whole conversation, not just what came after the
   // resume. Bounded so a giant history cannot swell the log past its cap.
   const seed = Array.isArray(replay) ? replay.slice(-4000) : null;
-  // Bring your own key, native: when the user picked an OpenAI-compatible vendor
-  // with a base URL, key and model, the chat streams from that endpoint instead
-  // of spawning claude.
-  const byokOpenai = (config.agentVendor === 'openai' && config.agentBaseUrl && config.agentApiKey && config.agentModel)
-    ? { baseUrl: String(config.agentBaseUrl).trim(), apiKey: String(config.agentApiKey).trim(), model: String(config.agentModel).trim() }
-    : null;
+  // Each tab chooses its connection independently of the new-chat default.
+  const byokOpenai = selected.openai;
   // Read before the start: a tab handing off to itself is about to lose its log.
   const carried = handoff ? prepareHandoff(handoff) : null;
   pendingHandoffs.delete(tabId);
   dailyTabs.set(tabId, { awaitingBaseline: !!(seed && seed.length) });
   const res = await chatRuntime.start({ tabId, command: cmd, cwd: dir, claudeSessionId, keepLog: seed, openai: byokOpenai });
   if (res && res.ok) {
-    chatShadowSession(tabId, dir, res.sessionId || claudeSessionId, cmd);
-    if (transport === 'claude') { try { chatSessionRegistry.add(res.sessionId || claudeSessionId); } catch (_) {} }
-    const agent = agentBaseName(cmd);
+    res.connection = selected.connection;
+    const shadow = chatShadowSession(tabId, dir, selected.connection === 'cli' && transport === 'claude' ? (res.sessionId || claudeSessionId) : null, cmd);
+    shadow.connection = selected.connection;
+    if (selected.connection === 'cli' && transport === 'claude') { try { chatSessionRegistry.add(res.sessionId || claudeSessionId); } catch (_) {} }
+    const agent = selected.connection === 'endpoint' ? 'openai' : agentBaseName(cmd);
     const id = transcriptId(agent, res.sessionId || claudeSessionId || crypto.randomUUID());
     if (id) {
-      chatTranscripts.set(tabId, { id, agent, cwd: dir });
+      chatTranscripts.set(tabId, { id, agent, cwd: dir, connection: selected.connection });
       // A resumed chat's earlier turns open its transcript when it has none.
       if (seed && !transcriptStore.has(id)) { for (const ev of seed) transcriptStore.append(id, ev); transcriptStore.flush(id); }
     }
@@ -2060,7 +2060,7 @@ ipcMain.handle('auth:status', async (_e, { tabId } = {}) => {
     return { ok: false, error: (err && err.message) || 'could not read the sign-in status' };
   }
 });
-ipcMain.handle('chat:list', () => ({ ok: true, sessions: chatRuntime.list() }));
+ipcMain.handle('chat:list', () => ({ ok: true, sessions: chatRuntime.list().map((c) => ({ ...c, connection: c.transport === 'openai' ? 'endpoint' : 'cli' })) }));
 // chat:history reads a past session's on-disk log and returns it as chat
 // events, so a resumed session opens in Chat view with its conversation
 // already on screen. Paths are built here from validated ids, never taken
@@ -2411,7 +2411,9 @@ const AUT_OUTPUT_FLUSH_MS = 250;
 const { applyWorktreeChanges, isSafeRelPath: isSafeApplyRelPath } = require('./lib/autopilot-apply');
 const { rankRuns } = require('./lib/race-judge');
 const Orchestrator = require('./lib/autopilot-orchestrator');
-const { modelArgsFor, classifyTier } = require('./lib/model-routing');
+const { classifyTier } = require('./lib/model-routing');
+const { resolveTaskRoute, availableRoutes, resolveCollabRoutes, resolveWorkflowRoutes } = require('./lib/task-routing');
+const { resolveChatConnection } = require('./lib/chat-connection');
 const { agentBaseName } = require('./lib/agent-oneshot');
 const {
   modelFlagFor,
@@ -3244,7 +3246,8 @@ function flushRunOutput(runId) {
 function spawnRunPty(runId, cwd) {
   const r = runs.get(runId);
   if (!r) return;
-  const rawCmd = (r.agentCommandOverride || config.agentCommand || 'claude').trim();
+  const rawCmd = String(r.agentCommandOverride || '').trim();
+  if (!rawCmd) throw new Error('This run has no saved vendor command.');
   const userTokens = rawCmd.split(/\s+/).filter(Boolean);
   let agentExe = userTokens.shift() || 'claude';
   let agentArgs = withAutopilotArgs(agentExe, userTokens);
@@ -3459,6 +3462,22 @@ function buildAutopilotGoal(goal) {
   ].join('\n');
 }
 
+function taskRoutingSnapshot() {
+  return JSON.parse(JSON.stringify({ agentCommand: config.agentCommand, modelRouting: config.modelRouting, taskRouting: config.taskRouting }));
+}
+
+function installedTaskVendors() {
+  return availableRoutes(KNOWN_AGENTS.map((a) => ({ command: a.command, available: isOnPath(a.command) })));
+}
+
+function jobRoute(role, payload = {}, options = {}) {
+  return resolveTaskRoute({
+    config: options.config || taskRoutingSnapshot(), role,
+    requested: payload.routing, agentCommand: payload.agentCommand,
+    available: options.available || installedTaskVendors(), index: options.index,
+  });
+}
+
 ipcMain.handle('autopilot:start', async (_e, payload = {}) => {
   const activeProj = Array.isArray(config.projects) && config.activeProjectId
     ? config.projects.find((p) => p && p.id === config.activeProjectId)
@@ -3472,26 +3491,14 @@ ipcMain.handle('autopilot:start', async (_e, payload = {}) => {
     return { ok: false, error: 'autopilot refuses to snapshot the entire home folder' };
   }
   const runId = 'ap-' + Date.now().toString(36) + '-' + crypto.randomBytes(4).toString('hex');
-  // Downgrade a clearly mechanical solo task to the cheap model to save money;
-  // leave reasoning tasks on the user's chosen model. Emit the decision to the
-  // run log so the user sees which model was chosen and why.
-  {
-    const base = config.agentCommand || 'claude';
-    const baseName = agentBaseName(base);
-    const tier = classifyTier(payload.goal || '');
-    const routed = !!(config.modelRouting && Object.keys(config.modelRouting).length);
-    let model = `${baseName} (default)`;
-    if (tier === 'cheap') {
-      const modelArgs = modelArgsFor(baseName, 'cheap', config.modelRouting || {});
-      if (modelArgs.length) { payload.agentCommand = `${base} ${modelArgs.join(' ')}`; model = modelArgs[modelArgs.length - 1]; }
-    }
-    if (mainWindow) mainWindow.webContents.send('autopilot:orchestrator', {
-      runId, tier, model, autoSelected: !routed,
-      reason: tier === 'cheap'
-        ? `Task looks mechanical, spawning ${model} to save cost`
-        : `Task needs reasoning, using ${model}`,
-    });
-  }
+  const tier = classifyTier(payload.goal || '');
+  const route = jobRoute(tier, payload);
+  if (!route.ok) return route;
+  payload = { ...payload, agentCommand: route.command, route };
+  if (mainWindow) mainWindow.webContents.send('autopilot:orchestrator', {
+    runId, tier, vendor: route.vendor, model: route.model || `${route.vendor} (default)`,
+    autoSelected: route.automatic, reason: route.reason,
+  });
   const maxConcurrent = config.autopilotMaxConcurrent || AP_MAX_CONCURRENT;
   const activeCount = [...runs.values()].filter((r) => !r.finishing).length;
   if (activeCount >= maxConcurrent) {
@@ -3544,6 +3551,12 @@ async function startCollabTeam(payload = {}) {
   if (maxConcurrent < 2) {
     return { ok: false, error: 'team mode needs at least 2 concurrent Autopilot slots; raise the Autopilot concurrency limit or start a solo run' };
   }
+  const routingConfig = taskRoutingSnapshot();
+  const available = installedTaskVendors();
+  const plannerRoute = resolveTaskRoute({ config: routingConfig, role: 'planner', available });
+  const integratorRoute = resolveTaskRoute({ config: routingConfig, role: 'integrator', available });
+  if (!plannerRoute.ok) return plannerRoute;
+  if (!integratorRoute.ok) return integratorRoute;
   // The planner runs as a detached child with no entry in `runs`, so track it
   // here and let autopilot:cancel kill it during the 1-2 min plan window.
   let planChild = null;
@@ -3551,7 +3564,8 @@ async function startCollabTeam(payload = {}) {
   activePlanning = { cancel: () => { planCancelled = true; try { planChild && planChild.kill('SIGKILL'); } catch (_) {} } };
   const plan = await Orchestrator.planCollab({
     goal,
-    agentCommand: config.agentCommand || 'claude',
+    agentCommand: plannerRoute.command,
+    vendors: available.map((a) => a.vendor),
     cwd: workspaceRoot,
     maxAgents: Math.min(4, maxConcurrent),
     env: buildAgentEnv(),
@@ -3561,25 +3575,16 @@ async function startCollabTeam(payload = {}) {
   if (planCancelled) return { ok: false, error: 'planning cancelled' };
   if (!plan.ok) return { ok: false, error: `orchestrator: ${plan.error}` };
   const groupId = 'collab-' + Date.now().toString(36) + '-' + crypto.randomBytes(3).toString('hex');
-  // Resolve the model each agent will run on and attach a human-readable
-  // reason, so the run log can explain every orchestrator decision.
-  const routed = !!(config.modelRouting && Object.keys(config.modelRouting).length);
-  const baseName0 = agentBaseName(config.agentCommand || 'claude');
-  for (const a of plan.agents) {
-    const args = modelArgsFor(baseName0, a.tier, config.modelRouting || {});
-    a.model = args.length ? args[args.length - 1] : `${baseName0} (default)`;
-    a.autoSelected = !routed;
-    a.reason = a.tier === 'cheap'
-      ? `looks mechanical, ${args.length ? 'spawning ' + a.model : 'using the default model'}`
-      : `needs reasoning, using ${a.model}`;
-  }
+  const teamRoutes = resolveCollabRoutes({ config: routingConfig, agents: plan.agents, requested: payload.routing, available, agentCommand: payload.agentCommand });
+  if (!teamRoutes.ok) return teamRoutes;
+  plan.agents = teamRoutes.workers;
   if (mainWindow) {
-    mainWindow.webContents.send('autopilot:collab-plan', { groupId, goal, agents: plan.agents });
+    mainWindow.webContents.send('autopilot:collab-plan', { groupId, goal, agents: plan.agents, plannerRoute, integratorRoute });
     if (plan.warning) mainWindow.webContents.send('autopilot:collab-plan', { groupId, note: plan.warning, warning: true });
   }
   const fleetStartedAt = Date.now();
   collabGroups.set(groupId, {
-    goal, caps: payload.caps, snapshot: payload.snapshot, workspaceRoot,
+    goal, caps: payload.caps, snapshot: payload.snapshot, workspaceRoot, plannerRoute, integratorRoute,
     startedAt: fleetStartedAt, remaining: plan.agents.length, workers: [], integratorSpawned: false,
   });
   const started = [];
@@ -3591,10 +3596,7 @@ async function startCollabTeam(payload = {}) {
       `Your slice: ${a.subgoal}`,
       'Work ONLY your slice; teammates own everything else. Deliver your slice completely.',
     ].join(' ');
-    const baseCmd = config.agentCommand || 'claude';
-    const modelArgs = modelArgsFor(agentBaseName(baseCmd), a.tier, config.modelRouting || {});
-    const workerCmd = modelArgs.length ? `${baseCmd} ${modelArgs.join(' ')}` : baseCmd;
-    const p = { goal: a.subgoal, originalGoal: goal, fleetStartedAt, injectGoal, caps: payload.caps, snapshot: payload.snapshot, groupId, role: a.role, agentCommand: workerCmd, tier: a.tier };
+    const p = { goal: a.subgoal, originalGoal: goal, fleetStartedAt, injectGoal, caps: payload.caps, snapshot: payload.snapshot, groupId, role: a.role, agentCommand: a.agentCommand, route: a.route, tier: a.tier };
     const runId = newRunId();
     const activeCount = [...runs.values()].filter((r) => !r.finishing).length;
     if (activeCount >= maxConcurrent) {
@@ -3677,6 +3679,7 @@ function checkCollabComplete(groupId) {
     injectGoal: inject,
     caps: g.caps, snapshot: g.snapshot,
     groupId, role: 'integrator', isIntegrator: true,
+    agentCommand: g.integratorRoute.command, route: g.integratorRoute,
   };
   const runId = newRunId();
   const maxConcurrent = config.autopilotMaxConcurrent || AP_MAX_CONCURRENT;
@@ -3696,6 +3699,11 @@ function checkCollabComplete(groupId) {
 // worktree removes it before returning, so a failed start leaves nothing on
 // disk.
 async function doStartRun(runId, payload, workspaceRoot) {
+  if (!payload.agentCommand) {
+    const route = jobRoute(payload.tier || classifyTier(payload.goal || ''), payload);
+    if (!route.ok) return route;
+    payload = { ...payload, agentCommand: route.command, route };
+  }
   const wtResult = createRunWorktree(runId, workspaceRoot);
   if (!wtResult.ok) return { ok: false, error: wtResult.error };
   const runRoot = wtResult.worktreePath;
@@ -3728,7 +3736,7 @@ async function doStartRun(runId, payload, workspaceRoot) {
     const line = `Preloaded ${appliedCount} worker change${appliedCount === 1 ? '' : 's'} into this integration worktree${failedCount ? `; ${failedCount} failed` : ''}.`;
     payload.injectGoal = `${payload.injectGoal || payload.goal || ''} ${line}`;
   }
-  const agentName = (config.agentCommand || 'claude').trim().split(/\s+/)[0]
+  const agentName = payload.agentCommand.trim().split(/\s+/)[0]
     .split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/i, '');
   const vendorBilled = ['copilot', 'codex', 'aider', 'gemini', 'kiro-cli'].includes(agentName);
   const originalGoal = (payload && typeof payload.originalGoal === 'string' && payload.originalGoal.trim())
@@ -5988,7 +5996,7 @@ function recordWorkflowRun(run, workflow) {
     // requires.agentCommands lists them all.
     const agentCounts = new Map();
     for (const n of nodes) {
-      const base = AgentOneShot.agentBaseName(n.agentCommand || config.agentCommand || 'claude');
+      const base = (run.taskRoutes && run.taskRoutes[n.id] ? run.taskRoutes[n.id].vendor : AgentOneShot.agentBaseName(n.agentCommand || 'claude'));
       if (base) agentCounts.set(base, (agentCounts.get(base) || 0) + 1);
     }
     const agentResolved = [...agentCounts.entries()].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))[0];
@@ -6351,10 +6359,13 @@ function startWorkflowRun(workflowId, opts = {}) {
     return { ok: false, error: gate.message, code: gate.code, message: gate.message, detail: gate.detail, workflowId };
   }
 
+  const taskRoutes = resolveWorkflowRoutes({ config: taskRoutingSnapshot(), nodes: sanitizeGraph(workflow.graph).nodes, available: installedTaskVendors() });
+  if (!taskRoutes.ok) return taskRoutes;
   const runId = `run-${Date.now()}`;
   const runState = {
     id: runId,
     workflowId,
+    taskRoutes: taskRoutes.routes,
     status: 'running',
     stepStates: {},   // keyed by node id; branching means the path is dynamic
     currentChild: null,
@@ -8061,7 +8072,10 @@ async function wfRunStep(event, run, graph, byId, step, incomingCtx) {
     wfEmit(event, 'wf:node:activity', { runId: run.id, nodeId: step.id, kind, text: String(text || '') });
   };
 
-  const cmd = (step.agentCommand || config.agentCommand || 'claude').trim().split(/\s+/)[0];
+  const route = run.taskRoutes[step.id];
+  const cmd = route.vendor;
+  step = { ...step, model: route.model };
+  activity('status', route.reason);
   // Steps run the agent found on PATH, by name only. A name carrying a path
   // separator is refused here, and isAllowedAgentCommand then holds the basename
   // to the agents Husk knows how to drive (workflow-graph.js:35-41).
@@ -8334,8 +8348,8 @@ async function executeWorkflow(event, workflow, run) {
     wfAudit(run, WF_AUDIT_ROWS.stepStart, {
       nodeId: n.id,
       name: n.name || '',
-      agent: AgentOneShot.agentBaseName(n.agentCommand || config.agentCommand || 'claude') || '',
-      model: n.model || null,
+      agent: (run.taskRoutes && run.taskRoutes[n.id] ? run.taskRoutes[n.id].vendor : AgentOneShot.agentBaseName(n.agentCommand || 'claude')) || '',
+      model: (run.taskRoutes && run.taskRoutes[n.id] ? run.taskRoutes[n.id].model : n.model) || null,
     });
     wfRunStep(event, run, graph, byId, n, ctx).then(({ status, output }) => {
       wfAuditStepEnd(run, n, run.stepStates[n.id]);
