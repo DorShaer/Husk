@@ -33,9 +33,8 @@ test('the new chat menu names CLIs and the composer continues a discussion with 
     await pane.locator('.chat-input').press('Enter');
     await pane.getByRole('button', { name: 'Allow once', exact: true }).click();
     await expect(pane).toContainText('Done, permission was');
-    await pane.locator('.chat-composer-meta button').first().click();
+    await pane.getByRole('button', { name: 'Move discussion', exact: true }).click();
     await win.locator('#chat-context-menu').getByRole('menuitem', { name: /Kiro/ }).click();
-    await win.locator('#chat-context-menu').getByRole('menuitem', { name: 'Continue this discussion' }).click();
     await expect(pane.locator('.chat-composer-meta')).toContainText('kiro-cli');
     await expect(pane.locator('.chat-input')).toBeEnabled();
     await pane.locator('.chat-input').fill('Continue with the same colour');

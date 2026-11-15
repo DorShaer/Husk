@@ -31,13 +31,15 @@
     try { localStorage.setItem(ALERTS_KEY, JSON.stringify([...alerts].slice(-200))); } catch (_) {}
   }
 
-  function acknowledge() {
+  function acknowledge(sourceId) {
     for (const s of last?.sources || []) {
+      if (sourceId && s.id !== sourceId) continue;
       const alert = alerts.get(s.id);
       if (alert) alert.unread = false;
+      unread.delete(s.id);
     }
-    unread.clear();
     saveAlerts();
+    paintBell();
   }
 
   function updateAlerts(next) {
@@ -47,16 +49,20 @@
     for (const s of next.sources) {
       let alert = alerts.get(s.id);
       if (s.state === 'ok') {
-        if (s.kind !== 'plan' || (alert?.resetsAt > 0 && alert.resetsAt <= Date.now())) changed = alerts.delete(s.id) || changed;
+        if (alert?.resetsAt > 0 && alert.resetsAt <= Date.now()) changed = alerts.delete(s.id) || changed;
         continue;
       }
       const newWindow = alert?.resetsAt > 0 && alert.resetsAt <= Date.now() && (!s.resetsAt || s.resetsAt > Date.now());
-      if (!alert || newWindow || M.STATES.indexOf(s.state) > M.STATES.indexOf(alert.state)) {
+      if (!alert || newWindow) {
         alert = { state: s.state, resetsAt: s.resetsAt || 0, unread: true, at: Date.now() };
         alerts.set(s.id, alert);
         crossed.push(s);
         changed = true;
+      } else if (alert.state !== s.state) {
+        alert.state = s.state;
+        changed = true;
       }
+      if (!alert.resetsAt && s.resetsAt > 0) { alert.resetsAt = s.resetsAt; changed = true; }
       if (!panel.hidden && alert.unread) { alert.unread = false; changed = true; }
       if (alert.unread) unread.add(s.id);
     }
@@ -75,7 +81,12 @@
     for (const tab of TABS.values()) {
       const u = tab.chatState && tab.chatState.usage;
       if (!u || !(Number(u.size) > 0)) continue;
-      out.push({ id: 'context:' + tab.id, kind: 'context', label: 'Context window', detail: displayTitle(tab), used: Number(u.used) || 0, limit: Number(u.size), unit: 'tokens', tabId: tab.id });
+      const id = `context:${tab.id}:${tab.chatState.sessionId || tab.agentId || tab.id}`;
+      const legacy = 'context:' + tab.id;
+      if (!alerts.has(id) && alerts.has(legacy)) {
+        alerts.set(id, alerts.get(legacy)); alerts.delete(legacy); saveAlerts();
+      }
+      out.push({ id, kind: 'context', label: 'Context window', detail: displayTitle(tab), used: Number(u.used) || 0, limit: Number(u.size), unit: 'tokens', tabId: tab.id });
     }
     const c = conf();
     out.push(...M.budgetReadings(M.dailyCounter(daily, now), { tokens: c.usageBudgetTokens, dollars: c.usageBudgetDollars }, now));
@@ -153,15 +164,10 @@
     return tab && tab.mode === 'chat' && tab.chat ? tab : null;
   }
 
-  function offerHandoff(tabId, info) {
-    if (typeof window.huskOfferHandoff !== 'function') return;
-    try { window.huskOfferHandoff(tabId, info); } catch (_) {}
-  }
-
   function toastFor(s) {
-    const title = s.inferred ? 'Possible limit' : s.state === 'reached' ? 'Limit reached' : s.state === 'critical' ? 'Almost at a limit' : 'Getting close to a limit';
+    const title = s.kind === 'context' ? 'Context is getting full' : s.inferred ? 'Possible limit' : s.state === 'reached' ? 'Limit reached' : 'Usage warning';
     const msg = [s.label + (s.detail ? ' (' + s.detail + ')' : '') + ': ' + valueText(s), resetText(s)].filter(Boolean).join('. ');
-    const card = notify(msg, { key: TOAST_KEY, kind: s.state === 'reached' ? 'error' : 'warn', title, ttl: 20000 });
+    const card = notify(msg, { key: TOAST_KEY, kind: s.state === 'reached' ? 'error' : 'warn', title, ttl: 12000 });
     if (!card) return;
     const body = card.querySelector('.toast-body');
     if (!body) return;
@@ -171,17 +177,21 @@
     const add = (label, fn) => {
       const b = el('button', 'toast-action', label);
       b.type = 'button';
-      b.addEventListener('click', () => { try { fn(); } catch (_) {} dismissNotif(card); });
+      b.addEventListener('click', () => { acknowledge(s.id); try { fn(); } catch (_) {} dismissNotif(card); });
       actions.appendChild(b);
     };
     const tab = chatTab(s.tabId);
-    const tabId = s.tabId || activeTabId;
-    add('Start a fresh chat', () => { setPage('chat'); openNewChatTab({ preferChat: true }); });
-    // Deferred past this click, which the menu's own outside-click close hears.
-    if (tab) add('Choose a model', () => { if (tab.id !== activeTabId) activateTab(tab.id); setPage('chat'); setTimeout(() => tab.chat.openModelMenu(), 0); });
-    if (typeof window.huskOfferHandoff === 'function' && tabId) {
-      add('Continue with another CLI', () => offerHandoff(tabId, { reason: s.inferred ? 'possible-limit' : s.state, resetsAt: s.resetsAt || 0 }));
+    if (typeof window.huskMoveDiscussion === 'function' && tab) {
+      add('Change vendor', () => {
+        if (tab.id !== activeTabId) activateTab(tab.id);
+        setPage('chat');
+        window.huskMoveDiscussion(tab.id, tab.chat.el.querySelector('.chat-move-discussion') || bell);
+      });
     }
+    if (tab) add('Continue with another model', () => { if (tab.id !== activeTabId) activateTab(tab.id); setPage('chat'); setTimeout(() => tab.chat.openModelMenu(), 0); });
+    add('Dismiss', () => {});
+    const close = card.querySelector('.toast-close');
+    if (close) close.onclick = () => acknowledge(s.id);
     body.appendChild(actions);
   }
 
@@ -190,7 +200,7 @@
     const next = M.evaluate(readings(Date.now()), { close: c.usageWarnPct, critical: c.usageCriticalPct }, Date.now());
     // An autopilot run reports its own halt, so its budget never raises a toast.
     const crossings = updateAlerts(next);
-    const crossed = crossings.filter((s) => s.kind !== 'autopilot');
+    const crossed = crossings.filter((s) => s.kind !== 'autopilot' && (s.kind !== 'plan' || s.detail === agentOf(TABS.get(activeTabId))));
     last = next;
     const sig = JSON.stringify(next.sources.map((s) => [s.id, s.state, Math.round(s.pct), s.used, s.limit, s.resetsAt, s.detail]));
     if (sig !== lastSig) {
@@ -213,7 +223,6 @@
     const now = Date.now();
     if (ev.type === 'limit') {
       const windows = windowsOf(agent);
-      const was = isReached(agent);
       windows.delete('plan');
       windows.delete('possible');
       for (const w of Array.isArray(ev.windows) ? ev.windows : []) windows.set(w.window, { window: w.window, pct: w.pct, resetsAt: w.resetsAt, at: now, src: 'cli' });
@@ -222,12 +231,10 @@
         const cur = windows.get(key) || { window: key, pct: 0, at: now, src: 'cli' };
         const resetsAt = ev.resetsAt || cur.resetsAt || 0;
         windows.set(key, Object.assign({}, cur, { reached: true, resetsAt }));
-        if (!was) offerHandoff(tab.id, { reason: 'reached', resetsAt });
       }
     } else if ((ev.type === 'error' || (ev.type === 'turn_end' && ev.isError)) && M.matchLimitPhrase(ev.text)) {
       if (!isReached(agent)) {
         windowsOf(agent).set('possible', { window: 'possible', pct: 0, resetsAt: 0, at: now, reached: true, inferred: true, src: 'cli' });
-        offerHandoff(tab.id, { reason: 'possible-limit', resetsAt: 0 });
       }
     } else if (ev.type === 'turn_end' && !ev.isError) {
       windowsOf(agent).delete('possible');

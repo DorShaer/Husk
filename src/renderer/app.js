@@ -1886,6 +1886,7 @@ async function switchDiscussion(tab, command, cwd, carry) {
     if (!prepared?.ok) { toast(prepared?.error || 'No discussion to continue', 'error'); return; }
   }
   activateTab(tab.id);
+  tab.connection = 'cli';
   if (chatProtocolFor(command)) {
     tab.handoff = carry ? { tabId: tab.id } : null;
     tab.agentId = null;
@@ -1914,6 +1915,16 @@ async function offerAgentSwitch(tab, anchor) {
     label: a.label, run: () => chooseContinuation(tab, anchor, a.command, chatWorkDir(tab)),
   })));
 }
+window.huskMoveDiscussion = async (tabId, anchor) => {
+  const tab = TABS.get(tabId);
+  if (!tab || tab.mode !== 'chat') return;
+  await refreshAgentMenu();
+  const carry = !!tab.chatState?.items?.some((item) => item.kind === 'user' || item.kind === 'text');
+  contextMenu(anchor, detectedAgents().filter((a) => a.command !== tabAgentCommand(tab).split(/\s+/)[0]).map((a) => ({
+    label: `Continue with ${a.label}`,
+    run: () => switchDiscussion(tab, a.command, chatWorkDir(tab), carry),
+  })));
+};
 async function offerFolderSwitch(tab, anchor) {
   const folders = projectsCache.filter((p) => p && p.path).map((p) => ({
     label: p.name || p.path, run: () => chooseContinuation(tab, anchor, tabAgentCommand(tab), p.path),
@@ -4858,7 +4869,8 @@ function focusedContextUse() {
 
 function workPaneHTML() {
   const { path, name } = workRoot();
-  const use = focusedContextUse();
+  const nativeChat = TABS.get(activeTabId)?.mode === 'chat';
+  const use = nativeChat ? null : focusedContextUse();
   const windowGroup = use ? `
       <section class="sp-work-group">
         <div class="section-label sp-work-head"><span>Context window</span></div>

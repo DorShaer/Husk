@@ -327,20 +327,19 @@ test('an agent that exits on its own offers Restart in the composer, and Restart
   await app.close();
 });
 
-test('an agent title names the tab, usage shows as ctx %, and Yes / Always / No with a string patch render', async () => {
+test('an agent title names the tab, usage appears below the composer, and Yes / Always / No with a string patch render', async () => {
   const { homeDir, bin } = makeHome();
   const { app, win } = await launch(homeDir, bin);
   const pane = win.locator('.chat-pane.show');
   await chatReady(win);
   // gemini-shaped sessions report no usage, so the footer has none.
-  await expect(pane.locator('.chat-composer-usage')).toHaveCount(0);
+  await expect(pane.locator('.chat-context-window')).toBeHidden();
   await pane.locator('.chat-input').fill('copilot: write a greeting');
   await pane.locator('.chat-input').press('Enter');
 
   await expect(win.locator('.chat-tab.active')).toHaveAttribute('title', 'Greeting file');
-  const usage = pane.locator('.chat-composer-meta .chat-composer-usage');
-  await expect(usage).toHaveText('ctx 3%');
-  await expect(usage).toHaveAttribute('title', /of .* context tokens used/);
+  const usage = pane.locator('.chat-context-value');
+  await expect(usage).toHaveText('3.2K / 128K tokens · 3%');
 
   const perm = pane.locator('.chat-perm');
   await expect(perm.locator('.chat-perm-btn')).toHaveText(['Yes', 'Always', 'Allow all', 'No']);
@@ -360,7 +359,7 @@ test('an agent title names the tab, usage shows as ctx %, and Yes / Always / No 
   await win.waitForLoadState('domcontentloaded');
   await win.waitForFunction(() => window.HuskChat && document.querySelector('.chat-pane.show'));
   await expect(win.locator('.chat-tab.active')).toHaveAttribute('title', 'Greeting file');
-  await expect(win.locator('.chat-pane.show .chat-composer-usage')).toHaveText('ctx 3%');
+  await expect(win.locator('.chat-pane.show .chat-context-value')).toHaveText('3.2K / 128K tokens · 3%');
   await app.close();
 });
 

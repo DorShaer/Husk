@@ -486,6 +486,14 @@
     attach.appendChild(icon('attach'));
     attach.appendChild(document.createTextNode('Attach'));
     const meta = el('span', 'chat-composer-meta');
+    const move = el('button', 'ce-composer-btn chat-move-discussion', 'Move discussion');
+    move.type = 'button';
+    move.title = 'Continue this discussion with another vendor';
+    move.setAttribute('aria-haspopup', 'menu');
+    move.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (typeof window.huskMoveDiscussion === 'function') window.huskMoveDiscussion(tabId, move);
+    });
     const send = el('button', 'btn-primary chat-send');
     send.type = 'submit';
     send.title = 'Send (Enter)';
@@ -512,6 +520,7 @@
     allowAll.addEventListener('click', () => { if (api.allowAll) api.allowAll({ tabId, on: false }); });
     foot.appendChild(attach);
     foot.appendChild(meta);
+    foot.appendChild(move);
     foot.appendChild(allowAll);
     foot.appendChild(el('span', 'chat-composer-spacer'));
     foot.appendChild(stop);
@@ -534,6 +543,10 @@
     const queueBox = el('div', 'chat-queue');
     queueBox.hidden = true;
     dock.appendChild(form);
+    const context = el('div', 'chat-context-window');
+    context.hidden = true;
+    context.setAttribute('aria-label', 'Context window');
+    dock.appendChild(context);
     pane.appendChild(dock);
     if (host) host.appendChild(pane);
 
@@ -783,12 +796,28 @@
       mb.setAttribute('aria-haspopup', 'menu');
       mb.addEventListener('click', (ev) => { ev.stopPropagation(); toggleModelMenu(); });
       meta.appendChild(mb);
-      // Context window fill, only from agents that report it.
-      const ctx = usageLabel(state.usage);
-      if (ctx) {
-        const u = el('span', 'chat-chip chat-composer-usage', ctx.text);
-        u.title = ctx.title;
-        meta.appendChild(u);
+      const usage = state.usage;
+      const used = Number(usage && usage.used);
+      const size = Number(usage && usage.size);
+      context.hidden = !Number.isFinite(used) || !(size > 0);
+      context.replaceChildren();
+      if (!context.hidden) {
+        const pct = Math.max(0, used / size * 100);
+        context.dataset.state = pct >= 90 ? 'critical' : pct >= 75 ? 'close' : 'ok';
+        const labels = el('div', 'chat-context-labels');
+        labels.append(el('span', '', 'Context window'));
+        labels.append(el('span', 'chat-context-value', `${fmtTokens(used)} / ${fmtTokens(size)} tokens · ${Math.round(pct)}%`));
+        const bar = el('div', 'chat-context-track');
+        bar.setAttribute('role', 'meter');
+        bar.setAttribute('aria-label', 'Context window used');
+        bar.setAttribute('aria-valuemin', '0');
+        bar.setAttribute('aria-valuemax', String(size));
+        bar.setAttribute('aria-valuenow', String(Math.min(size, Math.max(0, used))));
+        bar.setAttribute('aria-valuetext', `${Math.round(pct)} percent of context used`);
+        const fill = el('div', 'chat-context-fill');
+        fill.style.width = `${Math.min(100, pct)}%`;
+        bar.append(fill);
+        context.append(labels, bar);
       }
       if (cwd) meta.title = cwd;
       empty.textContent = '';

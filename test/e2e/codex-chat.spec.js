@@ -104,10 +104,20 @@ test('codex opens as a Husk thread and answers an approval', async () => {
     await expect(pane.locator('.chat-item-text').last()).toContainText('decision was accept');
     await expect(pane.locator('.chat-meta .chat-meta-line')).toContainText('Done');
 
-    // The context reading lives in the Context pane, not in Status.
+    // Native context stays below the input; the side panel keeps its terminal reading.
     await win.evaluate(() => setStatusPane('work')); // eslint-disable-line no-undef
+    await expect(win.locator('#sp-pane-work .sp-ctxbar')).toHaveCount(0);
+    await expect(pane.locator('.chat-context-value')).toContainText('10%');
+    expect(await pane.locator('.chat-context-window').evaluate((meter) => meter.previousElementSibling.classList.contains('chat-composer'))).toBe(true);
+    expect(await pane.locator('.chat-context-window').evaluate((meter) => meter.getBoundingClientRect().bottom <= Math.min(innerHeight, meter.closest('.chat-pane').getBoundingClientRect().bottom))).toBe(true);
+    await win.evaluate(() => {
+      const tab = TABS.get(activeTabId);
+      tab.mode = 'terminal';
+      lastStats = { agentIsClaude: true, usage: { session: { ctxTokens: 20000, ctxWindow: 200000, ctxPct: 10 } } };
+      paintWorkPane();
+    });
     await expect(win.locator('#sp-pane-work .sp-ctxbar')).toBeVisible();
-    await expect(win.locator('#sp-pane-work')).toContainText('10%');
+    await win.evaluate(() => { TABS.get(activeTabId).mode = 'chat'; paintWorkPane(); });
     await win.evaluate(() => setStatusPane('status')); // eslint-disable-line no-undef
     await expect(win.locator('#sp-content .sp-ctxbar')).toHaveCount(0);
     await win.screenshot({ path: path.join(REPO_ROOT, 'test-results', 'codex-chat.png') });
@@ -123,6 +133,10 @@ test('the footer and Status panel follow the focused chat, and chats reorder by 
     await chatReady(win);
     const tabs = win.locator('#tab-strip .chat-tab');
     await expect(tabs).toHaveCount(2);
+    await win.evaluate(() => {
+      [...TABS.values()].forEach((tab, i) => { tab.chat.apply({ type: 'usage', used: (i + 1) * 1000, size: 128000 }); tab.chat.flush(); });
+    });
+    await expect(win.locator('.chat-pane.show .chat-context-value')).toContainText('2K / 128K');
 
     // gemini is not the configured tool, so the footer names it; its model too.
     await expect(win.locator('#sb-agent-item')).toBeVisible();
@@ -132,6 +146,7 @@ test('the footer and Status panel follow the focused chat, and chats reorder by 
 
     await tabs.nth(0).click();
     await expect(win.locator('#sb-agent')).toHaveText('codex');
+    await expect(win.locator('.chat-pane.show .chat-context-value')).toContainText('1K / 128K');
     await expect(win.locator('#sb-model')).toHaveText('GPT Fake');
     await expect(win.locator('#sp-content')).toContainText('Codex');
     await expect(win.locator('#sp-content')).not.toContainText('Gemini');

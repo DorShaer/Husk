@@ -25,6 +25,10 @@ test('high context raises the usage bell and shows the source', async () => {
     await input.press('Enter');
     await expect(win.locator('#usage-bell')).toHaveAttribute('data-state', 'critical');
     await expect(win.locator('#usage-bell-count')).toBeVisible();
+    await expect(win.getByRole('button', { name: 'Change vendor', exact: true })).toBeVisible();
+    await expect(win.getByRole('button', { name: 'Continue with another model', exact: true })).toBeVisible();
+    await expect(win.locator('.chat-pane.show .chat-context-value')).toHaveText('122K / 128K tokens · 95%');
+    await win.locator('.toast:not(.is-out) .toast-action').filter({ hasText: /^Dismiss$/ }).click();
     await win.locator('#usage-bell').click();
     await expect(win.locator('#usage-panel')).toContainText('Context window');
     await expect(win.locator('#usage-panel')).toContainText('122K / 128K');
@@ -34,11 +38,12 @@ test('high context raises the usage bell and shows the source', async () => {
     await expect(win.locator('#usage-bell-count')).toBeHidden();
     await win.evaluate(() => window.HuskUsageBell.onChatEvent(TABS.get(activeTabId), { type: 'limit', windows: [{ window: 'short', pct: 80 }] }));
     await expect(win.locator('#usage-bell-count')).toHaveText('1');
+    await win.locator('.toast:not(.is-out) .toast-action').filter({ hasText: /^Dismiss$/ }).click();
     await win.locator('#usage-bell').click();
     await expect(win.locator('#usage-bell-count')).toBeHidden();
     await win.locator('#usage-bell').click();
     await win.evaluate(() => window.HuskUsageBell.onChatEvent(TABS.get(activeTabId), { type: 'limit', windows: [{ window: 'short', pct: 95 }] }));
-    await expect(win.locator('#usage-bell-count')).toHaveText('1');
+    await expect(win.locator('#usage-bell-count')).toBeHidden();
     await win.evaluate(() => window.huskOfferHandoff(activeTabId, { reason: 'possible-limit' }));
     await expect(win.locator('.chat-pane.show .chat-handoff-offer')).toContainText('may have reached a usage limit');
     await win.locator('.chat-pane.show').getByRole('button', { name: 'Yes', exact: true }).click();
@@ -47,7 +52,7 @@ test('high context raises the usage bell and shows the source', async () => {
     const resetsAt = Date.now() + 3600000;
     const reportReached = (reset) => win.evaluate((resetsAt) => window.HuskUsageBell.onChatEvent(TABS.get(activeTabId), { type: 'limit', windows: [{ window: 'short', pct: 100, resetsAt }] }), reset);
     await reportReached(resetsAt);
-    await expect(win.locator('#toast-stack .toast-title').filter({ hasText: 'Limit reached' })).toHaveCount(1);
+    await expect(win.locator('#toast-stack .toast-title').filter({ hasText: 'Limit reached' })).toHaveCount(0);
     await win.locator('#usage-bell').click();
     await expect(win.locator('#usage-bell-count')).toBeHidden();
     await win.locator('#usage-bell').click();
@@ -56,12 +61,12 @@ test('high context raises the usage bell and shows the source', async () => {
     await expect(input).toHaveAttribute('placeholder', /Enter to send/);
     await reportReached(resetsAt);
     await expect(win.locator('#usage-bell-count')).toBeHidden();
-    await expect(win.locator('#toast-stack .toast-title').filter({ hasText: /limit/i })).toHaveCount(0);
+    await expect(win.locator('#toast-stack .toast-title')).toHaveCount(0);
     for (const drift of [1000, -1000, 5000, 0]) await reportReached(resetsAt + drift);
     await win.evaluate(() => window.HuskUsageBell.onChatEvent(TABS.get(activeTabId), { type: 'limit', windows: [{ window: 'short', pct: 0 }] }));
     await reportReached(resetsAt);
     await expect(win.locator('#usage-bell-count')).toBeHidden();
-    await expect(win.locator('#toast-stack .toast-title').filter({ hasText: /limit/i })).toHaveCount(0);
+    await expect(win.locator('#toast-stack .toast-title')).toHaveCount(0);
     await win.evaluate((reset) => {
       const now = Date.now;
       Date.now = () => reset + 1;
@@ -70,6 +75,25 @@ test('high context raises the usage bell and shows the source', async () => {
     }, resetsAt);
     await expect(win.locator('#usage-bell-count')).toHaveText('1');
     await expect(win.locator('#toast-stack .toast-title').filter({ hasText: 'Limit reached' })).toHaveCount(1);
+    await win.locator('.toast:not(.is-out) .toast-action').filter({ hasText: /^Dismiss$/ }).click();
+    const contextReading = (used, sessionId) => win.evaluate(({ used, sessionId }) => {
+      const tab = TABS.get(activeTabId);
+      if (sessionId) tab.chat.apply({ type: 'session', sessionId });
+      tab.chat.apply({ type: 'usage', used, size: 128000 });
+      tab.chat.flush();
+      window.HuskUsageBell.refresh();
+    }, { used, sessionId });
+    // Escalation and transient healthy readings stay quiet for this conversation.
+    await contextReading(126000);
+    await contextReading(1000);
+    await contextReading(127000);
+    await expect(win.locator('#toast-stack .toast-title')).toHaveCount(0);
+    // A genuinely new conversation gets its own single warning.
+    await contextReading(96000, 'another-conversation');
+    await expect(win.locator('#toast-stack .toast-title')).toHaveText('Context is getting full');
+    await win.locator('.toast:not(.is-out) .toast-action').filter({ hasText: /^Dismiss$/ }).click();
+    await contextReading(127000);
+    await expect(win.locator('#toast-stack .toast-title')).toHaveCount(0);
     const daily = await win.evaluate(async () => {
       cfg = await window.husk.config.set({ usageBudgetTokens: 1, usageHardStop: true });
       return { day: window.HuskUsage.dayKey(Date.now()), tokens: 2, dollars: 0 };
