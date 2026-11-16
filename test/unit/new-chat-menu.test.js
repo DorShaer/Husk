@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { detectedAgents, newChatEntries } = require('../../src/lib/new-chat-menu');
+const { detectedAgents, splitConnected, newChatEntries } = require('../../src/lib/new-chat-menu');
 
 const agents = [
   { command: 'claude', label: 'Claude Code', available: true },
@@ -33,4 +33,19 @@ test('nothing detected still offers a plain new chat on the default CLI', () => 
   for (const list of [[], null, undefined]) {
     assert.deepStrictEqual(newChatEntries({ agents: list }).map((e) => [e.label, e.command, e.sub]), [['New chat', '', ''], ['Terminal', '', '']]);
   }
+});
+
+test('connected CLIs lead and the rest sit under More CLIs after the terminal', () => {
+  const entries = newChatEntries({ agents, connected: ['aider'] });
+  assert.deepStrictEqual(entries.map((e) => [e.command, e.group || 'main']), [['aider', 'main'], ['', 'main'], ['claude', 'more'], ['gemini', 'more']]);
+});
+
+test('an unset connected list keeps every detected CLI up front', () => {
+  assert.deepStrictEqual(splitConnected([{ command: 'a' }], undefined), { main: [{ command: 'a' }], more: [] });
+  assert.deepStrictEqual(splitConnected([{ command: 'a' }, { command: 'b' }], ['b']), { main: [{ command: 'b' }], more: [{ command: 'a' }] });
+});
+
+test('connected CLIs none of which are installed fall back to the plain new chat', () => {
+  const entries = newChatEntries({ agents, connected: ['copilot'] });
+  assert.deepStrictEqual(entries.map((e) => e.label), ['New chat', 'Terminal', 'New chat with Claude Code', 'New chat with Gemini CLI', 'New chat with Aider']);
 });
