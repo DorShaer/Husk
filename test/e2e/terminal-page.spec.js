@@ -25,13 +25,13 @@ test('terminal entry points open renameable shared tabs and the shell answers', 
   await win.evaluate(() => { document.querySelectorAll('.modal').forEach((m) => { m.hidden = true; }); });
   await expect(win.locator('#tab-strip .chat-tab')).toHaveCount(1);
 
-  // The rail item sits in its own section directly above the tool selector.
+  // The rail item sits in its own section directly above Preferences.
   const item = win.locator('.rail-section-term .rail-item[data-page="terminal"]');
   await expect(item).toBeVisible();
   const order = await win.evaluate(() => {
     const term = document.querySelector('.rail-section-term');
-    const tool = document.querySelector('.rail-section-tool');
-    return term && tool ? term.getBoundingClientRect().bottom <= tool.getBoundingClientRect().top + 1 : false;
+    const prefs = document.querySelector('#btn-open-prefs');
+    return term && prefs ? term.getBoundingClientRect().bottom <= prefs.getBoundingClientRect().top + 1 : false;
   });
   expect(order).toBe(true);
   // No Chat / Terminal toggle in the chat page head any more.
