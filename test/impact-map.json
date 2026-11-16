@@ -302,7 +302,8 @@
     "sessions": {
       "specs": [
         "sessions-page.spec.js",
-        "session-folders.spec.js"
+        "session-folders.spec.js",
+        "sessions-loose-ends.spec.js"
       ],
       "tokens": [
         "dp",
@@ -315,7 +316,12 @@
       "paths": [
         "src/lib/claude-session.js",
         "src/lib/copilot-session-title.js",
-        "src/lib/session-view.js"
+        "src/lib/session-view.js",
+        "src/lib/session-scan.js",
+        "src/lib/session-cache.js",
+        "src/lib/session-peek.js",
+        "src/lib/session-activity.js",
+        "src/lib/session-head.js"
       ]
     },
     "statuspanel": {
