@@ -5641,8 +5641,16 @@ function countLines(p) { try { return fs.readFileSync(p, 'utf8').split('\n').fil
 // result (including empty) is cached, so each CLI is probed at most once per app
 // session rather than on every stats poll.
 const _agentVersionCache = {};
+// Under the test harness only a fixture CLI inside the test home is run: a real
+// CLI's first run can unpack hundreds of megabytes into that fresh home.
+function skipVersionProbe(cmd) {
+  if (process.env.HUSK_E2E !== '1') return false;
+  const at = resolveOnPath(cmd);
+  return !at || !isInside(HOME, at);
+}
 function getAgentVersion(cmd) {
   if (cmd in _agentVersionCache) return _agentVersionCache[cmd];
+  if (skipVersionProbe(cmd)) { _agentVersionCache[cmd] = ''; return ''; }
   let v = '';
   try {
     const out = require('child_process').execFileSync(cmd, ['--version'], { timeout: 4000, encoding: 'utf8', env: buildAgentEnv() });
@@ -5655,6 +5663,7 @@ function getAgentVersion(cmd) {
 // The same probe off the main thread, sharing the cache.
 function agentVersionAsync(cmd) {
   if (cmd in _agentVersionCache) return Promise.resolve(_agentVersionCache[cmd]);
+  if (skipVersionProbe(cmd)) { _agentVersionCache[cmd] = ''; return Promise.resolve(''); }
   return new Promise((resolve) => {
     const child = require('child_process').execFile(cmd, ['--version'], { timeout: 4000, encoding: 'utf8', env: buildAgentEnv() }, (err, out) => {
       const m = !err && String(out).match(/\d+\.\d+(?:\.\d+)?/);
