@@ -2463,6 +2463,7 @@
               </label>
               <button class="ghost-btn" id="br-add-note" type="button"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span class="btn-label">Add note</span></button>
               <button class="ghost-btn" id="br-add-rule" type="button" title="An instruction sent with every message, in chat and terminal"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span class="btn-label">Add rule</span></button>
+              <button class="ghost-btn" id="br-add-enforced" type="button" title="A rule Husk applies to the agent's replies itself, at no token cost"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span class="btn-label">New enforced rule</span></button>
               <button class="btn-primary" id="br-add-files" type="button"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg> Add files</button>
               <button class="ghost-btn" id="br-add-image" type="button"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg> Add image</button>
             </div>
@@ -2479,6 +2480,29 @@
                   <span class="br-note-acts">
                     <button class="ghost-btn" id="br-note-cancel" type="button">Cancel</button>
                     <button class="btn-primary" type="submit">Remember</button>
+                  </span>
+                </div>
+              </form>
+              <form class="br-note br-enforce" id="br-enforce-form" hidden>
+                <label class="br-enforce-field"><span>Enforced rule</span>
+                  <select class="wf-step-select" id="br-enf-kind">
+                    <option value="no-em-dash">No em dashes (replaced with a hyphen)</option>
+                    <option value="replace-term">Replace a term</option>
+                    <option value="no-emoji">No emoji in prose</option>
+                  </select>
+                </label>
+                <div class="br-enforce-term" id="br-enf-term-fields" hidden>
+                  <input class="br-enf-input" id="br-enf-term" type="text" maxlength="80" placeholder="Term, such as utilize" aria-label="Term to replace" />
+                  <input class="br-enf-input" id="br-enf-replacement" type="text" maxlength="80" placeholder="Replace with, such as use" aria-label="Replacement" />
+                  <label class="br-switch"><input type="checkbox" id="br-enf-case" /><span>Match case</span></label>
+                  <label class="br-switch"><input type="checkbox" id="br-enf-code" /><span>Also inside code</span></label>
+                </div>
+                <p class="br-detail-meta br-enforce-limits">Husk rewrites the agent's replies in the chat view, so this costs no tokens. The terminal view and files an agent writes are not rewritten.</p>
+                <div class="br-note-row">
+                  <label class="br-switch"><input type="checkbox" id="br-enf-workspace" /><span>This workspace only</span></label>
+                  <span class="br-note-acts">
+                    <button class="ghost-btn" id="br-enf-cancel" type="button">Cancel</button>
+                    <button class="btn-primary" type="submit">Add enforced rule</button>
                   </span>
                 </div>
               </form>

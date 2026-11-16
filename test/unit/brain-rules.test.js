@@ -247,20 +247,52 @@ test('the rule block reaches the agent on the ACP and stream wires, and the thre
   }
 });
 
-test('a mechanical rule is enforced, not injected: it skips the prompt and survives save/load', () => {
+test('an enforced rule adds nothing to the prompt and keeps its params across save/load', () => {
   const { fs, b } = brain();
   b.addRule({ text: 'Answer in British English' });
-  const mech = b.addRule({ text: 'no em dashes' });
-  // The judgment rule rides the prompt; the mechanical one does not.
-  const r = b.rules({ scope: '/p' });
-  assert.deepEqual(r.sent.includes(mech.node.id), false);
-  assert.doesNotMatch(r.context, /em dash/);
-  assert.match(r.context, /British English/);
-  // It is available to the output enforcer instead.
+  const asked = b.rules({ scope: '/p' }).context;
+  const check = { builtin: 'replace-term', params: { term: 'utilize', replacement: 'use', inCode: true } };
+  const mech = b.addRule({ check });
+  assert.equal(mech.ok, true);
+  assert.match(mech.node.text, /Replace "utilize" with "use"/);
+  // Zero characters added to what goes out with the turn.
+  assert.equal(b.rules({ scope: '/p' }).context, asked);
+  assert.equal(b.rules({ scope: '/p' }).sent.includes(mech.node.id), false);
   assert.deepEqual(b.mechanicalRules({ scope: '/p' }).map((n) => n.id), [mech.node.id]);
-  // And it persists as a rule across a reload.
   const b2 = createBrain({ file: '/b.json', fs, now: () => 9999, saveDelayMs: 1 });
-  b2.load();
-  assert.deepEqual(b2.mechanicalRules({ scope: '/p' }).map((n) => n.id), [mech.node.id]);
-  assert.deepEqual(b2.rules({ scope: '/p' }).sent.includes(mech.node.id), false);
-})
+  const [kept] = b2.mechanicalRules({ scope: '/p' });
+  assert.deepEqual(kept.check, { builtin: 'replace-term', params: { term: 'utilize', replacement: 'use', caseSensitive: false, inCode: true } });
+  const node = b2.graph({ scope: '/p' }).nodes.find((n) => n.id === mech.node.id);
+  assert.equal(node.enforced, true);
+  assert.equal(b.addRule({ check: { builtin: 'replace-term', params: {} } }).ok, false);
+});
+
+test('a typed rule is asked, not enforced, and comes back with a suggestion', () => {
+  const { b } = brain();
+  const r = b.addRule({ text: 'no em dashes' });
+  assert.deepEqual(r.suggest, { builtin: 'no-em-dash', params: {} });
+  assert.deepEqual(b.mechanicalRules({ scope: '/p' }), []);
+  assert.match(b.rules({ scope: '/p' }).context, /no em dashes/);
+  // Accepting the suggestion moves it to enforced; null asks the agent again.
+  assert.equal(b.setRule(r.node.id, { check: r.suggest }).ok, true);
+  assert.equal(b.rules({ scope: '/p' }).context, '');
+  assert.equal(b.graph({ scope: '/p' }).nodes[0].enforced, true);
+  b.setRule(r.node.id, { check: null });
+  assert.match(b.rules({ scope: '/p' }).context, /no em dashes/);
+  assert.equal(b.setRule(r.node.id, { check: { builtin: 'nope' } }).ok, false);
+});
+
+test('a rule stored before checks were explicit keeps being enforced', () => {
+  const fs = memFs({ '/b.json': JSON.stringify({ nodes: [
+    { id: 'old', kind: 'note', rule: true, title: 'x', text: 'no em dashes, ever', scope: '', createdAt: 1 },
+    { id: 'off', kind: 'note', rule: true, title: 'y', text: 'no em dashes', check: null, scope: '', createdAt: 2 },
+  ] }) });
+  const b = createBrain({ file: '/b.json', fs, now: () => 5, saveDelayMs: 1 });
+  assert.deepEqual(b.mechanicalRules({ scope: '/p' }).map((n) => n.id), ['old']);
+});
+
+test('decision capture reports how many are kept against the limit', () => {
+  const { b } = brain();
+  for (let i = 0; i < 302; i += 1) b.captureTurn({ prompt: `ask number ${i}`, outcome: 'done', scope: '/p' });
+  assert.deepEqual(b.graph({ scope: '/p' }).decisions, { kept: 300, limit: 300 });
+});
