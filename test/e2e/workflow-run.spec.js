@@ -418,3 +418,41 @@ test('a running workflow cannot be deleted out from under itself', async () => {
     await app.close();
   }
 });
+
+test('a slow step is stopped at its own time limit, and the run records the limit', async () => {
+  test.setTimeout(120000);
+  const env = setup();
+  // Shrugs off SIGTERM, so the run must follow up with SIGKILL after the grace.
+  fs.writeFileSync(path.join(env.binDir, 'claude'), [
+    '#!/usr/bin/env bash',
+    '[ "$2" = "wait" ] || { echo "1.0.0 (fake)"; exit 0; }',
+    `trap 'echo term > "$HOME/term-seen"' TERM`,
+    `echo '{"type":"system","subtype":"init","model":"fake-1"}'`,
+    'while true; do sleep 0.2; done',
+    '',
+  ].join('\n'), { mode: 0o755 });
+  fs.writeFileSync(path.join(env.homeDir, '.config', 'husk', 'workflows.json'), JSON.stringify([{
+    id: 'wf-test', name: 'Slow flow', trigger: 'manual',
+    graph: { nodes: [{ id: 'n1', name: 'Slow', prompt: 'wait', x: 60, y: 80, passContext: 'full', timeoutMs: 1000 }], edges: [] },
+  }]));
+  const runsFile = path.join(env.homeDir, '.config', 'husk', 'workflow-runs.json');
+  const app = await launch(env);
+  try {
+    const win = await app.firstWindow({ timeout: 30_000 });
+    await openRun(win);
+    await expect.poll(() => {
+      try { return JSON.parse(fs.readFileSync(runsFile, 'utf8')).length; } catch (_) { return 0; }
+    }, { timeout: 60000 }).toBe(1);
+    const [run] = JSON.parse(fs.readFileSync(runsFile, 'utf8'));
+    const [step] = run.steps;
+    // 1000 is below the floor, so the step runs under the 10 second minimum.
+    expect(step.timeoutMs).toBe(10000);
+    expect(step.timedOut).toBe(true);
+    expect(step.status).toBe('failed');
+    expect(step.ms).toBeGreaterThanOrEqual(10000 + 4500);
+    expect(step.ms).toBeLessThan(30000);
+    expect(fs.existsSync(path.join(env.homeDir, 'term-seen'))).toBe(true);
+  } finally {
+    await app.close();
+  }
+});

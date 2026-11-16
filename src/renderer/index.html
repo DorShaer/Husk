@@ -1082,6 +1082,14 @@
                     <option value="manual">Manually only</option>
                     <option value="ai-suggested">Let AI decide (suggested by context)</option>
                   </select>
+                  <span class="wf-trigger-label">Step time limit:</span>
+                  <select class="wf-step-select" id="wf-default-timeout" style="width:auto;flex:0 0 auto">
+                    <option value="">5 minutes</option>
+                    <option value="900000">15 minutes</option>
+                    <option value="1800000">30 minutes</option>
+                    <option value="3600000">60 minutes</option>
+                    <option value="7200000">120 minutes</option>
+                  </select>
                 </div>
               </div>
               <div class="wf-canvas-wrap">
@@ -1165,6 +1173,17 @@
                           <option value="full">Full output</option>
                           <option value="last50">Last 50 lines</option>
                           <option value="none">None</option>
+                        </select>
+                      </div>
+                      <div class="form-row">
+                        <label class="form-label" for="wf-np-timeout">Time limit</label>
+                        <select class="wf-step-select" id="wf-np-timeout">
+                          <option value="">Workflow default</option>
+                          <option value="300000">5 minutes</option>
+                          <option value="900000">15 minutes</option>
+                          <option value="1800000">30 minutes</option>
+                          <option value="3600000">60 minutes</option>
+                          <option value="7200000">120 minutes</option>
                         </select>
                       </div>
                       </div>

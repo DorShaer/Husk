@@ -6003,6 +6003,7 @@ function recordWorkflowRun(run, workflow) {
         // Whether the per-step timer killed this step, recorded as a fact rather
         // than inferred later from a duration near the timeout.
         timedOut: st.timedOut === true,
+        timeoutMs: Number.isFinite(st.timeoutMs) ? st.timeoutMs : null,
         // The vendor's own token report for this step, kept verbatim. Only
         // claude is run with stream-json, so this is absent for other agents
         // and the receipt says so.
@@ -7988,7 +7989,11 @@ function wfEmit(event, channel, data) {
 // How many steps may run at once. Agents are heavy, so parallel branches are
 // bounded rather than unleashed.
 const WF_MAX_PARALLEL = 4;
-const WF_STEP_TIMEOUT_MS = 300000;
+const WF_STEP_TIMEOUT_MS = wfLib.STEP_TIMEOUT_DEFAULT_MS;
+
+function wfFormatLimit(ms) {
+  return ms % 60000 === 0 ? `${ms / 60000} minute${ms === 60000 ? '' : 's'}` : `${Math.round(ms / 1000)} seconds`;
+}
 
 // ─── the run log ──────────────────────────────────────────────────────────────
 //
@@ -8079,6 +8084,7 @@ function wfAuditStepEnd(run, node, state) {
     status: typeof st.status === 'string' ? st.status : 'failed',
     ms: Number.isFinite(st.ms) ? st.ms : 0,
     timedOut: st.timedOut === true,
+    timeoutMs: Number.isFinite(st.timeoutMs) ? st.timeoutMs : null,
     usage: st.usage || null,
   });
 }
@@ -8185,18 +8191,19 @@ async function wfRunStep(event, run, graph, byId, step, incomingCtx) {
   });
   child.stderr.on('data', (d) => { const t = d.toString().trim(); if (t) activity('error', t); });
 
-  const killTimer = setTimeout(() => {
-    activity('error', 'Step timed out after 5 minutes, killing the agent.');
+  const limitMs = wfLib.stepTimeoutFor(step, graph);
+  stepState.timeoutMs = limitMs;
+  const cancelTimer = wfLib.armStepTimer(child, limitMs, () => {
+    activity('error', `Step reached its ${wfFormatLimit(limitMs)} time limit, stopping the agent.`);
     // Recorded before the kill, because the close handler cannot tell a step
     // stopped by the timer from one that failed on its own, and a receipt has to
     // count its censored runs before it quotes a median.
     stepState.timedOut = true;
-    try { child.kill('SIGKILL'); } catch (_) {}
-  }, WF_STEP_TIMEOUT_MS);
+  });
 
   await new Promise((resolve) => {
     child.on('close', (code) => {
-      clearTimeout(killTimer);
+      cancelTimer();
       run.children.delete(child);
       if (useStreamJson && !sawAnyEvent && resultText === '') {
         activity('error', 'No output from the agent. It may need authentication or stream-json is unsupported.');
@@ -8208,7 +8215,7 @@ async function wfRunStep(event, run, graph, byId, step, incomingCtx) {
       resolve();
     });
     child.on('error', (e) => {
-      clearTimeout(killTimer);
+      cancelTimer();
       run.children.delete(child);
       activity('error', e.message);
       stepState.status = 'failed';

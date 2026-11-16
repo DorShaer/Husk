@@ -7191,6 +7191,7 @@ function wfAddCanvasNode(data, x, y) {
     agentCommand: (data && data.agentCommand) || wfDefaultAgentCommand(),
     prompt: (data && data.prompt) || '',
     passContext: (data && data.passContext) || 'full',
+    timeoutMs: (data && data.timeoutMs) || null,
   };
   const px = Number.isFinite(x) ? x : 60 + Math.round(Math.random() * 60);
   const py = Number.isFinite(y) ? y : 60 + Math.round(Math.random() * 60);
@@ -7222,6 +7223,7 @@ function wfLoadGraph(graph) {
       branchMode: n.branchMode || 'parallel',
       prompt: n.prompt || '',
       passContext: n.passContext || 'full',
+      timeoutMs: n.timeoutMs || null,
     };
     idMap[n.id] = wfEditor.addNode('step', 1, 1, wfCoord(n.x), wfCoord(n.y), 'wf-cv', data, wfNodeHtml(data));
   });
@@ -7257,6 +7259,7 @@ function wfExportGraph() {
       branchMode: d.branchMode === 'ai' ? 'ai' : 'parallel',
       prompt: d.prompt || '',
       passContext: d.passContext || 'full',
+      ...(d.timeoutMs ? { timeoutMs: d.timeoutMs } : {}),
       x: n.pos_x, y: n.pos_y,
     });
     Object.keys(n.outputs || {}).forEach((ok) => {
@@ -7271,7 +7274,21 @@ function wfExportGraph() {
       });
     });
   });
-  return { nodes, edges };
+  const defaultTimeoutMs = Number(($('#wf-default-timeout') || {}).value) || 0;
+  return defaultTimeoutMs ? { nodes, edges, defaultTimeoutMs } : { nodes, edges };
+}
+
+// Shows a limit in a time-limit select, adding an option for a value outside the presets.
+function wfSetLimitSelect(sel, ms) {
+  if (!sel) return;
+  const v = ms ? String(ms) : '';
+  if (v && ![...sel.options].some((o) => o.value === v)) {
+    const opt = document.createElement('option');
+    opt.value = v;
+    opt.textContent = ms % 60000 === 0 ? `${ms / 60000} minutes` : `${Math.round(ms / 1000)} seconds`;
+    sel.appendChild(opt);
+  }
+  sel.value = v;
 }
 
 function showNodePanel(id) {
@@ -7283,6 +7300,7 @@ function showNodePanel(id) {
   // eslint-disable-next-line no-unsanitized/property -- option values escaped in buildAgentOptions
   $('#wf-np-agent').innerHTML = buildAgentOptions(d.agentCommand || '');
   $('#wf-np-context').value = d.passContext || 'full';
+  wfSetLimitSelect($('#wf-np-timeout'), d.timeoutMs);
   $('#wf-np-prompt').value = d.prompt || '';
   wfClearGenState();
   const branchSel = $('#wf-np-branch');
@@ -7444,6 +7462,7 @@ function wfSyncPanelToNode() {
     branchMode: (($('#wf-np-branch') || {}).value === 'ai') ? 'ai' : 'parallel',
     prompt: $('#wf-np-prompt').value || '',
     passContext: $('#wf-np-context').value || 'full',
+    timeoutMs: Number(($('#wf-np-timeout') || {}).value) || null,
   };
   wfEditor.updateNodeDataFromId(wfSelectedNodeId, data);
   const nameEl = document.querySelector(`#wf-canvas [id="node-${wfSelectedNodeId}"] .wf-cv-node-name`);
@@ -7479,6 +7498,7 @@ function openWorkflowBuilder(editId) {
   if ($('#wf-name-input')) $('#wf-name-input').value = existing ? existing.name : '';
   wfSyncNameCount();
   if ($('#wf-trigger-select')) $('#wf-trigger-select').value = existing ? (existing.trigger || 'manual') : 'manual';
+  wfSetLimitSelect($('#wf-default-timeout'), existing && existing.graph && existing.graph.defaultTimeoutMs);
   wfShowView('builder');
   wfRestoreLegend();
   hideNodePanel();
@@ -8534,7 +8554,7 @@ function wfNodeStatusAsStates() {
   return out;
 }
 // Node config panel
-['wf-np-name', 'wf-np-agent', 'wf-np-context', 'wf-np-prompt', 'wf-np-model', 'wf-np-model-custom', 'wf-np-branch'].forEach((id) => {
+['wf-np-name', 'wf-np-agent', 'wf-np-context', 'wf-np-prompt', 'wf-np-model', 'wf-np-model-custom', 'wf-np-branch', 'wf-np-timeout'].forEach((id) => {
   const el = $(`#${id}`);
   if (el) { el.addEventListener('input', wfSyncPanelToNode); el.addEventListener('change', wfSyncPanelToNode); }
 });
