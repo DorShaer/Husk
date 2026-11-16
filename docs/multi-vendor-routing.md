@@ -31,7 +31,7 @@ A role row whose CLI is Routed also offers a model pin for that role alone. A pi
 
 Every job records the vendor and model it ran on, or `<cli> (default)` when no model flag was passed. Artifacts shows it on each Autopilot run, one line per job for a team.
 
-Automatic vendor selection considers installed CLIs in this stable order: Claude, Codex, Gemini, Copilot, Kiro, Aider. Simple tasks and planning use the first installed option; complex tasks and integration use the second when available. Automatic team workers are distributed across installed vendors unless a configured assignment or planner-selected vendor applies. This is a deterministic starting policy, not a quality or price ranking.
+Husk never picks a CLI on your behalf. Each job type (Simple, Complex, Planner, Integrator) runs on the CLI you choose in **Configure models**. A job type with no CLI chosen does not run: the run stops before it starts and names the job type to set up. Team workers run on the CLI chosen for their job type; the planner's own suggestions never decide where a worker runs.
 
 The run form's **Job vendor** and model override solo jobs and team workers. Planner and Integrator retain their own settings. Explicit workflow step vendors/models are preserved; unassigned steps use the task routing settings. Assignments are captured before queueing so changing defaults later does not change queued workers, workflow steps, or integration.
 
