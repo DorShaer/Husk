@@ -33,7 +33,7 @@ const { isLive: agentIsLive } = require('./lib/agent-state');
 const { createChatRuntime } = require('./lib/chat-runtime');
 const UsageMonitor = require('./lib/usage-monitor');
 const { createBrain, FILE_MAX_BYTES: BRAIN_FILE_MAX_BYTES, withoutContext: withoutBrainContext } = require('./lib/brain');
-const { applyMechanical, BUILTINS } = require('./lib/rule-lint');
+const { applyMechanical, createStreamFilter } = require('./lib/rule-lint');
 const { deepFirstUserMessage } = require('./lib/session-head');
 const { listClaudeTranscripts, realPath: realSessionPath } = require('./lib/session-scan');
 const { createChatSessionRegistry } = require('./lib/chat-session-registry');
@@ -1843,24 +1843,9 @@ const chatRuntime = createChatRuntime({
   buildEnv: chatEnv,
   resolveExe: resolveAgentExe,
   recordPrompt: (tabId, event) => { const t = chatTranscripts.get(tabId); if (t) transcriptStore.append(t.id, event); },
-  emit: (tabId, event) => {
-    // The agent's own words are repaired here, before anything else sees them.
-    // No model, no tokens. Em dashes are always stripped, so no rule is needed to
-    // keep them off the screen; any extra mechanical Brain rules apply on top.
-    try {
-      if (event && (event.type === 'text' || event.type === 'text_final' || event.type === 'thought') && typeof event.text === 'string') {
-        event.text = BUILTINS['no-em-dash'].fix(event.text);
-        const mech = brain.mechanicalRules({ scope: brainScope(tabId) });
-        if (mech.length) event.text = applyMechanical(event.text, mech);
-      }
-    } catch (_) {}
-    try { if (event && event.type === 'session' && event.sessionId) chatSessionRegistry.add(event.sessionId); } catch (_) {}
-    try { brainObserve(tabId, event); } catch (_) {}
-    try { const t = chatTranscripts.get(tabId); if (t) transcriptStore.append(t.id, event); } catch (_) {}
-    try { countDailyUsage(tabId, event); } catch (_) {}
-    try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('chat:event', { tabId, event }); } catch (_) {}
-  },
+  emit: (tabId, event) => { for (const ev of enforceRules(tabId, event)) deliverChatEvent(tabId, ev); },
   emitExit: (tabId, code) => {
+    try { const rest = flushRules(tabId, enforcedRules(tabId)); if (rest) deliverChatEvent(tabId, rest); } catch (_) {}
     try { brainTurnOver(tabId); } catch (_) {}
     try { dropChatShadowSession(tabId); } catch (_) {}
     dailyTabs.delete(tabId);
@@ -1870,6 +1855,56 @@ const chatRuntime = createChatRuntime({
   contextWindow: (model, cwd, used) => resolveContextWindow(cwd || null, model, used || 0),
   log: (line) => { try { console.error(`[chat] ${line}`); } catch (_) {} },
 });
+
+// The agent's own words are repaired before anything else sees them: no model,
+// no tokens. Em dashes are always stripped; enforced Brain rules apply on top.
+// Each tab streams through one filter that holds back a tail a match could
+// still grow into, released when the block or the turn ends.
+const ALWAYS_ENFORCED = [{ check: { builtin: 'no-em-dash' } }];
+const ruleFilters = new Map(); // tabId -> { kind, f, at }
+const enforcedRules = (tabId) => ALWAYS_ENFORCED.concat(brain.mechanicalRules({ scope: brainScope(tabId) }));
+function flushRules(tabId, rules, drop) {
+  const cur = ruleFilters.get(tabId);
+  if (!cur) return null;
+  ruleFilters.delete(tabId);
+  const text = cur.f.push('', rules, true);
+  return text && !drop ? Object.assign({ type: cur.kind, text }, cur.at === undefined ? {} : { at: cur.at }) : null;
+}
+function enforceRules(tabId, event) {
+  try {
+    const t = event && event.type;
+    const streaming = (t === 'text' || t === 'thought') && typeof event.text === 'string';
+    const rules = enforcedRules(tabId);
+    const out = [];
+    const cur = ruleFilters.get(tabId);
+    if (cur && !(streaming && cur.kind === t)) {
+      // A final message replaces the streamed block, held tail included.
+      const rest = flushRules(tabId, rules, t === 'text_final' && cur.kind === 'text');
+      if (rest) out.push(rest);
+    }
+    if (streaming) {
+      let f = ruleFilters.get(tabId);
+      if (!f) { f = { kind: t, f: createStreamFilter(), at: undefined }; ruleFilters.set(tabId, f); }
+      if (f.at === undefined) f.at = event.at;
+      event.text = f.f.push(event.text, rules);
+      if (!event.text) return out;
+      if (f.at !== undefined && event.at === undefined) event.at = f.at;
+      f.at = undefined;
+    } else if (t === 'text_final' && typeof event.text === 'string') {
+      event.text = applyMechanical(event.text, rules);
+    }
+    out.push(event);
+    return out;
+  } catch (_) { return [event]; }
+}
+
+function deliverChatEvent(tabId, event) {
+  try { if (event && event.type === 'session' && event.sessionId) chatSessionRegistry.add(event.sessionId); } catch (_) {}
+  try { brainObserve(tabId, event); } catch (_) {}
+  try { const t = chatTranscripts.get(tabId); if (t) transcriptStore.append(t.id, event); } catch (_) {}
+  try { countDailyUsage(tabId, event); } catch (_) {}
+  try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('chat:event', { tabId, event }); } catch (_) {}
+}
 
 // Every chat's events are kept on disk, so a discussion can be read back and
 // continued with another CLI whether or not that CLI keeps a session file.
@@ -2311,16 +2346,17 @@ ipcMain.handle('brain:addNote', (_e, { text, global } = {}) => {
   return r;
 });
 // A rule applies everywhere unless its author limits it to the open workspace.
-ipcMain.handle('brain:addRule', (_e, { text, workspace } = {}) => {
-  const r = brain.addRule({ text, scope: workspace ? chatCwd(null) : '' });
+ipcMain.handle('brain:addRule', (_e, { text, workspace, check } = {}) => {
+  const r = brain.addRule({ text, check, scope: workspace ? chatCwd(null) : '' });
   if (r.ok) brainActivity('learn', [r.node.id]);
   return r;
 });
-ipcMain.handle('brain:rule', (_e, { id, rule, on, workspace } = {}) => brain.setRule(id, Object.assign(
+ipcMain.handle('brain:rule', (_e, { id, rule, on, workspace, check } = {}) => brain.setRule(id, Object.assign(
   {},
   typeof rule === 'boolean' ? { rule } : {},
   typeof on === 'boolean' ? { on } : {},
   typeof workspace === 'boolean' ? { scope: workspace ? chatCwd(null) : '' } : {},
+  check === null || (check && typeof check === 'object') ? { check } : {},
 )));
 // The files come from the system picker, never from a path the renderer names.
 ipcMain.handle('brain:addFiles', async (_e, { global } = {}) => {

@@ -48,6 +48,18 @@
     const sending = !n.ruleOn ? 'off' : (d.rulesHeld || []).includes(n.id) ? 'over budget, not sent' : 'on';
     return `${reach} · ${sending}`;
   }
+  // Every rule says how it is kept: Husk rewrites the reply, or the agent is asked.
+  const RULE_MODE = {
+    enforced: ['Enforced', "Husk rewrites the agent's replies in the chat view. Costs no tokens"],
+    asked: ['Asked', 'Sent to the agent with each message; the agent decides'],
+  };
+  function ruleBadge(n) {
+    const mode = n.enforced ? 'enforced' : 'asked';
+    const b = h('span', 'br-badge', RULE_MODE[mode][0]);
+    b.dataset.mode = mode;
+    b.title = RULE_MODE[mode][1];
+    return b;
+  }
   const isEdge = (e, pick) => !!pick && ((e.a === pick.a && e.b === pick.b) || (e.a === pick.b && e.b === pick.a));
 
   // ─── Data ─────────────────────────────────────────────────────────────────
@@ -489,6 +501,8 @@
     const rules = d.nodes.filter((n) => n.rule);
     const rulesOn = rules.filter((n) => n.ruleOn).length;
     const rulesHeld = (d.rulesHeld || []).length;
+    const rulesEnforced = rules.filter((n) => n.enforced).length;
+    const dec = d.decisions || { kept: 0, limit: 0 };
     const rate = st.prompts ? Math.round((st.recalled / st.prompts) * 100) : 0;
     // A thin bar beside a figure: the split by kind, in the colours of the dots.
     const split = () => {
@@ -519,7 +533,9 @@
         ['Connections', compact(synapses), 'Pairs of memories that share rare words. Select a memory to explore its connections',
           synapses ? `${linked.size} of ${d.nodes.length} linked` : 'None found yet'],
         ['Rules', compact(rules.length), 'Instructions sent with each chat message and at terminal session start',
-          rules.length ? `${rulesOn} on${rulesHeld ? ` · ${rulesHeld} not sent` : ''}` : 'None set'],
+          rules.length ? `${rulesOn} on${rulesEnforced ? ` · ${rulesEnforced} enforced` : ''}${rulesHeld ? ` · ${rulesHeld} not sent` : ''}` : 'None set'],
+        ['Decisions', compact(dec.kept), `Finished chat turns kept, across all workspaces. Past ${dec.limit} the oldest unpinned one is dropped; pin one to keep it`,
+          `of ${dec.limit} kept${dec.kept >= dec.limit ? ' · oldest dropped first' : ''}`],
       ]],
       ['What the Brain has done', [
         ['Prompts seen', compact(st.prompts), 'Prompts the Brain looked at, across all workspaces',
@@ -621,6 +637,7 @@
       copy.appendChild(h('span', 'br-row-title', n.title || KIND_LABEL[n.kind]));
       copy.appendChild(h('span', 'br-row-preview', n.text || n.source || KIND_LABEL[n.kind]));
       row.appendChild(copy);
+      if (n.rule) row.appendChild(ruleBadge(n));
       row.appendChild(h('span', 'br-row-meta', onlyRules ? ruleState(n) : n.rule ? 'rule' : n.pinned ? 'pinned' : (n.hits ? `${n.hits}×` : KIND_LABEL[n.kind].toLowerCase())));
       row.addEventListener('click', () => select(n.id));
       list.appendChild(row);
@@ -688,12 +705,33 @@
     }
     const parts = n.kind === 'file' ? state.data.nodes.filter((c) => c.parent === n.id) : [];
     box.appendChild(h('div', 'br-detail-text', n.kind === 'file' ? n.source : n.text));
+    if (n.rule) box.appendChild(ruleBadge(n));
     const meta = [
       n.rule ? ruleState(n) : n.scope ? 'this workspace' : 'all workspaces',
-      n.rule ? 'sent with every message' : n.hits ? `recalled ${plural(n.hits, 'time', 'times')}` : 'not recalled yet',
+      n.enforced ? 'applied to replies in the chat view; the terminal view and files an agent writes are not rewritten'
+        : n.rule ? 'sent with every message' : n.hits ? `recalled ${plural(n.hits, 'time', 'times')}` : 'not recalled yet',
       'added ' + new Date(n.createdAt).toLocaleDateString(),
     ];
     box.appendChild(h('div', 'br-detail-meta', meta.join(' · ')));
+    // A typed rule that a builtin can keep exactly is offered as one, never switched silently.
+    const sug = state.suggest && state.suggest.id === n.id && n.rule && !n.enforced ? state.suggest : null;
+    if (sug) {
+      const offer = h('div', 'br-suggest');
+      offer.appendChild(h('span', 'br-detail-meta', `Enforce this exactly? ${sug.label}. Husk rewrites the reply itself, at no token cost.`));
+      const yes = h('button', 'btn-primary', 'Enforce');
+      yes.type = 'button';
+      yes.addEventListener('click', async () => {
+        const res = await call(() => api.rule(n.id, { check: sug.check }));
+        if (res && !res.ok) say(res.error || 'That could not be changed.');
+        state.suggest = null;
+        load();
+      });
+      const no = h('button', 'ghost-btn', 'Keep asking');
+      no.type = 'button';
+      no.addEventListener('click', () => { state.suggest = null; paintDetail(); });
+      offer.append(yes, no);
+      box.appendChild(offer);
+    }
     const acts = h('div', 'br-detail-acts');
     if (n.kind !== 'chunk') {
       const pin = h('button', 'ghost-btn', n.pinned ? 'Unpin' : 'Pin');
@@ -716,6 +754,7 @@
     if (n.rule) {
       act(n.ruleOn ? 'Turn off' : 'Turn on', n.ruleOn ? 'Keep the rule, stop sending it' : 'Send this rule with every message', { on: !n.ruleOn });
       act(n.scope ? 'Use in all workspaces' : 'Limit to this workspace', n.scope ? 'Send this rule in every workspace' : 'Send this rule only in the open workspace', { workspace: !n.scope });
+      if (n.enforced) act('Ask the agent instead', 'Send it as an instruction each turn instead of rewriting replies', { check: null });
       act('Stop using as a rule', 'Keep it as a note that is recalled only when a prompt matches it', { rule: false });
     } else if (n.kind === 'note') {
       act('Make this a rule', 'Send this note with every message as an instruction to follow, in all workspaces', { rule: true });
@@ -882,6 +921,7 @@
     // One form writes a note or a rule; a rule is short and applies everywhere unless limited.
     const openForm = (rule) => {
       state.ruleForm = rule;
+      byId('br-enforce-form').hidden = true;
       text.maxLength = rule ? 300 : 4000;
       text.placeholder = rule ? 'An instruction to follow in every reply, such as: answer in British English' : noteHint;
       byId('br-note-reach').textContent = rule ? 'This workspace only' : 'All workspaces';
@@ -900,8 +940,37 @@
       if (!res) return;
       if (!res.ok) { say(res.error || 'That could not be saved.'); return; }
       if (state.ruleForm) state.tab = 'rules';
+      state.suggest = res.suggest ? { id: res.node.id, check: res.suggest, label: res.suggestLabel } : null;
       form.hidden = true;
       text.value = '';
+      await load();
+      select(res.node.id);
+    });
+
+    // An enforced rule is picked from the builtins, never read out of free text.
+    const enf = byId('br-enforce-form');
+    const kind = byId('br-enf-kind');
+    const syncKind = () => { byId('br-enf-term-fields').hidden = kind.value !== 'replace-term'; };
+    kind.addEventListener('change', syncKind);
+    byId('br-add-enforced').addEventListener('click', () => {
+      form.hidden = true;
+      enf.hidden = false;
+      syncKind();
+      kind.focus();
+    });
+    byId('br-enf-cancel').addEventListener('click', () => { enf.hidden = true; });
+    enf.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const params = kind.value === 'replace-term' ? {
+        term: byId('br-enf-term').value, replacement: byId('br-enf-replacement').value,
+        caseSensitive: byId('br-enf-case').checked, inCode: byId('br-enf-code').checked,
+      } : {};
+      const res = await call(() => api.addRule({ check: { builtin: kind.value, params }, workspace: byId('br-enf-workspace').checked }));
+      if (!res) return;
+      if (!res.ok) { say(res.error || 'That could not be saved.'); return; }
+      enf.hidden = true;
+      enf.reset();
+      state.tab = 'rules';
       await load();
       select(res.node.id);
     });

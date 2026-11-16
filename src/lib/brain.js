@@ -13,7 +13,7 @@
 // The file system and the clock are injected, so the whole thing is unit tested
 // without touching a disk.
 
-const { isMechanical } = require('./rule-lint');
+const { isMechanical, normalizeCheck, describe, detect } = require('./rule-lint');
 
 const KINDS = new Set(['note', 'file', 'chunk', 'decision']);
 // Kinds that hold text worth recalling. A file node is only the parent of its chunks.
@@ -203,6 +203,11 @@ function createBrain({ file, fs, now, saveDelayMs, canonPath } = {}) {
         log: Array.isArray(raw && raw.log) ? raw.log.filter((e) => e && typeof e.kind === 'string').slice(-LOG_MAX) : [],
       };
       for (const it of state.nodes.concat(state.log)) if (it.scope) it.scope = canon(it.scope);
+      // A rule kept before checks were explicit stays enforced if its text asked for no em dashes.
+      for (const n of state.nodes) {
+        const was = n.rule === true && !('check' in n) && detect(n.text);
+        if (was && was.builtin === 'no-em-dash') n.check = was;
+      }
     } catch (_) {
       // No file yet, or one that does not parse: an empty brain the user can refill.
       state = fresh();
@@ -272,18 +277,25 @@ function createBrain({ file, fs, now, saveDelayMs, canonPath } = {}) {
   }
 
   // A rule is a note its author marked as one. Only this and setRule make one.
-  function addRule({ text, scope } = {}) {
-    const body = ruleLine(text).slice(0, RULE_MAX_CHARS);
+  // With a check it is enforced on the output; without one it is asked of the
+  // agent, and a text that looks enforceable comes back with a suggestion.
+  function addRule({ text, scope, check } = {}) {
+    const c = check ? normalizeCheck(check) : null;
+    if (c && !c.ok) return c;
+    const body = ruleLine(text || (c ? describe(c.check) : '')).slice(0, RULE_MAX_CHARS);
     if (!body) return { ok: false, error: 'a rule needs some text' };
     const r = addNote({ text: body, scope });
     r.node.rule = true;
+    r.node.check = c ? c.check : null;
     save();
+    const suggest = c ? null : detect(body);
+    if (suggest) Object.assign(r, { suggest, suggestLabel: describe(suggest) });
     return r;
   }
 
   // Marks a note as a rule or back, turns a rule on or off, and sets its reach.
   // A note marked as a rule applies everywhere until it is limited.
-  function setRule(id, { rule, on, scope } = {}) {
+  function setRule(id, { rule, on, scope, check } = {}) {
     const node = state.nodes.find((n) => n.id === str(id));
     if (!node) return { ok: false, error: 'no such memory' };
     if (node.kind !== 'note') return { ok: false, error: 'only a note can be a rule' };
@@ -292,6 +304,7 @@ function createBrain({ file, fs, now, saveDelayMs, canonPath } = {}) {
       if (!line) return { ok: false, error: 'a rule needs some text' };
       if (line.length > RULE_MAX_CHARS) return { ok: false, error: `a rule is at most ${RULE_MAX_CHARS} characters` };
       node.rule = true;
+      if (!('check' in node)) node.check = null;
       node.noteScope = node.scope;
       node.scope = '';
     } else if (rule === false && node.rule) {
@@ -302,6 +315,12 @@ function createBrain({ file, fs, now, saveDelayMs, canonPath } = {}) {
     }
     if (node.rule && typeof on === 'boolean') node.ruleOff = !on;
     if (node.rule && typeof scope === 'string') { node.scope = canon(scope); delete node.noteScope; }
+    // null asks the agent again; a check enforces it on the output.
+    if (node.rule && check !== undefined) {
+      const c = check ? normalizeCheck(check) : { ok: true, check: null };
+      if (!c.ok) return c;
+      node.check = c.check;
+    }
     index = null;
     save();
     return { ok: true, node };
@@ -531,12 +550,15 @@ function createBrain({ file, fs, now, saveDelayMs, canonPath } = {}) {
       rulesHeld: standing(scope).held,
       enabled: state.enabled,
       stats: Object.assign({}, state.stats),
+      // Unpinned decisions kept across every workspace, against the cap that drops the oldest.
+      decisions: { kept: state.nodes.filter((n) => n.kind === 'decision' && !n.pinned).length, limit: DECISION_MAX },
       // Newest first, and only what happened in reach of this workspace.
       log: state.log.filter((e) => all || inScope(e, scope)).slice().reverse(),
       nodes: nodes.map((n) => ({
         id: n.id, kind: n.kind, title: n.title, text: n.text, scope: n.scope, source: n.source, parent: n.parent,
         image: n.image || null,
-        pinned: !!n.pinned, rule: n.kind === 'note' && n.rule === true, ruleOn: !n.ruleOff, hits: n.hits || 0, createdAt: n.createdAt, lastHitAt: n.lastHitAt || 0,
+        pinned: !!n.pinned, rule: n.kind === 'note' && n.rule === true, ruleOn: !n.ruleOff,
+        enforced: n.kind === 'note' && n.rule === true && isMechanical(n), checkLabel: n.check ? describe(n.check) : '', hits: n.hits || 0, createdAt: n.createdAt, lastHitAt: n.lastHitAt || 0,
       })),
       edges,
     };
