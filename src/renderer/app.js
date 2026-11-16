@@ -11523,7 +11523,7 @@ async function openSkillDetail({ dirname, mdpath, path: skPath, name }) {
 // repaint. The view model (filtering, threading, grouping, labels) is the pure
 // module behind window.husk.sessionView; this file only paints what it returns.
 
-const SX_CAP = 300;          // the list handler caps one tool at 300; the others return everything
+const SX_CAP = 300;          // sessions per load; Show older asks for this many more
 const SX_MIN_Q = 2;          // a one-glyph subsequence matches nearly every title
 const SX_PEEK_MAX = 40;      // transcript tails kept in memory
 const SX_SKELETONS = 6;
@@ -11534,6 +11534,9 @@ const sx = {
   dir: '',
   currentCwd: '',
   hiddenAutopilot: 0,
+  // How many sessions a load asks for; Show older raises it.
+  limit: SX_CAP,
+  olderUnread: 0,
   supported: true,
   loaded: false,
   error: '',
@@ -11717,7 +11720,7 @@ async function sxLoad(opts = {}) {
   let res = null;
   let agents = null;
   try {
-    [res, agents] = await Promise.all([window.husk.sessions.list({ agent: activeSessionsAgent(), selectedOnly: true }), sxLoadAgents()]);
+    [res, agents] = await Promise.all([window.husk.sessions.list({ agent: activeSessionsAgent(), selectedOnly: true, limit: sx.limit }), sxLoadAgents()]);
   } catch (err) {
     if (seq !== sx.loadSeq) return;
     sx.error = (err && err.message) || String(err || 'unknown error');
@@ -11733,9 +11736,11 @@ async function sxLoad(opts = {}) {
   sx.agent = String((res && res.agent) || '');
   sx.supported = !!(res && res.supported);
   sx.dir = String((res && res.sessionsDir) || '');
-  sx.currentCwd = String((res && res.currentCwd) || '');
+  sx.currentCwd = String((res && (res.currentRealCwd || res.currentCwd)) || '');
   sx.hiddenAutopilot = Number((res && res.hiddenAutopilotSessions) || 0);
-  sx.cache = Array.isArray(res && res.sessions) ? res.sessions.slice(0, SX_CAP) : [];
+  const listed = Array.isArray(res && res.sessions) ? res.sessions : [];
+  sx.cache = listed.slice(0, sx.limit);
+  sx.olderUnread = Math.max(0, listed.length - sx.limit) + Number((res && res.olderUnread) || 0);
   sx.names = (cfg && cfg.sessionNames) || {};
   sx.folders = Array.isArray(cfg && cfg.sessionFolders) ? cfg.sessionFolders : [];
   sx.folderOf = (cfg && cfg.sessionFolderOf) || {};
@@ -11779,6 +11784,18 @@ function sxSub() {
       ? '1 Autopilot session is kept under Autopilot'
       : `${sx.hiddenAutopilot} Autopilot sessions are kept under Autopilot`;
     el.append(note);
+  }
+  if (sx.olderUnread > 0) {
+    const note = document.createElement('span');
+    note.className = 'sx-note sx-older-unread';
+    note.textContent = `Up to ${sx.olderUnread} older ${sx.olderUnread === 1 ? 'session is' : 'sessions are'} not loaded`;
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'sx-link';
+    more.id = 'sx-show-older';
+    more.textContent = 'Show older';
+    more.addEventListener('click', () => { sx.limit += SX_CAP; sxLoad({ firstPaint: false }); });
+    el.append(note, more);
   }
 }
 
@@ -12792,7 +12809,7 @@ function sxFeedPaint(s) {
   if (!f.entries.length) {
     const note = document.createElement('div');
     note.className = 'sx-d-note';
-    note.textContent = 'No transcript is stored for this session.';
+    note.textContent = f.noPreview ? 'No live preview for this CLI' : 'No transcript is stored for this session.';
     const kids = [note];
     if (s.firstMessage) {
       const q = document.createElement('div');
@@ -12893,11 +12910,10 @@ function sxPeekKey(s) { return `${s.id}:${s.mtime}`; }
 async function sxPeek(id, { force = false } = {}) {
   const s = sxSessionById(id);
   if (!s) return;
-  if (sx.agents.supported === false) return;
   const key = sxPeekKey(s);
   if (!force && sx.peekCache.has(key)) {
     const hit = sx.peekCache.get(key);
-    sx.feed = { id, entries: hit.entries, model: hit.model, state: 'ready', error: '' };
+    sx.feed = { id, entries: hit.entries, model: hit.model, noPreview: !!hit.noPreview, state: 'ready', error: '' };
     if (sx.detailId === id && sx.detailTab === 'activity') { sxFeedPaint(s); sxFactsPaint(s, sx.agents.bySession.get(id) || null); }
     return;
   }
@@ -12907,15 +12923,15 @@ async function sxPeek(id, { force = false } = {}) {
     if (sx.detailId === id && sx.detailTab === 'activity') sxFeedPaint(s);
   }
   let res = null;
-  try { res = await window.husk.bgAgents.peek({ sessionId: id, cwd: s.projectPath || '' }); }
+  try { res = await window.husk.bgAgents.peek({ sessionId: id, cwd: s.projectPath || '', agent: s.agent || sx.agent || '' }); }
   catch (err) { res = { ok: false, error: (err && err.message) || 'could not read the transcript' }; }
   if (seq !== sx.peekSeq || sx.detailId !== id) return;
   if (!res || res.ok === false) {
     sx.feed = { id, entries: [], model: '', state: 'error', error: String((res && res.error) || '') };
   } else {
     const entries = Array.isArray(res.entries) ? res.entries : [];
-    sx.feed = { id, entries, model: String(res.model || ''), state: 'ready', error: '' };
-    sx.peekCache.set(key, { entries, model: sx.feed.model });
+    sx.feed = { id, entries, model: String(res.model || ''), noPreview: res.noPreview === true, state: 'ready', error: '' };
+    sx.peekCache.set(key, { entries, model: sx.feed.model, noPreview: sx.feed.noPreview });
     if (sx.peekCache.size > SX_PEEK_MAX) sx.peekCache.delete(sx.peekCache.keys().next().value);
   }
   if (sx.detailTab === 'activity') sxFeedPaint(s);

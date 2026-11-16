@@ -26,6 +26,7 @@ const CODE = [
   grab(/function readCopilotSessionTitle\(dir\) \{[\s\S]*?\n\}/, 'readCopilotSessionTitle'),
   grab(/function isAutopilotCopilotText\(text\) \{[\s\S]*?\n\}/, 'isAutopilotCopilotText'),
   grab(/function isAutopilotCopilotSession\(ws, eventTitle\) \{[\s\S]*?\n\}/, 'isAutopilotCopilotSession'),
+  grab(/function\* copilotSessionRows\(opts = \{\}\) \{[\s\S]*?\n\}/, 'copilotSessionRows'),
   grab(/function listCopilotSessions\(opts = \{\}\) \{[\s\S]*?\n\}/, 'listCopilotSessions'),
 ].join('\n');
 
@@ -58,6 +59,7 @@ function makeCopilotHome(specs) {
 function load(home) {
   const ctx = {
     fs, path, JSON, Map, Buffer, Date, Number, String, Array, Object, Math, isFinite,
+    drainSessions: require('../../src/lib/session-scan').drain,
     COPILOT_DIR: home,
     deriveCopilotSessionTitleFromEventsText, copilotUserMessages,
     isAutopilotWorkspacePath: () => false,
