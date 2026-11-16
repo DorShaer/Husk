@@ -343,6 +343,17 @@
         "src/lib/task-routing.js"
       ]
     },
+    "welcome": {
+      "specs": [
+        "onboarding.spec.js",
+        "first-impressions.spec.js"
+      ],
+      "tokens": [
+        "cine",
+        "ob"
+      ],
+      "paths": []
+    },
     "terminal": {
       "specs": [
         "chat-model.spec.js",

@@ -49,20 +49,18 @@ test('a first install: Install shows its command before running it, no changelog
     // A new install opens light, with the indigo accent.
     await expect(win.locator('body')).toHaveAttribute('data-theme', 'light');
     await expect(win.locator('body')).toHaveAttribute('data-accent', 'indigo');
-    await win.click('#ob-start');
+    await win.click('#ob-next');
     // An agent that is not installed offers Install. One click only says what
     // would run; nothing has been run.
-    const install = win.locator('#ob-agents .ob-cli-install').first();
-    await expect(install).toBeVisible();
+    const first = win.locator('#ob-clis .cine-cli[data-state="missing"]', { has: win.locator('.cine-cli-btn', { hasText: /^Install$/ }) }).first();
+    await expect(first).toBeVisible();
+    const install = win.locator(`#ob-clis .cine-cli[data-cmd="${await first.getAttribute('data-cmd')}"] .cine-cli-btn`);
     await install.click();
     await expect(win.locator('#ob-log')).toContainText('npm install -g');
     await expect(install).toHaveText('Run it');
     expect(fs.existsSync(path.join(home.homeDir, 'npm-calls.log'))).toBe(false);
 
-    // Through the rest of setup with the agent that is already here.
-    await win.locator('#ob-agents .ob-cli[data-id="claude"]').click();
-    await win.click('#ob-cli-next');
-    await win.click('#ob-finish');
+    await win.click('#ob-skip');
     await expect(win.locator('#onboarding')).toBeHidden();
 
     // No What's new for someone who has never seen what was old, and the

@@ -1155,16 +1155,16 @@ function latestWhatsNewVersion() {
   return Object.keys(WHATS_NEW).sort(bySemver).pop() || '';
 }
 // Clone Kernel into an empty-state stage. Ids are re-prefixed per mount so
-// clones stay distinct from the onboarding original and from each other.
+// clones stay distinct from the source and from each other.
 let emptyKernelSeq = 0;
 function mountEmptyKernel(slot) {
-  const src = $('#ob-kernel');
+  const src = $('#kernel-src');
   if (!src || !slot) return null;
   const prefix = `ek${++emptyKernelSeq}`;
   const markup = src.outerHTML
     .replaceAll('id="hk-', `id="${prefix}-`)
     .replaceAll('url(#hk-', `url(#${prefix}-`)
-    .replace('id="ob-kernel"', '');
+    .replace('id="kernel-src"', '');
   // eslint-disable-next-line no-unsanitized/property -- own static SVG markup, id-prefixed
   slot.innerHTML = markup;
   const hk = slot.querySelector('svg');
@@ -1859,6 +1859,7 @@ function contextMenu(anchor, entries) {
     }
   };
   for (const entry of entries) {
+    if (entry.heading) { menu.append(csEl('div', 'cs-menu-group', entry.heading)); continue; }
     const button = csEl('button', 'cs-menu-item', entry.label);
     button.type = 'button';
     button.setAttribute('role', 'menuitem');
@@ -1983,9 +1984,10 @@ function chooseContinuation(tab, anchor, command, cwd) {
 
 async function offerAgentSwitch(tab, anchor) {
   await refreshAgentMenu();
-  contextMenu(anchor, detectedAgents().filter((a) => a.command !== tabAgentCommand(tab).split(/\s+/)[0]).map((a) => ({
-    label: a.label, run: () => chooseContinuation(tab, anchor, a.command, chatWorkDir(tab)),
-  })));
+  const others = detectedAgents().filter((a) => a.command !== tabAgentCommand(tab).split(/\s+/)[0]);
+  const { main, more } = window.HuskNewChatMenu.splitConnected(others, connectedClis());
+  const item = (a) => ({ label: a.label, run: () => chooseContinuation(tab, anchor, a.command, chatWorkDir(tab)) });
+  contextMenu(anchor, [...main.map(item), ...(more.length ? [{ heading: 'More CLIs' }] : []), ...more.map(item)]);
 }
 window.huskMoveDiscussion = async (tabId, anchor) => {
   const tab = TABS.get(tabId);
@@ -2068,13 +2070,19 @@ function endpointChatAvailable() {
 // Every menu that starts a chat is painted here.
 function paintNewChatMenu(menu, done) {
   const entries = window.HuskNewChatMenu.newChatEntries({
-    agents: agentsCache, lastUsed: agentLastUsed(), folder: shortPath(homeRelativePath(chatWorkDir(null))),
+    agents: agentsCache, lastUsed: agentLastUsed(), folder: shortPath(homeRelativePath(chatWorkDir(null))), connected: connectedClis(),
   });
   if (endpointChatAvailable()) {
     if (entries[0]?.kind === 'chat' && !entries[0].command) entries.shift();
     entries.unshift({ kind: 'chat', command: (cfg && cfg.agentCommand) || 'claude', connection: 'endpoint', label: 'New chat with API endpoint', sub: cfg.agentModel });
   }
-  menu.replaceChildren(...entries.map((entry) => {
+  const moreAt = entries.findIndex((e) => e.group === 'more');
+  menu.replaceChildren(...entries.map((entry, i) => {
+    if (i === moreAt) return [csEl('div', 'cs-menu-group', 'More CLIs'), menuItem(entry)];
+    return menuItem(entry);
+  }).flat());
+  if (!agentsCache.length) menu.appendChild(csEl('div', 'cs-menu-note', 'Looking for installed agents...'));
+  function menuItem(entry) {
     const b = csEl('button', 'cs-menu-item');
     b.type = 'button';
     b.setAttribute('role', 'menuitem');
@@ -2089,8 +2097,11 @@ function paintNewChatMenu(menu, done) {
       openNewChatTab(entry.command ? { command: entry.command, connection: entry.connection || 'cli', preferChat: true } : {});
     });
     return b;
-  }));
-  if (!agentsCache.length) menu.appendChild(csEl('div', 'cs-menu-note', 'Looking for installed agents...'));
+  }
+}
+// The CLIs the user connected at setup, or null when that was never asked.
+function connectedClis() {
+  return cfg && Array.isArray(cfg.connectedClis) ? cfg.connectedClis : null;
 }
 
 function openNewTabMenu(event) {
@@ -4151,19 +4162,9 @@ function syncCustomAccentControls() {
   $('#pref-accent-chip').style.background = getComputedStyle(document.body).getPropertyValue('--accent');
 }
 
-// The theme menu and the theme and accent swatches, one per registry entry.
+// The theme menu and the accent swatches, one per registry entry.
 function buildAppearancePickers() {
-  for (const t of HuskThemes.THEMES) {
-    $('#pref-theme').add(new Option(t.name, t.id));
-    const sw = document.createElement('button');
-    sw.type = 'button';
-    sw.className = 'ob-theme-sw';
-    sw.dataset.mode = t.id;
-    sw.title = t.name;
-    sw.setAttribute('aria-label', t.name);
-    sw.style.background = t.bg;
-    $('#ob-theme').appendChild(sw);
-  }
+  for (const t of HuskThemes.THEMES) $('#pref-theme').add(new Option(t.name, t.id));
   const swatch = (id, name, background) => {
     const sw = document.createElement('button');
     sw.type = 'button';
@@ -15068,6 +15069,11 @@ const ORCH_ROLES = [
 const ORCH_VENDORS = ['claude', 'codex', 'copilot', 'gemini', 'aider', 'kiro-cli'];
 let orchDraft = null;
 let orchAgents = [];
+// The installed job vendors, narrowed to the connected CLIs once the user picked them.
+function orchDetectedVendors() {
+  const found = detectedAgents().filter((a) => ORCH_VENDORS.includes(a.command));
+  return window.HuskNewChatMenu.splitConnected(found, connectedClis()).main;
+}
 const orchCatalogs = new Map();
 let orchCatalogSeq = 0;
 function orchVendor() {
@@ -15208,7 +15214,9 @@ function orchVendorOptions(select, current, first = { value: '', label: 'Choose 
   const add = (value, label) => { const option = document.createElement('option'); option.value = value; option.textContent = label; select.append(option); };
   add(first.value, first.label);
   for (const agent of orchAgents) add(agent.command, agent.label);
-  if (current && current !== first.value && !orchAgents.some((a) => a.command === current)) add(current, `${current} (not installed)`);
+  if (current && current !== first.value && !orchAgents.some((a) => a.command === current)) {
+    add(current, `${current} (${detectedAgents().some((a) => a.command === current) ? 'not connected' : 'not installed'})`);
+  }
   select.value = current || first.value;
 }
 function fillOrchSelect(select, custom, vendor, current, status, tier = 'smart') {
@@ -15278,7 +15286,7 @@ async function orchLoadVendor(vendor, refresh = false) {
 async function loadOrchModelCatalog(refresh = false) {
   try {
     await refreshAgentMenu();
-    orchAgents = detectedAgents().filter((a) => ORCH_VENDORS.includes(a.command));
+    orchAgents = orchDetectedVendors();
   } catch (_) { orchAgents = []; }
   if (!orchPicker) renderCliRouting();
   bindOrchestratorConfig();
@@ -15357,7 +15365,7 @@ async function bindAutopilotRunRouting() {
   const useRouting = { value: 'auto', label: 'Use job routing' };
   orchVendorOptions(select, 'auto', useRouting);
   loadAutopilotRunModels();
-  try { await refreshAgentMenu(); orchAgents = detectedAgents().filter((a) => ORCH_VENDORS.includes(a.command)); } catch (_) {}
+  try { await refreshAgentMenu(); orchAgents = orchDetectedVendors(); } catch (_) {}
   orchVendorOptions(select, select.value || 'auto', useRouting);
 }
 $('#aut-run-vendor')?.addEventListener('change', loadAutopilotRunModels);
@@ -20689,334 +20697,347 @@ function stripPaiNoise(text) {
 function escapeAttr(s) { return escapeHtml(s); }
 
 // ─── First-run onboarding + boot ──────────────────────────────────────────────────────
-// First-launch onboarding: a three-step full-window flow of welcome, pick CLI
-// and preferences. Step 2 detects installed CLI agents on PATH and installs
-// missing ones inline; step 3 sets theme, accent and rail. Finishing persists
-// those choices plus firstRunDone. Preferences reopens it with { replay: true },
-// which leaves firstRunDone alone. Resolves when the flow is dismissed.
+// First launch walks six scenes: hero, connect CLIs, project, security scanner,
+// look, first message. Preferences replays it with { replay: true }, which leaves
+// firstRunDone alone. Resolves with { command, prompt } when the user starts a
+// chat, or null on Skip.
 async function runOnboarding({ replay = false } = {}) {
-  const overlay = $('#onboarding');
-  const backBtn = $('#ob-back');
-  const skipBtn = $('#ob-skip');
-  const steps = $$('.ob-step', overlay);
-  const dots = $$('.ob-dot', overlay);
-  const list = $('#ob-agents');
+  const root = $('#onboarding');
+  const scenes = $$('.cine-scene', root);
+  const dots = $$('#ob-dots i', root);
+  const next = $('#ob-next');
+  const back = $('#ob-back');
+  const list = $('#ob-clis');
   const log = $('#ob-log');
-  const nameInput = $('#ob-name');
-  const cliNext = $('#ob-cli-next');
-  // Per-open listener scope so re-opening (replay) never stacks handlers.
+  const need = $('#ob-clis-need');
+  // Sign-in runs in a native card hosted here, the way a chat hosts it.
+  const signinTab = { id: 'onboarding-signin', cwd: null, chat: { el: $('#ob-signin') } };
   const ac = new AbortController();
   const on = (el, ev, fn) => el && el.addEventListener(ev, fn, { signal: ac.signal });
+  const LAST = scenes.length - 1;
+  let at = 0;
+  let agents = [];
+  const signedOut = new Set();
+  const armed = new Set();
+  const chosen = new Set(Array.isArray(cfg.connectedClis) ? cfg.connectedClis : []);
+  let seeded = Array.isArray(cfg.connectedClis);
+  let projects = [];
+  let projectId = null;
+  let pickedTheme = null;
+  let pickedAccent = null;
+  let resolveRun = () => {};
 
-  // Working selections seed from the current config so Skip commits sane values.
-  let step = 0;
-  let detection = null;
-  let selectedCmd = null;
-  let theme = cfg.theme || 'midnight';
-  let accent = cfg.accent || 'orange';
-  let rail = cfg.railExpanded !== false;
+  const stateOf = (a) => (!a.available ? 'missing' : signedOut.has(a.command) ? 'signin' : 'ready');
+  const connected = () => agents.filter((a) => chosen.has(a.command) && stateOf(a) === 'ready').map((a) => a.command);
+  const labelOf = (cmd) => (agents.find((a) => a.command === cmd) || {}).label || cmd;
 
-  function showStep(i) {
-    step = Math.max(0, Math.min(steps.length - 1, i));
-    // The ambience layer keys off this: only the welcome step is dressed.
-    overlay.dataset.step = String(step);
-    steps.forEach((s, idx) => { s.hidden = idx !== step; });
-    dots.forEach((d, idx) => d.classList.toggle('active', idx === step));
-    backBtn.hidden = step === 0;
-    // Skip stays available on the lead-in steps; the final step's primary CTA
-    // is itself the finish action, so Skip would be redundant there.
-    skipBtn.hidden = step === steps.length - 1;
-    if (step === 1 && nameInput) setTimeout(() => nameInput.focus(), 60);
-  }
-
-  function paintAgents() {
-    if (!detection || !detection.agents) {
-      list.innerHTML = '<div class="fr-loading">No agents probed.</div>';
-      return;
-    }
-    const available = detection.agents.filter((a) => a.available);
-    if (!selectedCmd && available.length >= 1) selectedCmd = available[0].command;
-    // eslint-disable-next-line no-unsanitized/property -- Agent fields are escaped via escapeHtml/escapeAttr.
-    list.innerHTML = detection.agents.map((a) => {
-      const main = `
-        <span class="ob-cli-main">
-          <span class="ob-cli-name">${escapeHtml(a.label)}</span>
-          <span class="ob-cli-cmd">${escapeHtml(a.command)}</span>
-        </span>`;
-      if (a.available) {
-        const isSelected = selectedCmd === a.command;
-        return `
-          <label class="ob-cli" data-id="${escapeAttr(a.id)}">
-            ${main}
-            <span class="ob-cli-end">
-              <span class="ob-cli-meta">Installed</span>
-              <input type="radio" name="ob-agent" value="${escapeAttr(a.command)}" ${isSelected ? 'checked' : ''} />
-              <span class="ob-cli-radio" aria-hidden="true"></span>
-            </span>
-          </label>`;
+  function paintClis() {
+    list.replaceChildren(...agents.map((a, i) => {
+      const st = stateOf(a);
+      const card = csEl('div', 'cine-cli');
+      card.dataset.cmd = a.command;
+      card.dataset.state = st;
+      const text = csEl('div', 'cine-cli-text');
+      const version = /\d/.test(a.version || '') ? ` · v${a.version}` : '';
+      text.append(csEl('div', 'cine-cli-name', a.label),
+        csEl('div', 'cine-cli-state', st === 'ready' ? `Ready${version}` : st === 'signin' ? 'Needs sign-in' : 'Not installed'));
+      card.append(csEl('span', 'cine-key', i < 9 ? String(i + 1) : ''), text);
+      if (st === 'ready') {
+        const isOn = chosen.has(a.command);
+        card.classList.toggle('is-on', isOn);
+        card.tabIndex = 0;
+        card.setAttribute('role', 'checkbox');
+        card.setAttribute('aria-checked', String(isOn));
+        on(card, 'click', () => toggle(a.command));
+        on(card, 'keydown', (e) => { if (e.key === ' ') { e.preventDefault(); toggle(a.command); } });
+        return card;
       }
-      const btn = a.installable
-        ? `<button type="button" class="ob-cli-btn ob-cli-install" data-id="${escapeAttr(a.id)}">Install</button>`
-        : `<button type="button" class="ob-cli-btn" data-docs="${escapeAttr(a.docs || '')}" title="Opens the install instructions in your browser">Open install page</button>`;
-      return `
-        <div class="ob-cli ob-cli-missing" data-id="${escapeAttr(a.id)}">
-          ${main}
-          <span class="ob-cli-end">
-            <span class="ob-cli-meta ob-cli-meta-off">Not installed</span>
-            ${btn}
-          </span>
-        </div>`;
-    }).join('');
-    list.querySelectorAll('input[name="ob-agent"]').forEach((r) => {
-      on(r, 'change', () => { selectedCmd = r.value; updateCliNext(); });
-    });
-    list.querySelectorAll('[data-docs]').forEach((b) => {
-      on(b, 'click', () => { const url = b.getAttribute('data-docs'); if (url) window.open(url, '_blank'); });
-    });
-    list.querySelectorAll('.ob-cli-install').forEach((b) => {
-      on(b, 'click', (e) => { e.preventDefault(); installAgent(b.dataset.id, b); });
-    });
-    updateCliNext();
+      const btn = csEl('button', 'ghost-btn cine-cli-btn');
+      btn.type = 'button';
+      if (st === 'signin') {
+        btn.textContent = 'Sign in';
+        on(btn, 'click', () => signIn(a));
+      } else if (a.installable) {
+        btn.textContent = armed.has(a.id) ? 'Run it' : 'Install';
+        on(btn, 'click', () => install(a, btn));
+      } else {
+        btn.textContent = 'Open install page';
+        btn.title = 'Opens the install instructions in your browser';
+        on(btn, 'click', () => { if (a.docs) window.open(a.docs, '_blank'); });
+      }
+      card.append(btn);
+      return card;
+    }));
+    syncNav();
   }
 
-  async function refreshDetection() {
-    list.innerHTML = '<div class="fr-loading">Scanning your system…</div>';
+  function toggle(cmd) {
+    const a = agents.find((x) => x.command === cmd);
+    if (!a || stateOf(a) !== 'ready') return;
+    if (chosen.has(cmd)) chosen.delete(cmd); else chosen.add(cmd);
+    paintClis();
+  }
+
+  async function detect() {
     try {
-      detection = await window.husk.agents.detect();
+      const r = await window.husk.agents.detect();
+      agents = (r && Array.isArray(r.agents)) ? r.agents : [];
     } catch (err) {
-      // eslint-disable-next-line no-unsanitized/property -- Error text is escaped before insertion.
-      list.innerHTML = `<div class="fr-loading">Could not scan: ${escapeHtml(String(err))}</div>`;
+      list.replaceChildren(csEl('div', 'cine-note', `Could not look for CLIs: ${(err && err.message) || err}`));
       return;
     }
-    paintAgents();
+    if (ac.signal.aborted) return;
+    if (!seeded) { agents.filter((a) => a.available).forEach((a) => chosen.add(a.command)); seeded = true; }
+    const max = $('#ob-clis-max');
+    if (max) max.textContent = String(Math.min(agents.length, 9));
+    paintClis();
+    // Sign-in state, where the CLI can report it.
+    await Promise.all(agents.filter((a) => a.available).map(async (a) => {
+      let s = null;
+      try { s = await window.husk.auth.status({ command: a.command }); } catch (_) {}
+      if (s && s.ok && !s.loggedIn) signedOut.add(a.command); else signedOut.delete(a.command);
+    }));
+    if (!ac.signal.aborted) paintClis();
   }
 
-  async function installAgent(id, btn) {
-    const def = detection.agents.find((a) => a.id === id);
-    if (!def) return;
-    // The first click says exactly what will run, on this machine, for every
-    // user of it; the second runs it.
-    if (btn.dataset.armed !== '1') {
-      btn.dataset.armed = '1';
+  // The first click says exactly what will run, for every user of this
+  // machine; the second runs it.
+  async function install(a, btn) {
+    log.hidden = false;
+    if (!armed.has(a.id)) {
+      armed.add(a.id);
       btn.textContent = 'Run it';
-      log.hidden = false;
-      log.textContent = `Install will run this command, which installs ${def.label} for your whole user account:\n\n  ${def.installCommand || '(command unavailable)'}\n\nPress Run it to start, or pick another agent to leave it.\n`;
+      log.textContent = `Install will run this command, which installs ${a.label} for your whole user account:\n\n  ${a.installCommand || '(command unavailable)'}\n\nPress Run it to start.\n`;
       return;
     }
-    delete btn.dataset.armed;
+    armed.delete(a.id);
     btn.disabled = true;
     btn.textContent = 'Installing…';
-    log.hidden = false;
     log.textContent = '';
-    const onLine = ({ id: pid, line }) => { if (pid === id) log.textContent += line + '\n'; log.scrollTop = log.scrollHeight; };
-    if (window.husk.agents.onInstallProgress) window.husk.agents.onInstallProgress(onLine);
-    const r = await window.husk.agents.install(id);
+    const r = await window.husk.agents.install(a.id);
+    if (r && r.ok) { chosen.add(a.command); await detect(); return; }
     btn.disabled = false;
-    if (r && r.ok) {
-      btn.textContent = 'Installed';
-      await refreshDetection();
-      if (!selectedCmd) selectedCmd = def.command;
-      paintAgents();
-    } else {
-      btn.textContent = 'Retry';
-      log.textContent += `\n[install failed] ${(r && r.error) || 'unknown error'}\n`;
+    btn.textContent = 'Retry';
+    log.textContent += `\n[install failed] ${(r && r.error) || 'unknown error'}\n`;
+  }
+
+  async function signIn(a) {
+    let how = null;
+    try { how = await window.husk.agents.authCommand(a.command, 'login'); } catch (_) {}
+    await openNativeCard(signinTab, {
+      command: (how && how.command) || a.command,
+      title: `Sign in to ${a.label}`,
+      type: how && how.own ? '' : '/login',
+      onDone: (code) => {
+        signinTab.chat.el.querySelector('.chat-thread-inner').replaceChildren();
+        if (code === 0) chosen.add(a.command);
+        detect();
+      },
+    });
+  }
+
+  async function loadProjects() {
+    try {
+      const r = await window.husk.projects.list();
+      projects = (r && r.projects) || [];
+      if (projectId === null && r) projectId = r.activeProjectId || null;
+    } catch (_) { projects = []; }
+    paintProjects();
+  }
+  function paintProjects() {
+    const p = projects.find((x) => x.id === projectId);
+    $('.cine-folder-path', root).textContent = p ? shortPath(homeRelativePath(p.path)) : 'No folder yet. Chats start in your home folder.';
+    const stamp = (x) => String(x.lastUsedAt || x.addedAt || '');
+    const recent = [...projects].sort((x, y) => stamp(y).localeCompare(stamp(x))).slice(0, 6);
+    const choose = csEl('button', 'ghost-btn', 'Choose a folder…');
+    choose.type = 'button';
+    on(choose, 'click', chooseFolder);
+    $('#ob-projects').replaceChildren(...recent.map((pr) => {
+      const b = csEl('button', 'ghost-btn cine-project', pr.name);
+      b.type = 'button';
+      b.dataset.id = pr.id;
+      b.title = pr.path;
+      b.classList.toggle('is-on', pr.id === projectId);
+      b.setAttribute('aria-pressed', String(pr.id === projectId));
+      on(b, 'click', () => { projectId = pr.id; paintProjects(); });
+      return b;
+    }), choose);
+  }
+  async function chooseFolder() {
+    let dir = null;
+    try { dir = await window.husk.dialog2.pickDir(); } catch (_) {}
+    if (!dir) return;
+    const known = projects.find((p) => p.path === dir);
+    if (known) { projectId = known.id; paintProjects(); return; }
+    const r = await window.husk.projects.create({ name: dir.split(/[\\/]/).filter(Boolean).pop() || 'project', path: dir });
+    if (!r || !r.ok) { toast((r && r.error) || 'Could not add that folder', 'error'); return; }
+    projectId = r.project.id;
+    await loadProjects();
+  }
+
+  function paintLooks() {
+    $('#ob-looks-sub').textContent = `${HuskThemes.THEMES.length} themes. This screen follows your pick.`;
+    $('#ob-looks').replaceChildren(...HuskThemes.THEMES.map((t) => {
+      const b = csEl('button', 'cine-look');
+      b.type = 'button';
+      b.dataset.theme = t.id;
+      b.style.background = t.bg;
+      b.style.color = t.light ? '#0a0a0a' : '#f4f4f6';
+      b.classList.toggle('is-on', t.id === pickedTheme);
+      b.setAttribute('aria-pressed', String(t.id === pickedTheme));
+      b.append(csEl('i', ''), csEl('i', ''), csEl('span', 'cine-look-name', t.name));
+      on(b, 'click', () => pickTheme(t.id));
+      return b;
+    }));
+    $('#ob-accents').replaceChildren(...HuskThemes.ACCENTS.map((a) => {
+      const b = csEl('button', 'cine-accent');
+      b.type = 'button';
+      b.dataset.accent = a.id;
+      b.title = a.name;
+      b.setAttribute('aria-label', a.name);
+      b.setAttribute('aria-pressed', String(a.id === pickedAccent));
+      b.classList.toggle('is-on', a.id === pickedAccent);
+      b.style.background = `linear-gradient(135deg, ${a.swatch[0]}, ${a.swatch[1]})`;
+      on(b, 'click', () => pickAccent(a.id));
+      return b;
+    }));
+  }
+  // A pick applies to the whole app at once and drops the welcome's own look.
+  async function pickTheme(id) {
+    pickedTheme = id;
+    delete root.dataset.dark;
+    applyTheme(id);
+    paintLooks();
+    cfg = await window.husk.config.set({ theme: id });
+  }
+  async function pickAccent(id) {
+    pickedAccent = id;
+    delete root.dataset.gold;
+    applyAccent(id);
+    paintLooks();
+    cfg = await window.husk.config.set({ accent: id });
+  }
+
+  function paintHello() {
+    const sel = $('#ob-cli-pick');
+    const cmds = connected();
+    const was = sel.value;
+    const def = String(cfg.agentCommand || '').trim().split(/\s+/)[0];
+    sel.replaceChildren(...cmds.map((c) => new Option(labelOf(c), c)));
+    sel.value = cmds.includes(was) ? was : cmds.includes(def) ? def : (cmds[0] || '');
+    const p = projects.find((x) => x.id === projectId);
+    $('#ob-project-chip').textContent = p ? p.name : 'Home folder';
+    $('#ob-hello-sub').textContent = `Your first agent is ready in ${p ? p.name : 'your home folder'}.`;
+  }
+
+  function syncNav() {
+    const blocked = at === 1 && !connected().length;
+    next.disabled = blocked;
+    need.hidden = !blocked || !agents.length;
+  }
+
+  function go(i) {
+    const to = Math.max(0, Math.min(LAST, i));
+    if (at === 1 && to > 1) {
+      if (!connected().length) return;
+      window.husk.config.set({ connectedClis: connected() }).then((c) => { cfg = c; }).catch(() => {});
     }
+    at = to;
+    root.dataset.at = String(at);
+    scenes.forEach((s) => { const here = Number(s.dataset.s) === at; s.classList.toggle('is-on', here); s.inert = !here; });
+    dots.forEach((d, k) => d.classList.toggle('is-on', k === at));
+    back.style.visibility = at ? 'visible' : 'hidden';
+    next.textContent = at === 0 ? 'Begin' : at === LAST ? 'Start chat' : 'Continue';
+    if (at === 2) loadProjects();
+    if (at === LAST) { paintHello(); setTimeout(() => $('#ob-prompt').focus(), 60); }
+    syncNav();
   }
+  const advance = () => { if (at === LAST) startChat(); else go(at + 1); };
 
-  function updateCliNext() { cliNext.disabled = !selectedCmd; }
-
-  function syncPrefControls() {
-    $$('.ob-theme-sw', overlay).forEach((b) => b.classList.toggle('active', b.dataset.mode === theme));
-    $$('#ob-accent .accent-swatch', overlay).forEach((sw) => sw.classList.toggle('selected', sw.dataset.c === accent));
-    const railBox = $('#ob-rail'); if (railBox) railBox.checked = rail;
-  }
-
-  async function finish() {
-    const name = (nameInput.value || '').trim().slice(0, 40) || 'Husk';
-    const cmd = (selectedCmd || cfg.agentCommand || 'claude').trim();
-    const patch = { agentCommand: cmd, agentName: name, theme, accent, railExpanded: rail };
-    // A new install starts with the power tools folded away; anyone who has
-    // used Husk before keeps the rail as they know it.
+  async function close(result, patch = {}) {
     if (!replay) { patch.firstRunDone = true; patch.railToolsFolded = true; }
     cfg = await window.husk.config.set(patch);
     syncRailFold();
-    document.body.dataset.rail = rail ? 'expanded' : 'collapsed';
+    document.body.dataset.rail = cfg.railExpanded === false ? 'collapsed' : 'expanded';
     syncRailToggleTitle();
-    overlay.hidden = true;
+    closeNativeCard(signinTab, { silent: true });
+    root.hidden = true;
     ac.abort();
+    resolveRun(result);
+  }
+  async function startChat() {
+    const command = $('#ob-cli-pick').value;
+    if (!command) return;
+    const prompt = window.husk.text.stripControls($('#ob-prompt').value).replace(/\s+/g, ' ').trim();
+    const base = String(cfg.agentCommand || '').trim().split(/\s+/)[0];
+    // A default that already runs this CLI keeps its own arguments.
+    const patch = { connectedClis: connected(), agentCommand: base === command ? cfg.agentCommand : command };
+    if (projectId) { try { await window.husk.projects.setActive(projectId); } catch (_) {} }
+    await close({ command, prompt }, patch);
   }
 
-  // Skip warns first when nothing is installed and nothing was picked, so it
-  // never commits an agent command this machine does not have.
-  async function skipWithGuard() {
-    const anyInstalled = !!(detection && Array.isArray(detection.agents) && detection.agents.some((a) => a && a.available));
-    if (!selectedCmd && !anyInstalled) {
-      const proceed = await openConfirmDialog({
-        title: 'No agent CLI found',
-        bodyHtml: 'Husk drives a terminal AI agent (claude, copilot, codex, aider, gemini, kiro-cli...), and none was detected on this system. You can skip now, but chat will not work until one is installed. You can reopen this setup anytime from Preferences.',
-        confirmLabel: 'Skip anyway',
-        cancelLabel: 'Back to setup',
-      });
-      if (!proceed) return;
+  on(next, 'click', advance);
+  on(back, 'click', () => go(at - 1));
+  on($('#ob-skip'), 'click', () => close(null));
+  $$('#ob-starters [data-prompt]', root).forEach((b) => on(b, 'click', () => {
+    const box = $('#ob-prompt');
+    box.value = b.dataset.prompt;
+    box.focus();
+  }));
+  on(window, 'keydown', (e) => {
+    if (root.hidden || e.defaultPrevented) return;
+    const t = e.target instanceof Element ? e.target : document.body;
+    if (t.closest('.cine-signin')) return;
+    const typing = /^(TEXTAREA|INPUT|SELECT)$/.test(t.tagName) || t.isContentEditable;
+    if (e.key === 'Enter') {
+      if (t.id === 'ob-prompt' && !e.shiftKey && !e.isComposing) { e.preventDefault(); startChat(); return; }
+      if (typing || t.tagName === 'BUTTON') return;
+      e.preventDefault();
+      advance();
+    } else if ((e.key === 'ArrowLeft' || e.key === 'Backspace') && !typing) {
+      e.preventDefault();
+      go(at - 1);
+    } else if (at === 1 && !typing && /^[1-9]$/.test(e.key)) {
+      const a = agents[Number(e.key) - 1];
+      if (a) { e.preventDefault(); toggle(a.command); }
     }
-    finish();
-  }
+  });
 
-  // Kernel. The husk hatches, and what is inside watches the pointer, blinks, and
-  // reacts to being poked. The shell tilts on its wrapper so the tilt never
-  // competes with the breathing and drift running on the mark itself.
-  {
-    const wrap = overlay.querySelector('.ob-logo-wrap');
-    const welcome = overlay.querySelector('.ob-step[data-step="welcome"]');
-    const hk = overlay.querySelector('#ob-kernel');
-    const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // Open, in the welcome's own dark look until the user picks one.
+  root.dataset.dark = '';
+  root.dataset.gold = '';
+  log.hidden = true;
+  $('#ob-prompt').value = 'Orient me to this project';
+  paintLooks();
+  root.hidden = false;
+  go(0);
+  next.focus();
+  detect();
 
-    // With motion off the pod still opens, it just does not animate getting there.
-    if (hk && still) hk.classList.add('is-open');
-
-    if (hk && !still) {
-      // Hatch once the wordmark has landed. The pod shakes, then cracks open.
-      let crack = 0;
-      const hatch = setTimeout(() => {
-        hk.classList.add('is-wiggle');
-        crack = setTimeout(() => {
-          hk.classList.remove('is-wiggle');
-          hk.classList.add('is-open', 'is-pop');
-          setTimeout(() => hk.classList.remove('is-pop'), 1000);
-        }, 620);
-      }, 700);
-      ac.signal.addEventListener('abort', () => { clearTimeout(hatch); clearTimeout(crack); });
-
-      // Blink at irregular intervals. A fixed cadence reads as a machine.
-      let blinkTimer = 0;
-      const scheduleBlink = () => {
-        blinkTimer = setTimeout(() => {
-          hk.classList.add('is-blink');
-          setTimeout(() => hk.classList.remove('is-blink'), 130);
-          // Occasionally a double blink, which is what makes it read as alive.
-          if (Math.random() < 0.25) {
-            setTimeout(() => {
-              hk.classList.add('is-blink');
-              setTimeout(() => hk.classList.remove('is-blink'), 120);
-            }, 260);
-          }
-          scheduleBlink();
-        }, 2600 + Math.random() * 4200);
-      };
-      scheduleBlink();
-      ac.signal.addEventListener('abort', () => clearTimeout(blinkTimer));
-
-      // Poke it: it pops, leans out, and blinks at you. Only when it is out,
-      // though. Hovering a shut pod should not prise it open.
-      on(hk, 'pointerenter', () => {
-        if (hk.classList.contains('is-open')) hk.classList.add('is-peek');
-      });
-      on(hk, 'pointerleave', () => hk.classList.remove('is-peek'));
-
-      // Click toggles: out of the husk, or back into it.
-      let settle = 0;
-      on(hk, 'click', () => {
-        clearTimeout(settle);
-        if (hk.classList.contains('is-open')) {
-          hk.classList.remove('is-open', 'is-peek', 'is-pop');
-          hk.classList.add('is-shut');
-          // The pod rocks once the halves have met, which lands the close.
-          settle = setTimeout(() => {
-            hk.classList.add('is-wiggle');
-            setTimeout(() => hk.classList.remove('is-wiggle'), 640);
-          }, 1300);
-          return;
-        }
-        hk.classList.remove('is-shut', 'is-pop', 'is-wiggle');
-        // Reflow, or re-adding the class in the same frame does not restart it.
-        void hk.offsetWidth;
-        hk.classList.add('is-open', 'is-pop');
-        setTimeout(() => hk.classList.remove('is-pop'), 1000);
-      });
-      ac.signal.addEventListener('abort', () => clearTimeout(settle));
-
-      // It watches the Get Started button when you go for it.
-      const cta = $('#ob-start');
-      if (cta) {
-        on(cta, 'pointerenter', () => {
-          if (!hk.classList.contains('is-open')) return;
-          hk.style.setProperty('--hk-x', '0px');
-          hk.style.setProperty('--hk-y', '5px');
-          hk.classList.add('is-peek');
-        });
-        on(cta, 'pointerleave', () => hk.classList.remove('is-peek'));
+  const result = await new Promise((resolve) => { resolveRun = resolve; });
+  if (result && replay) {
+    await refreshProjectsState();
+    setPage('chat');
+    const tab = await openNewChatTab({ command: result.command, preferChat: true, skipWelcome: true });
+    if (tab && result.prompt) {
+      if (tab.chat) {
+        if (tab.chatStart) await tab.chatStart;
+        if (!tab.chat.send(result.prompt)) tab.chat.insert(result.prompt);
+      } else {
+        // A terminal CLI gets the text typed at its prompt, not sent.
+        setTimeout(() => window.husk.pty.write(result.prompt, tab.id), 250);
       }
     }
-
-    if (wrap && welcome && !still) {
-      let frame = 0;
-      const MAX_DEG = 9;
-      // The eye offset lands on an element inside the SVG, so it is measured in
-      // viewBox units, not screen pixels.
-      const EYE_PX = 4.5;
-      on(welcome, 'pointermove', (e) => {
-        if (frame) return; // one update per painted frame, not one per event
-        frame = requestAnimationFrame(() => {
-          frame = 0;
-          const r = welcome.getBoundingClientRect();
-          const dx = (e.clientX - (r.left + r.width / 2)) / (r.width / 2);
-          const dy = (e.clientY - (r.top + r.height / 2)) / (r.height / 2);
-          const clamp = (n) => Math.max(-1, Math.min(1, n));
-          wrap.style.transform =
-            `rotateY(${clamp(dx) * MAX_DEG}deg) rotateX(${clamp(-dy) * MAX_DEG}deg)`;
-          if (hk) {
-            // The eyes lead the head: they travel further than the shell tilts.
-            const b = hk.getBoundingClientRect();
-            const ex = (e.clientX - (b.left + b.width / 2)) / (b.width * 2);
-            const ey = (e.clientY - (b.top + b.height / 2)) / (b.height * 2);
-            hk.style.setProperty('--hk-x', `${clamp(ex) * EYE_PX}px`);
-            hk.style.setProperty('--hk-y', `${clamp(ey) * EYE_PX}px`);
-          }
-        });
-      });
-      on(welcome, 'pointerleave', () => {
-        if (frame) { cancelAnimationFrame(frame); frame = 0; }
-        wrap.style.transition = 'transform 0.6s var(--ease-out)';
-  // toggle, their saved choice wins from then on (main pins older installs open).
-        if (hk) {
-          hk.style.setProperty('--hk-x', '0px');
-          hk.style.setProperty('--hk-y', '0px');
-        }
-        setTimeout(() => { wrap.style.transition = ''; }, 650);
-      });
-    }
   }
-
-  // Navigation.
-  on($('#ob-start'), 'click', () => showStep(1));
-  on(cliNext, 'click', () => showStep(2));
-  on(backBtn, 'click', () => showStep(step - 1));
-  on(skipBtn, 'click', skipWithGuard);
-  on($('#ob-finish'), 'click', finish);
-
-  // Step 3 controls apply live so the user sees the change behind the panel.
-  $$('.ob-theme-sw', overlay).forEach((b) => on(b, 'click', () => {
-    theme = b.dataset.mode; applyTheme(theme); syncPrefControls();
-  }));
-  $$('#ob-accent .accent-swatch', overlay).forEach((sw) => on(sw, 'click', () => {
-    accent = sw.dataset.c; applyAccent(accent); syncPrefControls();
-  }));
-  on($('#ob-rail'), 'change', (e) => { rail = e.target.checked; });
-
-  // Open.
-  if (nameInput) nameInput.value = cfg.agentName || 'Husk';
-  syncPrefControls();
-  try {
-    const u = await window.husk.updates.get();
-    const ver = u && u.version ? ('Version ' + u.version) : '';
-    const vEl = $('#ob-version'); if (vEl) vEl.textContent = ver;
-  } catch (_) {}
-  overlay.hidden = false;
-  showStep(0);
-  refreshDetection();
-
-  await new Promise((resolve) => { ac.signal.addEventListener('abort', resolve, { once: true }); });
+  return result;
 }
+// Install output lands in the welcome's log while it is showing.
+window.husk.agents.onInstallProgress?.(({ line }) => {
+  const el = $('#ob-log');
+  if (!el || el.hidden) return;
+  el.textContent += line + '\n';
+  el.scrollTop = el.scrollHeight;
+});
 
 async function boot() {
   const localReloadState = takeReloadState();
@@ -21047,11 +21068,12 @@ async function boot() {
   // new page, never the tour again. Either way we record the version so it is
   // shown at most once per version.
   let curVer = '';
+  let welcomeStart = null;
   try { curVer = ((await window.husk.updates.get()) || {}).current || ''; } catch (_) {}
   if (!reloadState && !cfg.firstRunDone) {
     // Someone who has never used Husk has nothing to compare a changelog
     // against: after the tour the current version simply counts as seen.
-    await runOnboarding();
+    welcomeStart = await runOnboarding();
   } else if (!reloadState && curVer && cfg.lastSeenVersion !== curVer) {
     showWhatsNew(curVer);
   }
@@ -21103,7 +21125,10 @@ async function boot() {
   // that restored a non-chat page, leave that page as it is.
   const reattached = await reattachSessions();
   const landInChat = !reloadState || !reloadState.page || reloadState.page === 'chat';
-  if (!reattached && landInChat) {
+  if (!reattached && landInChat && welcomeStart) {
+    // The welcome's last step picked the CLI (now the default) and the first message.
+    await launchAgent({ initialPrompt: welcomeStart.prompt || null });
+  } else if (!reattached && landInChat) {
     // A cold launch opens a fresh chat unless resuming the last session is turned on.
     let resumed = false;
     try { resumed = await resumeLastSessionOnBoot(); } catch (_) { resumed = false; }
