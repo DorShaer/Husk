@@ -26,7 +26,9 @@ try {
 const { shJoin } = require('./lib/shell-quote');
 const { stripAnsi } = require('./lib/strip-ansi');
 const { openaiModels } = require('./lib/openai-stream');
-const { lastTurnMs } = require('./lib/session-activity');
+const { turnLineMs, lastLineMatchSteps } = require('./lib/session-activity');
+const { createFileFactsCache } = require('./lib/session-cache');
+const { peekFromEvents } = require('./lib/session-peek');
 const { resolveInside, isInside, realParentInside, realPathInside } = require('./lib/path-confine');
 const { openCommand: bgOpenCommand, controlArgs: bgControlArgs, controlFailure: bgControlFailure } = require('./lib/bg-agent-open');
 const { isLive: agentIsLive } = require('./lib/agent-state');
@@ -35,7 +37,7 @@ const UsageMonitor = require('./lib/usage-monitor');
 const { createBrain, FILE_MAX_BYTES: BRAIN_FILE_MAX_BYTES, withoutContext: withoutBrainContext } = require('./lib/brain');
 const { applyMechanical, BUILTINS } = require('./lib/rule-lint');
 const { deepFirstUserMessage } = require('./lib/session-head');
-const { listClaudeTranscripts, realPath: realSessionPath } = require('./lib/session-scan');
+const { claudeTranscripts, drain: drainSessions, drainPaced: drainSessionsPaced, realPath: realSessionPath } = require('./lib/session-scan');
 const { createChatSessionRegistry } = require('./lib/chat-session-registry');
 const { transportFor: chatTransportFor, commandSessionId: chatCommandSessionId } = require('./lib/chat-transport');
 const { transcriptToEvents } = require('./lib/transcript-replay');
@@ -75,21 +77,26 @@ const { deriveCopilotSessionTitleFromEventsText, copilotUserMessages } = require
 // asynchronously because an interactive login shell sources the full rc chain
 // (nvm, pyenv, conda init), which can take seconds; agent spawns happen on
 // user action, well after this resolves.
+// Resolves to the login-shell PATH, or '' when there is none.
+let loginShellPathValue = '';
 function augmentUserPathAsync() {
-  if (process.platform !== 'darwin' && process.platform !== 'linux') return;
+  if (process.platform !== 'darwin' && process.platform !== 'linux') return Promise.resolve('');
   const shellBin = (typeof process.env.SHELL === 'string' && process.env.SHELL) ? process.env.SHELL : '/bin/zsh';
-  try {
-    const child = spawn(shellBin, ['-ilc', `echo "${MARKER_START}\${PATH}${MARKER_END}"`], { timeout: 5000 });
-    let out = '';
-    child.stdout.on('data', (d) => { out += d.toString(); });
-    child.on('error', () => {});
-    child.on('close', () => {
-      const p = parseShellPathOutput(out);
-      if (p) process.env.PATH = p;
-    });
-  } catch (_) {}
+  return new Promise((resolve) => {
+    try {
+      const child = spawn(shellBin, ['-ilc', `echo "${MARKER_START}\${PATH}${MARKER_END}"`], { timeout: 5000 });
+      let out = '';
+      child.stdout.on('data', (d) => { out += d.toString(); });
+      child.on('error', () => resolve(''));
+      child.on('close', () => {
+        const p = parseShellPathOutput(out);
+        if (p) { loginShellPathValue = p; process.env.PATH = p; }
+        resolve(loginShellPathValue);
+      });
+    } catch (_) { resolve(''); }
+  });
 }
-augmentUserPathAsync();
+const loginShellPathReady = augmentUserPathAsync();
 
 // resolveAgentExe(exe, envPath) turns a bare program name (e.g. 'claude') into
 // an absolute path so the spawn does not depend on the child's PATH. It walks
@@ -2065,8 +2072,8 @@ ipcMain.handle('chat:list', () => ({ ok: true, sessions: chatRuntime.list().map(
 // Only the tail is read: the replay keeps the last few thousand events anyway,
 // and refusing the file used to drop the resume back to Terminal view.
 const HISTORY_TAIL_BYTES = 12 * 1024 * 1024;
-ipcMain.handle('chat:history', (_e, opts = {}) => readSessionHistory(opts));
-function readSessionHistory({ agent, sessionId, cwd } = {}) {
+ipcMain.handle('chat:history', (_e, opts = {}) => readSessionHistory({ agent: opts && opts.agent, sessionId: opts && opts.sessionId, cwd: opts && opts.cwd }));
+function readSessionHistory({ agent, sessionId, cwd, tailBytes = HISTORY_TAIL_BYTES } = {}) {
   const a = String(agent || (config.agentCommand || 'claude')).trim().split(/\s+/)[0].toLowerCase();
   const id = String(sessionId || '');
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{3,120}$/.test(id)) return { ok: false, error: 'bad session id' };
@@ -2103,11 +2110,11 @@ function readSessionHistory({ agent, sessionId, cwd } = {}) {
     try {
       const st = fs.fstatSync(fd);
       if (!st.isFile()) return { ok: false, error: 'not a file' };
-      const len = Math.min(st.size, HISTORY_TAIL_BYTES);
+      const len = Math.min(st.size, tailBytes);
       const buf = Buffer.alloc(len);
       const n = fs.readSync(fd, buf, 0, len, st.size - len);
       raw = buf.subarray(0, n).toString('utf8');
-      truncated = st.size > HISTORY_TAIL_BYTES;
+      truncated = st.size > tailBytes;
     } finally { fs.closeSync(fd); }
     if (truncated) {
       // The cut lands mid-line; drop that partial first line.
@@ -5224,21 +5231,11 @@ const KNOWN_AGENTS = [
 // loginShellPath() returns the PATH a login+interactive shell produces, which
 // sources .profile/.bashrc and so includes ~/.local/bin, nvm, and the like. A
 // GUI/desktop launch inherits a stripped PATH, so a bare process.env.PATH check
-// misreports CLIs installed in ~/.local/bin as missing. Cached: one subprocess
-// for the whole session. Returns '' on win32 or on failure.
-let _loginShellPathCache;
+// misreports CLIs installed in ~/.local/bin as missing. Read once at launch in
+// the background; '' until it lands, on win32, or on failure. A caller that
+// must not miss it awaits loginShellPathReady first.
 function loginShellPath() {
-  if (_loginShellPathCache !== undefined) return _loginShellPathCache;
-  _loginShellPathCache = '';
-  if (process.platform === 'win32') return _loginShellPathCache;
-  try {
-    const { spawnSync } = require('child_process');
-    const shellBin = (typeof process.env.SHELL === 'string' && process.env.SHELL) ? process.env.SHELL : '/bin/bash';
-    const res = spawnSync(shellBin, ['-ilc', `echo "${MARKER_START}\${PATH}${MARKER_END}"`], { encoding: 'utf8', timeout: 5000 });
-    const p = parseShellPathOutput((res && res.stdout) || '');
-    if (p) _loginShellPathCache = p;
-  } catch (_) {}
-  return _loginShellPathCache;
+  return loginShellPathValue;
 }
 
 // extraAgentBinDirs() are user-install locations a GUI/desktop launch's PATH
@@ -5300,7 +5297,8 @@ ipcMain.handle('agents:authCommand', (_e, { command, verb } = {}) => {
   return { program, command: args ? `${program} ${args.join(' ')}` : program, own: !!args };
 });
 
-ipcMain.handle('agents:detect', () => {
+ipcMain.handle('agents:detect', async () => {
+  await loginShellPathReady;
   // Probe the install tools too so the renderer can decide between Install
   // and 'Open install page'. npm and pipx are the most likely available.
   const tools = {
@@ -9939,21 +9937,42 @@ const TITLE_DIALECTS = Object.freeze({
 const titleScanCache = new Map(); // `${dialect}:${path}` -> { size, mtimeMs, scanned, title }
 const TITLE_CACHE_MAX = 1000;
 
-// Per-file scratch for the sessions:list poll, which stats every transcript on
+// Per-file facts for the sessions:list poll, which stats every transcript on
 // disk each tick. One entry per path, valid while the size and mtime hold, so
-// an unchanged transcript is classified and read once.
-const sessionFileCache = new Map();
-const SESSION_FILE_CACHE_MAX = 8000;
-// How many claude chats one listing returns.
+// an unchanged transcript is classified and read once, across launches too.
+const sessionFacts = createFileFactsCache({
+  file: path.join(CONFIG_DIR, 'session-cache.json'),
+  max: 12000,
+  carry: ['aiTitle', 'titleEnd', 'last', 'lastEnd'],
+});
+// How many claude chats one listing returns by default, and at most.
 const SESSION_LIST_CAP = 300;
+const SESSION_LIST_MAX = 20000;
 function sessionFileReads(fullPath, st) {
-  const sig = `${st.size}:${st.mtimeMs}`;
-  let v = sessionFileCache.get(fullPath);
-  if (v && v.sig === sig) return v;
-  if (sessionFileCache.size > SESSION_FILE_CACHE_MAX) sessionFileCache.clear();
-  v = { sig };
-  sessionFileCache.set(fullPath, v);
-  return v;
+  return sessionFacts.reads(fullPath, st);
+}
+
+// A claude transcript's latest ai-title and last turn time, read newest first
+// from the end. A file that only grew is searched in its new bytes alone.
+function* claudeTailFacts(fullPath, rc) {
+  if (rc.aiTitle !== undefined && rc.last !== undefined && rc.titleEnd === rc.size && rc.lastEnd === rc.size) return rc;
+  let fd;
+  try { fd = fs.openSync(fullPath, 'r'); } catch (_) { return rc; }
+  try {
+    const size = fs.fstatSync(fd).size;
+    const from = (end) => (typeof end === 'number' && end <= size ? end : 0);
+    const title = yield* lastLineMatchSteps(fs, fd, size, TITLE_DIALECTS.claude.marker, (line) => {
+      try { return String(TITLE_DIALECTS.claude.extract(JSON.parse(line)) || '').trim() || null; } catch (_) { return null; }
+    }, from(rc.titleEnd));
+    const turn = yield* lastLineMatchSteps(fs, fd, size, '"timestamp"', turnLineMs, from(rc.lastEnd));
+    rc.aiTitle = title.value !== null ? title.value : (from(rc.titleEnd) ? rc.aiTitle || '' : '');
+    rc.titleEnd = title.end;
+    rc.last = turn.value !== null ? turn.value : (from(rc.lastEnd) && typeof rc.last === 'number' ? rc.last : null);
+    rc.lastEnd = turn.end;
+    rc.size = size;
+    sessionFacts.touch();
+  } catch (_) {} finally { try { fs.closeSync(fd); } catch (_) {} }
+  return rc;
 }
 
 function latestTranscriptTitle(fullPath, dialectName) {
@@ -10120,56 +10139,6 @@ function geminiResumeIndex(sessionId, cwd) {
     .sort((a, b) => a.startedMs - b.startedMs);
   const at = mine.findIndex((s) => s.id === sessionId);
   return at === -1 ? 0 : at + 1;
-}
-
-// Read the last `bytes` of a file. Used to take a transcript's last-activity
-// timestamp from its final entry, which reflects real activity more reliably
-// than the file mtime (opening or scanning a session updates mtime).
-function readTail(filePath, bytes, fileSize) {
-  const len = Math.min(bytes, fileSize);
-  if (len <= 0) return '';
-  const buf = Buffer.alloc(len);
-  const fd = fs.openSync(filePath, 'r');
-  const n = fs.readSync(fd, buf, 0, len, fileSize - len);
-  fs.closeSync(fd);
-  return buf.toString('utf8', 0, n);
-}
-// A session's activity time is the timestamp of its last real conversation turn
-// (a user or assistant message), NOT of any line. Merely opening a session makes
-// the CLI and framework hooks append non-turn lines (api-request, session-owner)
-// with a current timestamp; counting those bumped a yesterday chat to "now" and
-// jumped it to the top of the list. The scan is forward-only and cached per file
-// (like the title scan), so an appended megabyte blob cannot push the real turn
-// out of a tail window, and an unchanged file costs one stat.
-const lastTurnCache = new Map(); // path -> { size, mtimeMs, scanned, ms }
-const LAST_TURN_CACHE_MAX = 1000;
-function lastActivityMs(filePath, fileSize, fallbackMs) {
-  const prev = lastTurnCache.get(filePath);
-  let fd;
-  try { fd = fs.openSync(filePath, 'r'); } catch (_) { return fallbackMs; }
-  try {
-    const st = fs.fstatSync(fd);
-    // Resume only when this is the same file still growing; a shrink means it
-    // was replaced, so rescan from the start.
-    const resumable = prev && st.size >= prev.size;
-    let scanned = resumable ? prev.scanned : 0;
-    let ms = resumable ? prev.ms : null;
-    if (scanned < st.size) {
-      const len = st.size - scanned;
-      const buf = Buffer.alloc(len);
-      const n = fs.readSync(fd, buf, 0, len, scanned);
-      const res = lastTurnMs(buf.toString('utf8', 0, n), ms);
-      ms = res.ms;
-      scanned += res.consumed;
-    }
-    if (lastTurnCache.size > LAST_TURN_CACHE_MAX) lastTurnCache.clear();
-    lastTurnCache.set(filePath, { size: st.size, mtimeMs: st.mtimeMs, scanned, ms });
-    return ms != null ? ms : fallbackMs;
-  } catch (_) {
-    return fallbackMs;
-  } finally {
-    try { fs.closeSync(fd); } catch (_) {}
-  }
 }
 
 // Parse the head of a claude session JSONL for the fields Husk titles a
@@ -10372,7 +10341,7 @@ function isAutopilotCopilotSession(ws, eventTitle) {
 // the same shape the renderer consumes for claude sessions. Copilot stores the
 // cwd and timestamps in each session's workspace.yaml; names are often null,
 // so derive a stable title from the event log's first user turn.
-function listCopilotSessions(opts = {}) {
+function* copilotSessionRows(opts = {}) {
   const root = path.join(COPILOT_DIR, 'session-state');
   let dirs = [];
   try { dirs = fs.readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()); }
@@ -10380,6 +10349,7 @@ function listCopilotSessions(opts = {}) {
   const out = [];
   let hiddenAutopilot = 0;
   for (const d of dirs) {
+    yield;
     const full = path.join(root, d.name);
     const ws = readCopilotWorkspace(full);
     if (!ws || !ws.id) continue;
@@ -10430,6 +10400,10 @@ function listCopilotSessions(opts = {}) {
   return out;
 }
 
+function listCopilotSessions(opts = {}) {
+  return drainSessions(copilotSessionRows(opts));
+}
+
 function sameResolvedPath(a, b) {
   if (!a || !b) return false;
   try { return path.resolve(a) === path.resolve(b); }
@@ -10445,6 +10419,35 @@ function findCopilotSessionForResume(id, cwd) {
     if (!s || s.id !== want) return false;
     return !targetCwd || !s.originalCwd || sameResolvedPath(s.originalCwd, targetCwd);
   }) || null;
+}
+
+// The id, folder, start and first typed message of a codex rollout. The first
+// typed message sits after the tool and instruction preamble.
+function codexHeadFacts(fullPath) {
+  let id = path.basename(fullPath).replace(/\.jsonl$/, '').split('_')[0];
+  let project = '';
+  let startedISO = '';
+  let title = '';
+  for (const line of readHead(fullPath, 262144).split('\n')) {
+    if (!line.trim()) continue;
+    let row;
+    try { row = JSON.parse(line); } catch (_) { continue; }
+    const payload = row && row.payload || {};
+    if (!title && row.type === 'response_item' && payload.type === 'message' && payload.role === 'user' && Array.isArray(payload.content)) {
+      const text = payload.content.map((c) => (c && typeof c.text === 'string' ? c.text : '')).join(' ').trim();
+      // Context blocks the CLI injects open with a tag; a typed message does not.
+      if (text && !text.startsWith('<')) title = withoutBrainContext(text).trim();
+    }
+    if (row.type === 'session_meta') {
+      if (payload.id) id = String(payload.id);
+      if (payload.cwd) project = String(payload.cwd);
+      if (payload.timestamp) startedISO = String(payload.timestamp);
+    }
+    if (!title && row.type === 'event_msg' && payload.type === 'user_message') {
+      title = withoutBrainContext(String(payload.message || '')).trim();
+    }
+  }
+  return { id, project, startedISO, title: title.slice(0, 2000) };
 }
 
 // Codex stores each conversation as a rollout JSONL under
@@ -10470,34 +10473,11 @@ function listCodexSessions() {
     let st;
     try { st = fs.statSync(fullPath); } catch (_) { continue; }
     if (!st.isFile() || st.size === 0) continue;
-    let id = path.basename(fullPath).replace(/\.jsonl$/, '').split('_')[0];
-    let project = '';
-    let startedISO = '';
-    let title = '';
+    let head;
     try {
-      // The first typed message sits after the tool and instruction preamble.
-      const rc = sessionFileReads(fullPath, st);
-      const head = rc.codexHead !== undefined ? rc.codexHead : (rc.codexHead = readHead(fullPath, 262144));
-      for (const line of head.split('\n')) {
-        if (!line.trim()) continue;
-        let row;
-        try { row = JSON.parse(line); } catch (_) { continue; }
-        const payload = row && row.payload || {};
-        if (!title && row.type === 'response_item' && payload.type === 'message' && payload.role === 'user' && Array.isArray(payload.content)) {
-          const text = payload.content.map((c) => (c && typeof c.text === 'string' ? c.text : '')).join(' ').trim();
-          // Context blocks the CLI injects open with a tag; a typed message does not.
-          if (text && !text.startsWith('<')) title = withoutBrainContext(text).trim();
-        }
-        if (row.type === 'session_meta') {
-          if (payload.id) id = String(payload.id);
-          if (payload.cwd) project = String(payload.cwd);
-          if (payload.timestamp) startedISO = String(payload.timestamp);
-        }
-        if (!title && row.type === 'event_msg' && payload.type === 'user_message') {
-          title = withoutBrainContext(String(payload.message || '')).trim();
-        }
-      }
+      head = sessionFacts.fill(sessionFileReads(fullPath, st), 'codex', () => codexHeadFacts(fullPath));
     } catch (_) { continue; }
+    const { id, project, startedISO, title } = head;
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{3,120}$/.test(id)) continue;
     const startedMs = Date.parse(startedISO) || st.ctimeMs || st.mtimeMs;
     out.push({
@@ -10520,18 +10500,47 @@ function listCodexSessions() {
 // Agents we do not yet read return supported:false so the UI can say so instead
 // of erroring.
 const SESSION_LIST_AGENTS = ['claude', 'copilot', 'codex', 'gemini'];
+// realCwd is the folder the session ran in with links resolved, so one project
+// reached by two paths matches itself. cwdMissing marks a folder that is gone,
+// whose resolved path is only a guess.
+function placeSession(s, agent) {
+  const cwd = s.originalCwd || s.projectPath;
+  const cwdMissing = !!cwd && !fs.existsSync(cwd);
+  return { ...s, agent, realCwd: cwdMissing ? '' : realSessionPath(cwd), cwdMissing };
+}
+
+// One listing at a time per request shape; a poll that arrives mid-listing
+// shares it.
+const sessionListInflight = new Map();
+let sessionFactsSaveTimer = null;
 ipcMain.handle('sessions:list', (_e, opts = {}) => {
-  const primary = listAgentSessions(opts);
-  if (opts?.selectedOnly === true) return primary;
+  const key = JSON.stringify(opts || {});
+  if (!sessionListInflight.has(key)) {
+    const p = listAllSessions(opts || {}).finally(() => {
+      sessionListInflight.delete(key);
+      clearTimeout(sessionFactsSaveTimer);
+      sessionFactsSaveTimer = setTimeout(() => { sessionFacts.save().catch(() => {}); }, 1500);
+    });
+    sessionListInflight.set(key, p);
+  }
+  return sessionListInflight.get(key);
+});
+app.on('before-quit', () => { clearTimeout(sessionFactsSaveTimer); sessionFacts.save().catch(() => {}); });
+
+async function listAllSessions(opts) {
+  await sessionFacts.load();
+  const primary = await listAgentSessions(opts);
+  const decorate = (r, name) => (r.sessions || []).map((s) => placeSession(s, name));
+  if (opts.selectedOnly === true) {
+    return { ...primary, currentRealCwd: realSessionPath(activePtyCwd), sessions: decorate(primary, primary.agent) };
+  }
   const sessions = [];
   let hidden = 0;
   for (const name of SESSION_LIST_AGENTS) {
     let r = null;
-    try { r = name === primary.agent ? primary : listAgentSessions({ agent: name }); } catch (_) { continue; }
+    try { r = name === primary.agent ? primary : await listAgentSessions({ agent: name }); } catch (_) { continue; }
     hidden += Number(r.hiddenAutopilotSessions || 0);
-    // realCwd is the folder the session ran in with links resolved, so one
-    // project reached by two paths matches itself.
-    for (const s of r.sessions || []) sessions.push({ ...s, agent: name, realCwd: realSessionPath(s.originalCwd || s.projectPath) });
+    sessions.push(...decorate(r, name));
   }
   sessions.sort((a, b) => b.mtime - a.mtime);
   return {
@@ -10544,9 +10553,9 @@ ipcMain.handle('sessions:list', (_e, opts = {}) => {
     sessions,
     hiddenAutopilotSessions: hidden,
   };
-});
+}
 
-function listAgentSessions(opts = {}) {
+async function listAgentSessions(opts = {}) {
   // The list follows the agent the caller is using (the active chat tab), not
   // just the configured default, so a copilot or gemini chat's sessions show up
   // too. A claude-* alias counts as claude. A non-empty agent request names the
@@ -10557,7 +10566,7 @@ function listAgentSessions(opts = {}) {
   const reqAgent = (req === 'claude' || /^claude[-_]/.test(req)) ? 'claude' : req;
   const agent = reqAgent || activeAgentName();
   if (agent === 'copilot') {
-    const listed = listCopilotSessions({ withMeta: true });
+    const listed = await drainSessionsPaced(copilotSessionRows({ withMeta: true }));
     return {
       ok: true,
       agent,
@@ -10630,8 +10639,9 @@ function listAgentSessions(opts = {}) {
   // Chats only, newest first. A print run or an autopilot worktree is dropped
   // before it can take a place under the cap.
   let hiddenAutopilot = 0;
-  const top = listClaudeTranscripts(projectsDir, {
-    cap: SESSION_LIST_CAP,
+  const cap = Math.min(SESSION_LIST_MAX, Math.max(SESSION_LIST_CAP, Number(opts.limit) || 0));
+  const top = await drainSessionsPaced(claudeTranscripts(projectsDir, {
+    cap,
     reads: sessionFileReads,
     accept: ({ id, project, scan }) => {
       // Husk's own chats are recorded as it opens them and are kept whatever
@@ -10640,20 +10650,24 @@ function listAgentSessions(opts = {}) {
       if (isAutopilotWorkspacePath(scan.originalCwd || decodeProjectPath(project))) { hiddenAutopilot++; return false; }
       return true;
     },
-  });
+  }));
 
   const out = [];
+  let since = Date.now();
   for (const { id, project: projName, fullPath, st, scan } of top) {
-    const rc = sessionFileReads(fullPath, st);
+    if (Date.now() - since > 10) { await new Promise((resolve) => setImmediate(resolve)); since = Date.now(); }
+    const rc = await drainSessionsPaced(claudeTailFacts(fullPath, sessionFileReads(fullPath, st)));
     {
       // The title comes from the whole transcript: it is appended once the
       // conversation earns a name, which for a long session is far past the head.
-      const aiTitle = latestAiTitle(fullPath);
+      const aiTitle = rc.aiTitle || '';
       const { startedISO, queueContent, originalCwd, headComplete } = scan;
       let userMessage = scan.userMessage;
 
       // A first line longer than the head window hides the first message from it.
-      if (!aiTitle && !userMessage && !headComplete) userMessage = deepFirstUserMessage(fs, fullPath, st.size, { skip: isCommandWrapperText });
+      if (!aiTitle && !userMessage && !headComplete) {
+        userMessage = sessionFacts.fill(rc, 'deep', () => deepFirstUserMessage(fs, fullPath, st.size, { skip: isCommandWrapperText }).slice(0, 400));
+      }
       const firstMessage = (aiTitle || userMessage || queueContent || '').slice(0, 220);
 
       const sessionStartMs = startedISO ? Date.parse(startedISO) : st.mtimeMs;
@@ -10685,7 +10699,7 @@ function listAgentSessions(opts = {}) {
         // turn at all (an SDK sidecar), fall back to its birth time, not its
         // mtime: reopening a session rewrites metadata lines and bumps the mtime,
         // which would wrongly jump an untouched chat to the top as "now".
-        mtime: rc.last !== undefined ? rc.last : (rc.last = lastActivityMs(fullPath, st.size, st.birthtimeMs || st.mtimeMs)),
+        mtime: typeof rc.last === 'number' ? rc.last : (st.birthtimeMs || st.mtimeMs),
       });
     }
   }
@@ -10715,6 +10729,8 @@ function listAgentSessions(opts = {}) {
     currentCwd: activePtyCwd || '',
     sessions: deduped,
     hiddenAutopilotSessions: hiddenAutopilot,
+    // Transcripts past the cap, not yet read; the list can be asked for more.
+    olderUnread: top.older || 0,
   };
 }
 
@@ -11255,8 +11271,26 @@ ipcMain.handle('bgAgents:list', async (_e, payload = {}) => {
 // call off the transcript tail, so the detail pane can poll it while the agent
 // works and the feed moves in near real time.
 const BG_PEEK_TAIL_BYTES = 192 * 1024;
+// The feed from Husk's own record of a chat, else from the CLI's session log
+// where Husk reads one. noPreview means neither exists for this CLI.
+function peekFromChatEvents(agent, sessionId, cwd) {
+  const kept = transcriptId(agent, sessionId);
+  if (kept && transcriptStore.has(kept)) return { ok: true, ...peekFromEvents(transcriptStore.read(kept)) };
+  if (agent !== 'copilot' && agent !== 'codex') return { ok: true, entries: [], model: '', empty: true, noPreview: agent !== 'claude' };
+  const hist = readSessionHistory({ agent, sessionId, cwd, tailBytes: BG_PEEK_TAIL_BYTES });
+  if (!hist.ok) return { ok: true, entries: [], model: '', empty: true };
+  return { ok: true, ...peekFromEvents(hist.events) };
+}
+
 ipcMain.handle('bgAgents:peek', (_e, payload = {}) => {
   const sessionId = String((payload && payload.sessionId) || '').trim();
+  const agent = agentBaseName(String((payload && payload.agent) || 'claude'));
+  const family = (agent === 'claude' || /^claude[-_]/.test(agent)) ? 'claude' : agent;
+  const cwd = String((payload && payload.cwd) || '');
+  if (family !== 'claude') {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{3,120}$/.test(sessionId)) return { ok: false, error: 'no session' };
+    return peekFromChatEvents(family, sessionId, cwd);
+  }
   // An in-process agent has no session to look up, so it names its file. The
   // path is confined to the projects tree, which is the only place a transcript
   // this reads can be.
@@ -11270,9 +11304,9 @@ ipcMain.handle('bgAgents:peek', (_e, payload = {}) => {
     transcript = named;
   } else {
     if (!/^[0-9a-fA-F-]{16,}$/.test(sessionId)) return { ok: false, error: 'no session' };
-    transcript = bgFindTranscript(sessionId, String((payload && payload.cwd) || ''));
+    transcript = bgFindTranscript(sessionId, cwd);
   }
-  if (!transcript) return { ok: true, entries: [], model: '', empty: true };
+  if (!transcript) return named ? { ok: true, entries: [], model: '', empty: true } : peekFromChatEvents('claude', sessionId, cwd);
   let text = '';
   let size = 0;
   try {
