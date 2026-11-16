@@ -1,0 +1,43 @@
+name: cli-canary
+
+# Installs the latest release of each chat CLI and runs the handshake Husk opens
+# chat with. Needs no sign-in, so a red run means the protocol itself changed.
+
+on:
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  handshake:
+    name: handshake (${{ matrix.cli }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cli: claude
+            package: '@anthropic-ai/claude-code'
+          - cli: copilot
+            package: '@github/copilot'
+          - cli: gemini
+            package: '@google/gemini-cli'
+          - cli: codex
+            package: '@openai/codex'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Install the latest ${{ matrix.cli }}
+        run: npm install -g --no-audit --no-fund "${{ matrix.package }}@latest"
+      - name: Version
+        run: ${{ matrix.cli }} --version
+      - name: Handshake smoke
+        env:
+          HUSK_SMOKE_MS: '60000'
+        run: node scripts/handshake-smoke.js ${{ matrix.cli }}
