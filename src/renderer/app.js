@@ -11595,7 +11595,7 @@ async function sxCopy(value, label) {
 
 async function renderSessions() { return sxLoad({ firstPaint: !sx.loaded }); }
 
-// Returns the registry rather than assigning it, so a load that loses the race
+// Returns the registry rather than assigning it, so a load that finishes late
 // cannot overwrite a newer one's agents on its way out.
 async function sxLoadAgents() {
   const next = {
@@ -21339,307 +21339,6 @@ async function deleteRun(run) {
     refreshAutopilotHistory();
   }
 }
-// Render the head-to-head race scorecards: one card per race, one column per
-// agent run, the judge-suggested winner marked, with per-run diff + Apply /
-// Discard. Reuses the autopilot:race IPC (grouped + ranked) and applyWinner.
-function fxFmtMs(ms) {
-  const s = Math.round((Number(ms) || 0) / 1000);
-  if (s < 60) return `${s}s`;
-  return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
-}
-async function renderRaces() {
-  const section = $('#aut-races-section');
-  const wrap = $('#aut-races');
-  if (!section || !wrap) return;
-  let res;
-  try { res = await window.husk.autopilot.race(); }
-  catch (_) { res = { ok: false }; }
-  const races = (res && res.ok && Array.isArray(res.races)) ? res.races.filter((r) => r.count > 1) : [];
-  if (!races.length) { section.hidden = true; while (wrap.firstChild) wrap.removeChild(wrap.firstChild); return; }
-  section.hidden = false;
-  while (wrap.firstChild) wrap.removeChild(wrap.firstChild);
-  for (const race of races) wrap.appendChild(buildRaceCard(race));
-}
-function buildRaceCard(race) {
-  const card = document.createElement('div');
-  card.className = 'aut-race';
-  const head = document.createElement('div');
-  head.className = 'aut-race-head';
-  const goal = document.createElement('div');
-  goal.className = 'aut-race-goal';
-  goal.textContent = race.goal || '(no goal recorded)';
-  goal.title = race.goal || '';
-  const right = document.createElement('div');
-  right.className = 'aut-race-head-right';
-  const tag = document.createElement('div');
-  tag.className = 'aut-race-tag';
-  tag.textContent = `${race.count} agents`;
-  const cardBtn = document.createElement('button');
-  cardBtn.className = 'aut-race-cardbtn';
-  cardBtn.textContent = 'Race Card';
-  cardBtn.title = 'Create a shareable image of this race';
-  cardBtn.addEventListener('click', () => openRaceCard(race));
-  right.appendChild(tag);
-  right.appendChild(cardBtn);
-  head.appendChild(goal);
-  head.appendChild(right);
-  card.appendChild(head);
-
-  const cols = document.createElement('div');
-  cols.className = 'aut-race-cols';
-  cols.style.gridTemplateColumns = `repeat(${race.runs.length}, minmax(0, 1fr))`;
-  for (const run of race.runs) cols.appendChild(buildRaceColumn(run));
-  card.appendChild(cols);
-  return card;
-}
-function buildRaceColumn(run) {
-  const m = run.metrics || {};
-  const col = document.createElement('div');
-  col.className = 'aut-race-col' + (run.suggested ? ' is-winner' : '') + (!run.fileCount ? ' is-empty' : '');
-  // Header: agent + winner ribbon.
-  const top = document.createElement('div');
-  top.className = 'aut-race-col-top';
-  const agent = document.createElement('span');
-  agent.className = 'aut-race-agent';
-  agent.textContent = run.agent || 'agent';
-  top.appendChild(agent);
-  if (run.suggested) {
-    const rib = document.createElement('span');
-    rib.className = 'aut-race-winner';
-    rib.textContent = 'WINNER';
-    rib.title = run.reason || '';
-    top.appendChild(rib);
-  }
-  col.appendChild(top);
-  // Metric rows.
-  const metrics = [
-    { k: 'files', v: `${run.fileCount}`, best: run.isSmallest },
-    { k: 'cost', v: formatDollars(Number(m.dollars) || 0), best: run.isCheapest },
-    { k: 'time', v: fxFmtMs(m.durationMs), best: run.isFastest },
-    { k: 'tokens', v: formatTokens(Number(m.tokens) || 0), best: false },
-  ];
-  const grid = document.createElement('div');
-  grid.className = 'aut-race-metrics';
-  for (const met of metrics) {
-    const row = document.createElement('div');
-    row.className = 'aut-race-metric' + (met.best ? ' is-best' : '');
-    const lbl = document.createElement('span'); lbl.className = 'aut-race-metric-k'; lbl.textContent = met.k;
-    const val = document.createElement('span'); val.className = 'aut-race-metric-v'; val.textContent = met.v;
-    row.appendChild(lbl); row.appendChild(val);
-    grid.appendChild(row);
-  }
-  col.appendChild(grid);
-  // Reason.
-  const reason = document.createElement('div');
-  reason.className = 'aut-race-reason';
-  reason.textContent = run.reason || '';
-  col.appendChild(reason);
-  // Actions.
-  const actions = document.createElement('div');
-  actions.className = 'aut-race-actions';
-  const diffBtn = document.createElement('button');
-  diffBtn.className = 'aut-race-btn';
-  diffBtn.textContent = `Diff (${run.fileCount})`;
-  diffBtn.disabled = !run.fileCount;
-  diffBtn.addEventListener('click', () => openRaceRunDiff(run));
-  const applyBtn = document.createElement('button');
-  applyBtn.className = 'aut-race-btn is-apply';
-  applyBtn.textContent = 'Apply';
-  applyBtn.disabled = !run.fileCount;
-  applyBtn.title = 'Apply this run and discard the others in this race';
-  applyBtn.addEventListener('click', () => applyRaceWinner(run));
-  const discardBtn = document.createElement('button');
-  discardBtn.className = 'aut-race-btn';
-  discardBtn.textContent = 'Discard';
-  discardBtn.addEventListener('click', () => discardRaceRun(run));
-  actions.appendChild(diffBtn);
-  actions.appendChild(applyBtn);
-  actions.appendChild(discardBtn);
-  col.appendChild(actions);
-  return col;
-}
-// Show one changed file of a race run in the existing file-diff modal, using
-// that run's own session + worktree so the diff is against its pre-run snapshot.
-function openRaceRunDiff(run) {
-  const changes = run.changes || [];
-  if (!changes.length) return;
-  // Point the diff modal at this run's session/worktree, then open its first
-  // changed file (a full multi-file diff view is a later refinement).
-  autopilotReview = false;
-  autopilotLastSession = { sessionId: run.sessionId, workspaceRoot: run.worktreePath };
-  openFileDiffModal(changes[0].path, changes[0].status);
-}
-async function applyRaceWinner(run) {
-  const ok = await openConfirmDialog({
-    title: `Apply ${run.agent}'s changes and discard the rest?`,
-    bodyHtml: `Husk will apply ${run.fileCount} changed file${run.fileCount === 1 ? '' : 's'} from ${escapeHtml(run.agent || 'this run')} into your project, then discard the other runs in this race.`,
-    confirmLabel: 'Apply winner', cancelLabel: 'Cancel',
-  });
-  if (!ok) return;
-  const r = await window.husk.autopilot.applyWinner({ runId: run.runId });
-  if (!r) { toast('Apply failed', 'error'); return; }
-  const applied = (r.applied || []).length;
-  const failed = (r.failed || []).length;
-  if (failed) toast(`Applied ${applied} file${applied === 1 ? '' : 's'}; ${failed} failed`, 'error');
-  else toast(`Applied ${run.agent}'s changes; discarded ${r.discarded} other run${r.discarded === 1 ? '' : 's'}`, 'success');
-  renderRaces();
-  refreshAutopilotHistory();
-}
-async function discardRaceRun(run) {
-  const r = await window.husk.autopilot.discardRun({ runId: run.runId });
-  if (!r || !r.ok) { toast((r && r.error) || 'Discard failed', 'error'); return; }
-  toast('Run discarded', 'success');
-  renderRaces();
-}
-
-// ── Race Card: a self-contained shareable PNG drawn on a canvas ──
-// The card is drawn with the Canvas 2D API on a fixed dark palette, so it looks
-// the same wherever it is shared. It shows the agents, their headline metrics
-// and the winner, and carries no repo path or file names.
-const RC_PALETTE = {
-  bg0: '#0b0d13', bg1: '#12151f', card: '#171b26', cardWin: '#12241a',
-  line: 'rgba(255,255,255,0.10)', lineWin: '#34d399',
-  text: '#f4f4f6', text2: 'rgba(244,244,246,0.62)', text3: 'rgba(244,244,246,0.4)',
-  accent: '#ff7847', win: '#34d399', amber: '#f6b73c',
-};
-function rcRoundRect(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
-}
-function rcFmtMs(ms) {
-  const s = Math.round((Number(ms) || 0) / 1000);
-  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`;
-}
-function drawRaceCard(canvas, race) {
-  const W = 1200, H = 630;
-  const ctx = canvas.getContext('2d');
-  const p = RC_PALETTE;
-  // Background.
-  const g = ctx.createLinearGradient(0, 0, W, H);
-  g.addColorStop(0, p.bg0); g.addColorStop(1, p.bg1);
-  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-  // Accent glow top-left.
-  const glow = ctx.createRadialGradient(120, 60, 0, 120, 60, 520);
-  glow.addColorStop(0, 'rgba(255,120,71,0.14)'); glow.addColorStop(1, 'rgba(255,120,71,0)');
-  ctx.fillStyle = glow; ctx.fillRect(0, 0, W, H);
-  // Header.
-  ctx.fillStyle = p.accent;
-  ctx.font = '800 34px "Space Grotesk", "Inter", sans-serif';
-  ctx.textBaseline = 'alphabetic';
-  ctx.fillText('⬢ HUSK', 64, 84);
-  ctx.fillStyle = p.text3;
-  ctx.font = '700 20px "JetBrains Mono", monospace';
-  const tag = 'AGENT RACE';
-  ctx.fillText(tag, W - 64 - ctx.measureText(tag).width, 82);
-  // Goal (up to 2 lines).
-  ctx.fillStyle = p.text;
-  ctx.font = '600 40px "Space Grotesk", "Inter", sans-serif';
-  const goal = (race.goal || 'One task, N agents.').trim();
-  const words = goal.split(/\s+/);
-  const lines = []; let cur = '';
-  for (const w of words) {
-    const t = cur ? cur + ' ' + w : w;
-    if (ctx.measureText(t).width > W - 128 && cur) { lines.push(cur); cur = w; if (lines.length === 2) break; }
-    else cur = t;
-  }
-  if (lines.length < 2 && cur) lines.push(cur);
-  if (lines.length === 2 && ctx.measureText(lines[1]).width > W - 128) {
-    while (lines[1].length > 3 && ctx.measureText(lines[1] + '...').width > W - 128) lines[1] = lines[1].slice(0, -1);
-    lines[1] += '...';
-  }
-  lines.forEach((ln, i) => ctx.fillText(ln, 64, 168 + i * 52));
-  // Agent columns (up to 4).
-  const runs = race.runs.slice(0, 4);
-  const n = runs.length;
-  const pad = 64, gap = 20;
-  const colW = (W - pad * 2 - gap * (n - 1)) / n;
-  const colY = 300, colH = 230;
-  runs.forEach((run, i) => {
-    const x = pad + i * (colW + gap);
-    const isWin = !!run.suggested;
-    ctx.fillStyle = isWin ? p.cardWin : p.card;
-    rcRoundRect(ctx, x, colY, colW, colH, 16); ctx.fill();
-    ctx.lineWidth = isWin ? 2 : 1;
-    ctx.strokeStyle = isWin ? p.lineWin : p.line;
-    rcRoundRect(ctx, x, colY, colW, colH, 16); ctx.stroke();
-    // Agent name.
-    ctx.fillStyle = p.text;
-    ctx.font = '800 26px "JetBrains Mono", monospace';
-    const name = (run.agent || 'agent').replace(/^\w/, (c) => c.toUpperCase());
-    ctx.fillText(name, x + 22, colY + 46);
-    if (isWin) {
-      ctx.fillStyle = p.win;
-      rcRoundRect(ctx, x + colW - 22 - 92, colY + 22, 92, 30, 15); ctx.fill();
-      ctx.fillStyle = '#04160c';
-      ctx.font = '800 15px "JetBrains Mono", monospace';
-      ctx.fillText('WINNER', x + colW - 22 - 78, colY + 43);
-    }
-    // Metrics.
-    const m = run.metrics || {};
-    const rows = [
-      ['files', String(run.fileCount), run.isSmallest],
-      ['cost', '$' + (Number(m.dollars) || 0).toFixed(2), run.isCheapest],
-      ['time', rcFmtMs(m.durationMs), run.isFastest],
-    ];
-    rows.forEach((r, j) => {
-      const ry = colY + 92 + j * 42;
-      ctx.fillStyle = p.text3;
-      ctx.font = '500 18px "Inter", sans-serif';
-      ctx.fillText(r[0], x + 22, ry);
-      ctx.fillStyle = r[2] ? p.win : p.text;
-      ctx.font = '700 20px "JetBrains Mono", monospace';
-      const vw = ctx.measureText(r[1]).width;
-      ctx.fillText(r[1], x + colW - 22 - vw, ry);
-    });
-  });
-  // Footer.
-  ctx.fillStyle = p.text3;
-  ctx.font = '500 20px "Inter", sans-serif';
-  ctx.fillText('Raced in Husk · the neutral arena for coding agents', 64, H - 40);
-  ctx.fillStyle = p.text3;
-  const url = 'github.com/DorShaer/Husk';
-  ctx.font = '500 18px "JetBrains Mono", monospace';
-  ctx.fillText(url, W - 64 - ctx.measureText(url).width, H - 41);
-}
-let rcCurrentBlob = null;
-function openRaceCard(race) {
-  const modal = $('#race-card-modal');
-  const canvas = $('#rc-canvas');
-  if (!modal || !canvas) return;
-  drawRaceCard(canvas, race);
-  canvas.toBlob((blob) => { rcCurrentBlob = blob; }, 'image/png');
-  modal.hidden = false;
-}
-function closeRaceCard() { const m = $('#race-card-modal'); if (m) m.hidden = true; }
-async function rcCopy() {
-  const canvas = $('#rc-canvas');
-  if (!canvas) return;
-  try {
-    const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
-    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-    toast('Race Card copied to clipboard', 'success');
-  } catch (err) {
-    toast('Copy not available; use Save PNG', 'error');
-  }
-}
-function rcSave() {
-  const canvas = $('#rc-canvas');
-  if (!canvas) return;
-  canvas.toBlob((blob) => {
-    if (!blob) { toast('Could not render card', 'error'); return; }
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = 'husk-race-card.png';
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    toast('Saved husk-race-card.png', 'success');
-  }, 'image/png');
-}
 async function refreshAutopilotHistory() {
   const list = $('#aut-recent');
   const meta = $('#aut-recent-meta');
@@ -21834,12 +21533,12 @@ $('#aut-recent-bulkdel') && $('#aut-recent-bulkdel').addEventListener('click', a
 // Load a past run into the live layout in review mode: the same panes with
 // frozen values, and a footer of Revert / Start-new instead of Stop. The
 // activity feed is summarized from the audit log's event kinds and counts.
-async function openAutopilotRunReview(sessionId, workspaceRoot) {
+async function openAutopilotRunReview(sessionId, workspaceRoot, retainedRunId = null) {
   try { setPage('autopilot'); } catch (_) {}
   try {
     const sum = await window.husk.autopilot.summary({ sessionId, workspaceRoot });
     if (!sum || !sum.ok) { toast((sum && sum.error) || 'Could not load run', 'error'); return; }
-    enterReviewMode({ sessionId, workspaceRoot, summary: sum });
+    enterReviewMode({ sessionId, workspaceRoot, summary: sum, retained: !!retainedRunId, runId: retainedRunId });
   } catch (err) {
     toast(`Could not load run: ${err && err.message || err}`, 'error');
   }
@@ -21857,7 +21556,7 @@ function summaryDiffWithSource(sum, fallback = {}) {
 
 async function openAutopilotHistoryRun(run) {
   const members = Array.isArray(run && run.members) && run.members.length ? run.members : [run];
-  if (members.length <= 1) return openAutopilotRunReview(run.sessionId, run.workspaceRoot);
+  if (members.length <= 1) return openAutopilotRunReview(run.sessionId, run.workspaceRoot, run.retained ? run.runId : null);
   try { setPage('autopilot'); } catch (_) {}
   try {
     const summaries = [];
@@ -23973,10 +23672,6 @@ $('#aut-jump-presets') && $('#aut-jump-presets').addEventListener('click', () =>
 });
 $('#aut-diff-close') && $('#aut-diff-close').addEventListener('click', closeFileDiffModal);
 $('#aut-diff-modal') && $('#aut-diff-modal').addEventListener('click', (e) => { if (e.target === $('#aut-diff-modal')) closeFileDiffModal(); });
-$('#rc-close') && $('#rc-close').addEventListener('click', closeRaceCard);
-$('#rc-copy') && $('#rc-copy').addEventListener('click', rcCopy);
-$('#rc-save') && $('#rc-save').addEventListener('click', rcSave);
-$('#race-card-modal') && $('#race-card-modal').addEventListener('click', (e) => { if (e.target === $('#race-card-modal')) closeRaceCard(); });
 $('#aut-review-back') && $('#aut-review-back').addEventListener('click', exitReviewMode);
 $('#aut-review-new') && $('#aut-review-new').addEventListener('click', () => {
   exitReviewMode();

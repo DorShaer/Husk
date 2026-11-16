@@ -841,7 +841,7 @@
   //
   // Only ever fires with nothing selected and nothing open, so it cannot pull
   // the pane off a file the reader chose, and never while a mutation is in
-  // flight, so it cannot race a stage.
+  // flight, so it cannot collide with a stage.
   function autoOpenFirstChange() {
     if (state.diffModel || ui.commit || ui.mutating) return false;
     if (state.selected && state.selected.length) return false;

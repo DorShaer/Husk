@@ -144,7 +144,7 @@
   }
 
   // Two openers in the same tick (the rail click and the router both land
-  // here) must share one first tab, not race into two.
+  // here) must share one first tab, not split into two.
   let opening = null;
   async function open() {
     if (opening) return opening;

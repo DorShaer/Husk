@@ -2444,7 +2444,6 @@ const AP_MAX_CONCURRENT = 4;
 const AUT_OUTPUT_FLUSH_MS = 250;
 
 const { applyWorktreeChanges, isSafeRelPath: isSafeApplyRelPath } = require('./lib/autopilot-apply');
-const { rankRuns } = require('./lib/race-judge');
 const Orchestrator = require('./lib/autopilot-orchestrator');
 const { classifyTier } = require('./lib/model-routing');
 const { resolveTaskRoute, availableRoutes, resolveCollabRoutes, resolveWorkflowRoutes } = require('./lib/task-routing');
@@ -2613,7 +2612,7 @@ function reconcileOrphanWorktrees() {
     }
     // Orphan with real work: preserve it for review rather than delete.
     retainRun(runId, {
-      runId, sessionId: runId, raceId: null, goal: null,
+      runId, sessionId: runId, goal: null,
       groupId: null, role: null, isIntegrator: false, agent: null,
       worktreePath: wtPath, workspaceRoot, changes,
       metrics: { durationMs: 0, tokens: 0, dollars: 0, fileCount: changes.length },
@@ -3548,7 +3547,7 @@ ipcMain.handle('autopilot:start', async (_e, payload = {}) => {
 // normal isolated run labeled with its role. When the last worker finishes, an
 // integrator run merges every worker worktree into its own, which becomes the
 // single Apply target. This tracker is the only dedicated state; everything else
-// rides the existing run model the way raceId does.
+// rides the existing run model.
 const collabGroups = new Map(); // groupId -> { goal, caps, snapshot, workspaceRoot, remaining, workers, integratorSpawned }
 // Set while the collab orchestrator is planning (before any worker run
 // exists), so Stop can cancel that phase instead of reporting no active run.
@@ -3808,7 +3807,6 @@ async function doStartRun(runId, payload, workspaceRoot) {
     feedEverStreamed: false, ptyFallbackActive: false, spawnedAt: Date.now(),
     maxReportedTokens: 0,
     finishing: false, tickInterval: null,
-    raceId: (payload && typeof payload.raceId === 'string' && payload.raceId) ? payload.raceId : null,
     groupId: (payload && typeof payload.groupId === 'string' && payload.groupId) ? payload.groupId : null,
     role: (payload && typeof payload.role === 'string' && payload.role) ? payload.role.slice(0, 40) : null,
     isIntegrator: !!(payload && payload.isIntegrator),
@@ -3921,7 +3919,7 @@ async function doStartRun(runId, payload, workspaceRoot) {
     runId, sessionId, workspaceRoot: runRoot, fileCount: snap.fileCount, goal,
     originalGoal: runState.originalGoal || goal,
     fleetStartedAt: runState.fleetStartedAt || null,
-    raceId: runState.raceId, groupId: runState.groupId, role: runState.role,
+    groupId: runState.groupId, role: runState.role,
   });
   if (goal) {
     // Collab runs record the readable sub-goal but inject a richer team
@@ -4091,7 +4089,6 @@ async function finishRun(runId, detail) {
     const sessionId = r.runner.sessionId;
     const runRoot = r.worktreePath;
     const origRoot = r.workspaceRoot;
-    const raceId = r.raceId || null;
     const groupId = r.groupId || null;
     const runRole = r.role || null;
     const wasIntegrator = !!r.isIntegrator;
@@ -4113,7 +4110,7 @@ async function finishRun(runId, detail) {
       sum = { ok: false, error: (err && err.message) || String(err) };
     }
     if (sum && typeof sum === 'object') {
-      sum.runId = runId; sum.sessionId = sessionId; sum.workspaceRoot = runRoot; sum.raceId = raceId; sum.groupId = groupId; sum.role = runRole;
+      sum.runId = runId; sum.sessionId = sessionId; sum.workspaceRoot = runRoot; sum.groupId = groupId; sum.role = runRole;
       sum.originalGoal = r.originalGoal || goal || null;
       if (r.fleetStartedAt) sum.fleetStartedAt = r.fleetStartedAt;
       // Conclusion payload for the review UI: why the run ended, how many
@@ -4132,7 +4129,7 @@ async function finishRun(runId, detail) {
       const changes = (sum && Array.isArray(sum.diff)) ? sum.diff : [];
       const meter = (sum && sum.summary && sum.summary.meter) || {};
       retainRun(runId, {
-        runId, sessionId, raceId, goal: r.originalGoal || goal, subgoal: goal,
+        runId, sessionId, goal: r.originalGoal || goal, subgoal: goal,
         groupId, role: runRole, isIntegrator: wasIntegrator,
         agent: runAgent,
         worktreePath: runRoot,
@@ -4247,63 +4244,6 @@ ipcMain.handle('autopilot:discardRun', async (_e, payload = {}) => {
 ipcMain.handle('autopilot:retained', () => {
   const map = readRetained();
   return { ok: true, runs: Object.values(map) };
-});
-
-// Group retained runs into races (by raceId) and rank each race with the judge,
-// so the comparison UI can show a head-to-head scorecard with a suggested
-// winner. Runs without a raceId are returned loose (single reviews).
-ipcMain.handle('autopilot:race', () => {
-  const all = Object.values(readRetained());
-  const byRace = new Map();
-  const loose = [];
-  for (const r of all) {
-    if (r && r.raceId) {
-      if (!byRace.has(r.raceId)) byRace.set(r.raceId, []);
-      byRace.get(r.raceId).push(r);
-    } else if (r) {
-      loose.push(r);
-    }
-  }
-  const races = [];
-  for (const [raceId, group] of byRace) {
-    const ranked = rankRuns(group);
-    const goal = (group.find((g) => g.goal) || {}).goal || null;
-    races.push({ raceId, goal, count: ranked.length, runs: ranked });
-  }
-  // Newest race first by the winner's endedAt (fall back to any run's).
-  races.sort((a, b) => {
-    const ta = new Date((a.runs[0] && a.runs[0].endedAt) || 0).getTime();
-    const tb = new Date((b.runs[0] && b.runs[0].endedAt) || 0).getTime();
-    return tb - ta;
-  });
-  return { ok: true, races, loose };
-});
-
-// Apply one run of a race and discard all its siblings in a single move after
-// the winner lands cleanly. If the winner partially fails, every worktree stays
-// retained so no candidate work is destroyed.
-ipcMain.handle('autopilot:applyWinner', async (_e, payload = {}) => {
-  const runId = String(payload && payload.runId || '').trim();
-  const winner = getRetained(runId);
-  if (!winner) return { ok: false, error: 'no retained run with that id' };
-  const undo = captureApplyUndo(winner.sessionId, winner.workspaceRoot, winner.changes || []);
-  if (!undo.ok) return { ok: false, runId, applied: [], failed: [], discarded: 0, error: `${undo.error}; nothing was applied` };
-  const result = applyWorktreeChanges(winner.worktreePath, winner.workspaceRoot, winner.changes || []);
-  if (!result.ok) return { ok: false, runId, applied: result.applied, failed: result.failed, discarded: 0 };
-  try { removeRunWorktree(winner.worktreePath, winner.workspaceRoot); } catch (_) {}
-  dropRetained(runId);
-  // Discard the losing siblings in the same race.
-  let discarded = 0;
-  if (winner.raceId) {
-    for (const r of Object.values(readRetained())) {
-      if (r && r.raceId === winner.raceId && r.runId !== runId) {
-        try { removeRunWorktree(r.worktreePath, r.workspaceRoot); } catch (_) {}
-        dropRetained(r.runId);
-        discarded++;
-      }
-    }
-  }
-  return { ok: result.ok, runId, applied: result.applied, failed: result.failed, discarded };
 });
 
 ipcMain.handle('autopilot:status', (_e, payload = {}) => {
@@ -4538,6 +4478,7 @@ ipcMain.handle('autopilot:history', async (_e, payload = {}) => {
         isIntegrator,
         runId,
         agent,
+        retained: !!retained,
       });
     } catch (_) {}
   }

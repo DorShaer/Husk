@@ -77,7 +77,8 @@
         "autopilot-stop-confirm.spec.js",
         "autopilot-multi-vendor.spec.js",
         "autopilot-survives-chat.spec.js",
-        "autopilot-usage-labels.spec.js"
+        "autopilot-usage-labels.spec.js",
+        "autopilot-legacy-retained.spec.js"
       ],
       "tokens": [
         "aut",
@@ -94,7 +95,6 @@
         "src/lib/autopilot-status.js",
         "src/lib/autopilot-integrate.js",
         "src/lib/autonomy",
-        "src/lib/race-judge.js",
         "src/lib/task-routing.js",
         "src/lib/chat-connection.js"
       ]
