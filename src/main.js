@@ -2034,10 +2034,11 @@ ipcMain.handle('chat:handoffTo', (_e, { source, targetTabId } = {}) => {
 
 // Who the claude CLI is signed in as, for the notice after a sign-in finishes.
 // Read from the CLI itself rather than its credential files.
-ipcMain.handle('auth:status', async (_e, { tabId } = {}) => {
-  if (chatTransportFor(activeAgentCommand(tabId)) !== 'claude') return { ok: false, error: 'The active CLI has no sign-in status to report' };
+ipcMain.handle('auth:status', async (_e, { tabId } = {}) => readCliSignIn(activeAgentCommand(tabId)));
+async function readCliSignIn(command) {
+  if (chatTransportFor(command) !== 'claude') return { ok: false, error: 'The active CLI has no sign-in status to report' };
   const env = buildAgentEnv();
-  const exe = resolveAgentExe(activeAgentCommand(tabId).split(/\s+/)[0], env.PATH);
+  const exe = resolveAgentExe(String(command).split(/\s+/)[0], env.PATH);
   try {
     const out = await new Promise((resolve, reject) => {
       execFile(exe, ['auth', 'status', '--json'], { env, timeout: 15000, maxBuffer: 256 * 1024 }, (err, stdout) => {
@@ -2055,7 +2056,14 @@ ipcMain.handle('auth:status', async (_e, { tabId } = {}) => {
   } catch (err) {
     return { ok: false, error: (err && err.message) || 'could not read the sign-in status' };
   }
-});
+}
+// An actionable message when a one-shot run failed because its CLI is signed out, else null.
+async function signedOutMessage(command) {
+  const s = await readCliSignIn(command).catch(() => null);
+  if (!s || !s.ok || s.loggedIn) return null;
+  const cli = String(command).trim().split(/\s+/)[0];
+  return `${cli} is not signed in. Open a chat with ${cli} and type /login to sign in, then try again.`;
+}
 ipcMain.handle('chat:list', () => ({ ok: true, sessions: chatRuntime.list().map((c) => ({ ...c, connection: c.transport === 'openai' ? 'endpoint' : 'cli' })) }));
 // chat:history reads a past session's on-disk log and returns it as chat
 // events, so a resumed session opens in Chat view with its conversation
@@ -3607,7 +3615,10 @@ async function startCollabTeam(payload = {}) {
   });
   activePlanning = null;
   if (planCancelled) return { ok: false, error: 'planning cancelled' };
-  if (!plan.ok) return { ok: false, error: `orchestrator: ${plan.error}` };
+  if (!plan.ok) {
+    const signedOut = await signedOutMessage(plannerRoute.command);
+    return { ok: false, error: signedOut || `orchestrator: ${plan.error}` };
+  }
   const groupId = 'collab-' + Date.now().toString(36) + '-' + crypto.randomBytes(3).toString('hex');
   const teamRoutes = resolveCollabRoutes({ config: routingConfig, agents: plan.agents, requested: payload.routing, available, agentCommand: payload.agentCommand });
   if (!teamRoutes.ok) return teamRoutes;
@@ -6202,7 +6213,12 @@ Return ONLY the prompt text, no explanations, no markdown, no quotes. Start with
     let out = '';
     let err = '';
     let settled = false;
-    const finish = (result) => { if (!settled) { settled = true; resolve(result); } };
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      if (result.ok) { resolve(result); return; }
+      signedOutMessage(cmd).then((m) => resolve(m ? { ok: false, error: m, signedOut: true } : result));
+    };
 
     const child = require('child_process').spawn(cmd, AgentOneShot.oneShotArgs(cmd, prompt), {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -8202,14 +8218,18 @@ async function wfRunStep(event, run, graph, byId, step, incomingCtx) {
   });
 
   await new Promise((resolve) => {
-    child.on('close', (code) => {
+    child.on('close', async (code) => {
       cancelTimer();
       run.children.delete(child);
-      if (useStreamJson && !sawAnyEvent && resultText === '') {
-        activity('error', 'No output from the agent. It may need authentication or stream-json is unsupported.');
+      const ms = Date.now() - stepState.startedAt;
+      const silent = resultText === '' && (code !== 0 || (useStreamJson && !sawAnyEvent));
+      if (silent && !stepState.timedOut && run.status !== 'stopped') {
+        const signedOut = await signedOutMessage(cmd);
+        if (signedOut) activity('error', signedOut);
+        else if (useStreamJson && !sawAnyEvent) activity('error', 'No output from the agent. It may need authentication or stream-json is unsupported.');
       }
       stepState.status = run.status === 'stopped' ? 'cancelled' : (code === 0 ? 'done' : 'failed');
-      stepState.ms = Date.now() - stepState.startedAt;
+      stepState.ms = ms;
       stepState.output = resultText;
       wfEmit(event, 'wf:node:done', { runId: run.id, nodeId: step.id, status: stepState.status, output: resultText });
       resolve();
