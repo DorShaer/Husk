@@ -5,6 +5,7 @@ const { resolveModel, isExplicitModelValueUsable, classifyTier } = require('./mo
 const VENDORS = Object.freeze(['claude', 'codex', 'gemini', 'copilot', 'kiro-cli', 'aider']);
 const MODEL_FLAGS = Object.freeze({ claude: '--model', codex: '--model', copilot: '--model', gemini: '-m', 'kiro-cli': '--model', aider: '--model' });
 const ROLES = Object.freeze(['cheap', 'smart', 'planner', 'integrator']);
+const ROLE_LABELS = Object.freeze({ cheap: 'simple', smart: 'complex', planner: 'planner', integrator: 'integrator' });
 
 function migrateTaskRouting(config = {}) {
   if (config.taskRouting && typeof config.taskRouting === 'object') return config.taskRouting;
@@ -42,7 +43,7 @@ function commandWithModel(command, vendor, model) {
   return [...clean, MODEL_FLAGS[vendor], model].join(' ');
 }
 
-function resolveTaskRoute({ config = {}, role = 'smart', requested, available = [], index, agentCommand, catalogs } = {}) {
+function resolveTaskRoute({ config = {}, role = 'smart', requested, available = [], agentCommand, catalogs } = {}) {
   const options = availableRoutes(available);
   if (agentCommand && String(agentCommand).trim()) {
     const command = String(agentCommand).trim(), vendor = agentBaseName(command);
@@ -54,22 +55,17 @@ function resolveTaskRoute({ config = {}, role = 'smart', requested, available = 
   }
   const routes = migrateTaskRouting(config);
   if (requested?.vendor === 'auto' && requested?.model) return { ok: false, error: 'Choose a vendor before choosing a specific model.' };
-  const choice = requested && requested.vendor && requested.vendor !== 'auto' ? requested : (routes[role] || { vendor: 'auto', model: '' });
-  const vendor = typeof choice.vendor === 'string' && choice.vendor ? choice.vendor : 'auto';
-  const model = typeof choice.model === 'string' ? choice.model.trim() : '';
-  if (vendor !== 'auto' && !VENDORS.includes(vendor)) return { ok: false, error: `Unknown job vendor: ${vendor}` };
-  if (model && !isExplicitModelValueUsable(model)) return { ok: false, error: 'Choose a model id, not a command or status message.' };
-  if (vendor === 'auto' && model) return { ok: false, error: 'Choose a vendor before choosing a specific model.' };
-  let selected;
-  if (vendor !== 'auto') {
-    selected = options.find((a) => a.vendor === vendor);
-    if (!selected) return { ok: false, error: `${vendor} is not installed. Choose another job vendor or install its CLI.` };
-  } else {
-    if (!options.length) return { ok: false, error: 'No installed agent CLI is available for this job.' };
-    // Stable vendor order keeps choices reproducible; team indices spread work.
-    const slot = Number.isInteger(index) && index >= 0 ? index : (role === 'smart' || role === 'integrator' ? 1 : 0);
-    selected = options[slot % options.length];
+  const choice = requested && requested.vendor && requested.vendor !== 'auto' ? requested : routes[role];
+  // Jobs run only on a CLI the user chose for them; nothing is picked on their behalf.
+  if (!choice || typeof choice.vendor !== 'string' || !choice.vendor || choice.vendor === 'auto') {
+    return { ok: false, needsSetup: true, role, error: `No CLI is set for ${ROLE_LABELS[role] || role} jobs. Choose one in Autopilot, Configure models.` };
   }
+  const vendor = choice.vendor;
+  const model = typeof choice.model === 'string' ? choice.model.trim() : '';
+  if (!VENDORS.includes(vendor)) return { ok: false, error: `Unknown job vendor: ${vendor}` };
+  if (model && !isExplicitModelValueUsable(model)) return { ok: false, error: 'Choose a model id, not a command or status message.' };
+  const selected = options.find((a) => a.vendor === vendor);
+  if (!selected) return { ok: false, error: `${vendor} is not installed. Choose another job vendor or install its CLI.` };
   // A legacy route carries only the vendor; its model comes from the CLI's routing.
   let selectedModel = config.taskRouting || requested?.vendor === choice.vendor ? model : '';
   let notice = '';
@@ -80,10 +76,8 @@ function resolveTaskRoute({ config = {}, role = 'smart', requested, available = 
   }
   return {
     ok: true, vendor: selected.vendor, command: commandWithModel(selected.command, selected.vendor, selectedModel),
-    model: selectedModel, role, automatic: vendor === 'auto' || !selectedModel, notice,
-    reason: (vendor === 'auto'
-      ? `Automatic selected ${selected.vendor} from ${options.length} installed vendor${options.length === 1 ? '' : 's'}${Number.isInteger(index) ? ' to distribute team jobs' : ''}.`
-      : `${selected.vendor} is assigned to ${role === 'cheap' ? 'simple' : role === 'smart' ? 'complex' : role} jobs.`)
+    model: selectedModel, role, automatic: false, notice,
+    reason: `${selected.vendor} is assigned to ${ROLE_LABELS[role] || role} jobs.`
       + (selectedModel ? '' : ` ${selected.vendor} uses its own default model.`),
   };
 }
@@ -93,14 +87,12 @@ function resolveCollabRoutes({ config = {}, agents = [], requested, available = 
   const integrator = resolveTaskRoute({ config, role: 'integrator', available, catalogs });
   if (!planner.ok) return planner;
   if (!integrator.ok) return integrator;
-  const assignments = migrateTaskRouting(config);
   const workers = [];
   for (let i = 0; i < agents.length; i++) {
     const a = agents[i];
-    const fixedRole = assignments[a.tier] && assignments[a.tier].vendor !== 'auto';
-    const choice = requested && requested.vendor !== 'auto'
-      ? requested : (!fixedRole && a.vendor ? { vendor: a.vendor, model: '' } : undefined);
-    const route = resolveTaskRoute({ config, role: a.tier, requested: choice, available, index: i, agentCommand, catalogs });
+    // A worker runs where its job type is routed, or where the run itself says.
+    const choice = requested && requested.vendor && requested.vendor !== 'auto' ? requested : undefined;
+    const route = resolveTaskRoute({ config, role: a.tier, requested: choice, available, agentCommand, catalogs });
     if (!route.ok) return { ok: false, error: `${a.role}: ${route.error}` };
     workers.push({ ...a, vendor: route.vendor, agentCommand: route.command, model: route.model || `${route.vendor} (default)`, autoSelected: route.automatic, reason: route.reason, route });
   }

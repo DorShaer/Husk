@@ -15088,12 +15088,12 @@ function orchInitialRouting() {
   const legacy = ((cfg && cfg.modelRouting) || {})[legacyVendor] || {};
   return Object.fromEntries(ORCH_ROLES.map(({ key }) => {
     const route = saved && saved[key];
-    if (route && (route.vendor === 'auto' || ORCH_VENDORS.includes(route.vendor))) {
-      return [key, { vendor: route.vendor, model: route.vendor !== 'auto' && isUsableModelValue(route.model) ? route.model : '' }];
+    if (route && ORCH_VENDORS.includes(route.vendor)) {
+      return [key, { vendor: route.vendor, model: isUsableModelValue(route.model) ? route.model : '' }];
     }
     // A legacy table names the vendor; its models stay in that CLI's routing.
     const legacyModel = !saved && isUsableModelValue(legacy[key]);
-    return [key, { vendor: legacyModel && ORCH_VENDORS.includes(legacyVendor) ? legacyVendor : 'auto', model: '' }];
+    return [key, { vendor: legacyModel && ORCH_VENDORS.includes(legacyVendor) ? legacyVendor : '', model: '' }];
   }));
 }
 // Per-CLI routing: Routed when both tiers name a model, otherwise the CLI's own default.
@@ -15202,27 +15202,29 @@ async function openCliPicker(vendor) {
 function orchAgentLabel(vendor) {
   return orchAgents.find((a) => a.command === vendor)?.label || vendor;
 }
-function orchVendorOptions(select, current, automaticLabel = 'Automatic (Husk decides)') {
+// The first option is a prompt to choose a CLI for a job type, or "Use job routing" on a run.
+function orchVendorOptions(select, current, first = { value: '', label: 'Choose a CLI…' }) {
   select.replaceChildren();
   const add = (value, label) => { const option = document.createElement('option'); option.value = value; option.textContent = label; select.append(option); };
-  add('auto', automaticLabel);
+  add(first.value, first.label);
   for (const agent of orchAgents) add(agent.command, agent.label);
-  if (current !== 'auto' && !orchAgents.some((a) => a.command === current)) add(current, `${current} (not installed)`);
-  select.value = current;
+  if (current && current !== first.value && !orchAgents.some((a) => a.command === current)) add(current, `${current} (not installed)`);
+  select.value = current || first.value;
 }
 function fillOrchSelect(select, custom, vendor, current, status, tier = 'smart') {
   if (!select) return;
   const catalog = orchCatalogs.get(vendor) || {};
   const models = (catalog.models || []).filter((m) => isUsableModelValue(m.value));
   const installed = orchAgents.some((a) => a.command === vendor);
-  const routed = vendor !== 'auto' ? orchCliRouting(vendor) : null;
+  const chosen = !!vendor && vendor !== 'auto';
+  const routed = chosen ? orchCliRouting(vendor) : null;
   // Model controls exist only where a model choice is real: a routed CLI, or a saved pin.
-  const showModel = vendor !== 'auto' && !!(routed || current);
+  const showModel = chosen && !!(routed || current);
   select.replaceChildren();
   const add = (value, label) => { const option = document.createElement('option'); option.value = value; option.textContent = label; select.append(option); };
   add('', routed ? `${routed[tier]} (this CLI's routing)` : "This CLI's default model");
   for (const model of models) add(model.value, model.label || model.value);
-  if (vendor !== 'auto') add('__custom__', 'Enter model id...');
+  if (chosen) add('__custom__', 'Enter model id...');
   const unknown = current && !models.some((m) => m.value === current);
   select.value = unknown ? '__custom__' : current || '';
   select.disabled = !showModel;
@@ -15231,17 +15233,17 @@ function fillOrchSelect(select, custom, vendor, current, status, tier = 'smart')
   if (label) label.hidden = !showModel;
   if (custom) { custom.hidden = !showModel || !unknown; custom.value = unknown ? current : ''; custom.disabled = !showModel; }
   const setup = status && status.parentElement && status.parentElement.querySelector('.aut-role-setup');
-  const notRouted = vendor !== 'auto' && installed && !showModel;
+  const notRouted = chosen && installed && !showModel;
   if (setup) { setup.hidden = !notRouted; setup.dataset.vendor = vendor; }
   if (status) {
-    status.textContent = vendor === 'auto' ? 'Husk picks an installed CLI; that CLI\'s routing picks the model.'
-      : !installed ? 'This vendor is not installed. Choose an installed vendor or Automatic.'
+    status.textContent = !chosen ? 'Choose which CLI runs these jobs. They do not run until you do.'
+      : !installed ? 'This CLI is not installed. Choose an installed CLI.'
       : notRouted ? 'This CLI uses its own default model for every task.'
       : catalog.loading ? `Loading ${orchAgentLabel(vendor)} models...`
       : catalog.error ? `${catalog.error} This CLI's routing still applies.`
       : models.length ? `${models.length} models. ${catalog.sourceLabel || ''}`
       : 'No models loaded. This CLI\'s routing applies, or enter an exact model id.';
-    status.dataset.state = vendor !== 'auto' && (!installed || catalog.error) ? 'error' : catalog.loading ? 'loading' : 'ready';
+    status.dataset.state = !chosen ? 'setup' : (!installed || catalog.error) ? 'error' : catalog.loading ? 'loading' : 'ready';
   }
 }
 function readOrchValue(select, custom) {
@@ -15317,9 +15319,9 @@ $('#aut-mr-save')?.addEventListener('click', async () => {
   if (!orchDraft) return;
   for (const { id, key } of ORCH_ROLES) {
     const route = orchDraft[key];
-    route.model = route.vendor === 'auto' ? '' : readOrchValue($(`#aut-mr-${id}`), $(`#aut-mr-${id}-custom`));
+    route.model = route.vendor ? readOrchValue($(`#aut-mr-${id}`), $(`#aut-mr-${id}-custom`)) : '';
     if (route.model && !isUsableModelValue(route.model)) { toast('Enter a model id only, not status text or CLI output.', 'error'); return; }
-    if (route.vendor !== 'auto' && !orchAgents.some((a) => a.command === route.vendor)) { toast(`${orchAgentLabel(route.vendor)} is not installed. Choose another vendor or Automatic.`, 'error'); return; }
+    if (route.vendor && !orchAgents.some((a) => a.command === route.vendor)) { toast(`${orchAgentLabel(route.vendor)} is not installed. Choose an installed CLI.`, 'error'); return; }
   }
   try {
     cfg = await window.husk.config.set({ taskRouting: JSON.parse(JSON.stringify(orchDraft)), modelRouting: JSON.parse(JSON.stringify(orchModelDraft)) });
@@ -15352,10 +15354,11 @@ async function loadAutopilotRunModels() {
 async function bindAutopilotRunRouting() {
   const select = $('#aut-run-vendor');
   if (!select) return;
-  orchVendorOptions(select, 'auto', 'Use job routing');
+  const useRouting = { value: 'auto', label: 'Use job routing' };
+  orchVendorOptions(select, 'auto', useRouting);
   loadAutopilotRunModels();
   try { await refreshAgentMenu(); orchAgents = detectedAgents().filter((a) => ORCH_VENDORS.includes(a.command)); } catch (_) {}
-  orchVendorOptions(select, select.value || 'auto', 'Use job routing');
+  orchVendorOptions(select, select.value || 'auto', useRouting);
 }
 $('#aut-run-vendor')?.addEventListener('change', loadAutopilotRunModels);
 $('#pref-save').addEventListener('click', async () => {

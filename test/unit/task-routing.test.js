@@ -17,16 +17,21 @@ test('run vendor/model overrides role settings; run Automatic follows role', () 
   assert.equal(resolveTaskRoute({ config, role: 'cheap', available, requested: { vendor: 'auto', model: '' } }).command, 'codex --model test-codex');
   assert.equal(resolveTaskRoute({ config, role: 'cheap', available, requested: { vendor: 'claude', model: '' } }).command, 'claude --model haiku');
 });
-test('Automatic is deterministic, uses installed vendors, and ignores new-chat default', () => {
+test('a job type with no CLI chosen does not run, whatever is installed or open in chat', () => {
   for (const agentCommand of ['codex', 'gemini', 'claude']) {
-    assert.equal(resolveTaskRoute({ config: { agentCommand }, role: 'cheap', available }).vendor, 'claude');
-    assert.equal(resolveTaskRoute({ config: { agentCommand }, role: 'smart', available }).vendor, 'codex');
+    const simple = resolveTaskRoute({ config: { agentCommand }, role: 'cheap', available });
+    assert.equal(simple.ok, false);
+    assert.equal(simple.needsSetup, true);
+    assert.match(simple.error, /No CLI is set for simple jobs/);
+    assert.match(resolveTaskRoute({ config: { agentCommand }, role: 'smart', available }).error, /No CLI is set for complex jobs/);
+    assert.match(resolveTaskRoute({ config: { agentCommand, taskRouting: { smart: { vendor: 'auto', model: '' } } }, role: 'smart', available }).error, /No CLI is set/);
   }
   assert.deepEqual(availableRoutes([{}, { command: 'gemini', available: false }, 'codex', 'claude', 'codex']).map((a) => a.vendor), ['claude', 'codex']);
 });
 test('unavailable vendor, empty installation, and unsafe models fail visibly', () => {
   assert.match(resolveTaskRoute({ available, requested: { vendor: 'gemini', model: '' } }).error, /not installed/);
-  assert.match(resolveTaskRoute({ available: [] }).error, /No installed/);
+  assert.match(resolveTaskRoute({ available: [] }).error, /No CLI is set/);
+  assert.match(resolveTaskRoute({ available: [], requested: { vendor: 'claude', model: '' } }).error, /not installed/);
   assert.equal(resolveTaskRoute({ available, requested: { vendor: 'auto', model: 'test-model' } }).ok, false);
   assert.equal(resolveTaskRoute({ available, requested: { vendor: 'codex', model: '--dangerous' } }).ok, false);
 });
@@ -49,10 +54,13 @@ test('team worker role choices override planner suggestions; planner and integra
   assert.equal(team.integrator.command, 'codex --model test-integrator');
   assert.ok(team.workers.every((a) => a.reason && a.route.vendor && a.model));
 });
-test('team accepts mixed planner vendors, rejects unavailable suggestions, and distributes automatic workers', () => {
-  assert.deepEqual(resolveCollabRoutes({ agents, available }).workers.map((a) => a.vendor), ['claude', 'codex']);
-  assert.equal(resolveCollabRoutes({ agents: [{ ...agents[0], vendor: 'gemini' }], available }).ok, false);
-  assert.deepEqual(resolveCollabRoutes({ agents: agents.map(({ vendor, ...a }) => a), available }).workers.map((a) => a.vendor), ['claude', 'codex']);
+test('a team with no CLI set for its jobs does not start, and planner suggestions never pick a CLI', () => {
+  const unset = resolveCollabRoutes({ agents, available });
+  assert.equal(unset.ok, false);
+  assert.match(unset.error, /No CLI is set for planner jobs/);
+  const suggested = resolveCollabRoutes({ config, agents: agents.map((a) => ({ ...a, vendor: 'gemini' })), available });
+  assert.equal(suggested.ok, true);
+  assert.deepEqual(suggested.workers.map((a) => a.vendor), ['codex', 'claude']);
 });
 test('queued worker and integrator commands survive later configuration edits', () => {
   const mutable = structuredClone(config);

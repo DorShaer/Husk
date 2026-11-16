@@ -146,6 +146,8 @@ test('job model picker separates vendors, preserves pins, keeps half-set routing
       complexVendor: document.getElementById('aut-vendor-complex').value,
       status: document.getElementById('aut-model-status-complex').textContent,
       automaticAvailable: Array.from(document.getElementById('aut-mr-complex').options).some(o => o.value === ''),
+      vendorAuto: Array.from(document.getElementById('aut-vendor-simple').options).some(o => o.value === 'auto'),
+      simpleStatus: document.getElementById('aut-model-status-simple').textContent,
       complexModelHidden: document.getElementById('aut-mr-complex').hidden,
       complexSetupShown: !document.getElementById('aut-setup-complex').hidden,
     };
@@ -165,7 +167,9 @@ test('job model picker separates vendors, preserves pins, keeps half-set routing
       defaultCommand: cfg.agentCommand,
     };
   });
-  expect(info.loading.simpleVendor).toBe('auto');
+  // No CLI is picked on the user's behalf: an unset job type waits for a choice.
+  expect(info.loading.simpleVendor).toBe('');
+  expect(info.loading.vendorAuto).toBe(false);
   expect(info.loading.complexVendor).toBe('copilot');
   expect(info.loading.status).toContain('own default model for every task');
   expect(info.loading.complexModelHidden).toBe(true);
@@ -184,7 +188,7 @@ test('job model picker separates vendors, preserves pins, keeps half-set routing
   const saved = await win.evaluate(() => cfg.taskRouting);
   expect(saved.cheap).toEqual({ vendor: 'codex', model: 'gpt-test' });
   expect(saved.smart).toEqual({ vendor: 'copilot', model: '' });
-  expect(saved.planner).toEqual({ vendor: 'auto', model: '' });
+  expect(saved.planner).toEqual({ vendor: '', model: '' });
   await app.close();
 });
 
@@ -210,9 +214,9 @@ test('vendor model responses cannot replace another vendor selection', async () 
   await win.waitForFunction(() => orchCatalogs.get('codex')?.loaded);
   await expect(win.locator('#aut-mr-simple option[value="codex-test"]')).toHaveCount(0);
   await win.locator('#aut-mr-simple').selectOption('claude-test');
-  await win.locator('#aut-vendor-simple').selectOption('auto');
+  await win.locator('#aut-vendor-simple').selectOption('');
   await expect(win.locator('#aut-mr-simple')).toBeDisabled();
-  expect(await win.evaluate(() => orchDraft.cheap)).toEqual({ vendor: 'auto', model: '' });
+  expect(await win.evaluate(() => orchDraft.cheap)).toEqual({ vendor: '', model: '' });
   await app.close();
 });
 
