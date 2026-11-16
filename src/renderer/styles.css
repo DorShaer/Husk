@@ -16905,6 +16905,7 @@ body[data-mode="light"] .am-node.is-running:not(.is-holder) .am-node-glyph {
 .gh-checks.is-passing { color: var(--emerald); }
 .gh-checks.is-failing { color: var(--rose); }
 .gh-checks.is-pending { color: var(--warn); }
+.gh-checks.is-unavailable { color: var(--text-3); font-weight: 500; }
 
 /* A label's colour is GitHub's, narrowed to six hex digits by the reader before
    it ever reaches a style. Everything else about the chip is a token. */
