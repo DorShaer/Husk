@@ -25,6 +25,7 @@ const THEMES = [
   { id: 'everforest', name: 'Everforest', bg: '#2d353b' },
   { id: 'kanagawa', name: 'Kanagawa', bg: '#1f1f28' },
   { id: 'glass', name: 'Glass', bg: '#0a0e16' },
+  { id: 'eclipse', name: 'Eclipse', bg: '#000000' },
   { id: 'hc-dark', name: 'High contrast dark', bg: '#000000', highContrast: true },
   { id: 'hc-light', name: 'High contrast light', light: true, bg: '#ffffff', highContrast: true },
 ];
@@ -40,6 +41,7 @@ const ACCENTS = [
   { id: 'amber', name: 'Amber', swatch: ['#fbbf24', '#fcd34d'] },
   { id: 'teal', name: 'Teal', swatch: ['#2dd4bf', '#5eead4'] },
   { id: 'slate', name: 'Slate', swatch: ['#94a3b8', '#cbd5e1'] },
+  { id: 'gold', name: 'Gold', swatch: ['#ffd400', '#ffe14d'] },
 ];
 const CUSTOM_ACCENT = 'custom';
 const DEFAULT_CUSTOM_ACCENT = '#818cf8';
