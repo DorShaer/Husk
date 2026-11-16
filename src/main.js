@@ -33,6 +33,7 @@ const { isLive: agentIsLive } = require('./lib/agent-state');
 const { createChatRuntime } = require('./lib/chat-runtime');
 const UsageMonitor = require('./lib/usage-monitor');
 const { createBrain, FILE_MAX_BYTES: BRAIN_FILE_MAX_BYTES, withoutContext: withoutBrainContext } = require('./lib/brain');
+const ConfigSecrets = require('./lib/config-secrets');
 const { applyMechanical, createStreamFilter } = require('./lib/rule-lint');
 const { deepFirstUserMessage } = require('./lib/session-head');
 const { listClaudeTranscripts, realPath: realSessionPath } = require('./lib/session-scan');
@@ -415,10 +416,26 @@ function loadConfig() {
   } catch (_) { return { ...DEFAULT_CONFIG }; }
 }
 
+// The OS keychain for secret config fields. Linux without a keyring falls back to
+// a fixed key in Chromium ("basic_text"), which protects nothing, so it counts as absent.
+const configKeychain = {
+  ready() {
+    try {
+      const ss = require('electron').safeStorage;
+      if (!app.isReady() || !ss || !ss.isEncryptionAvailable()) return false;
+      if (process.platform === 'linux' && typeof ss.getSelectedStorageBackend === 'function'
+        && ss.getSelectedStorageBackend() === 'basic_text') return false;
+      return true;
+    } catch (_) { return false; }
+  },
+  encrypt: (text) => require('electron').safeStorage.encryptString(text),
+  decrypt: (buf) => require('electron').safeStorage.decryptString(buf),
+};
+
 function saveConfig(cfg) {
   try {
     fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), { mode: 0o600 });
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(ConfigSecrets.sealConfig(cfg, configKeychain), null, 2), { mode: 0o600 });
     // writeFileSync applies mode only when it creates the file, so set the mode
     // on the file and its directory explicitly.
     try { fs.chmodSync(CONFIG_PATH, 0o600); } catch (_) {}
@@ -13367,6 +13384,13 @@ if (!gotLock) {
   process.on('unhandledRejection', (err) => { try { console.error('[husk] unhandledRejection:', err); } catch (_) {} });
 
   app.whenReady().then(async () => {
+    // Secret fields decrypt once the keychain is reachable; a plain one on disk is re-written sealed.
+    {
+      const opened = ConfigSecrets.unsealConfig(config, configKeychain);
+      config = opened.config;
+      if (opened.failed.length) console.error(`[config] could not decrypt: ${opened.failed.join(', ')}`);
+      else if (ConfigSecrets.needsSeal(config, configKeychain)) saveConfig(config);
+    }
     protocol.handle(bgImage.SCHEME, serveBackground);
     applyPaiState(config.paiEnabled !== false);
     bootstrapPaiIfNeeded();
