@@ -530,9 +530,9 @@ function seedPastSession(homeDir, bin, extraConfig) {
   return { id, work };
 }
 
-test('a cold boot resumes the newest session into Chat instead of opening an empty chat', async () => {
+test('with resuming turned on, a cold boot resumes the newest session into Chat', async () => {
   const { homeDir, bin } = makeHome();
-  const { id } = seedPastSession(homeDir, bin);
+  const { id } = seedPastSession(homeDir, bin, { resumeLastOnLaunch: true });
   const { app, win } = await launch(homeDir, bin);
   await expect(win.locator('.chat-tab')).toHaveCount(1);
   await expect(win.locator('.chat-tab.active')).toHaveAttribute('title', "Yesterday's thread");
@@ -555,9 +555,9 @@ test('a cold boot resumes the newest session into Chat instead of opening an emp
   await app.close();
 });
 
-test('resumeLastOnLaunch: false keeps the old behaviour of a fresh chat on boot', async () => {
+test('a cold boot opens a fresh chat by default and keeps past sessions as cards', async () => {
   const { homeDir, bin } = makeHome();
-  seedPastSession(homeDir, bin, { resumeLastOnLaunch: false });
+  seedPastSession(homeDir, bin);
   const { app, win } = await launch(homeDir, bin);
   await expect(win.locator('.chat-tab')).toHaveCount(1);
   await expect(win.locator('.chat-pane.show .chat-item-user')).toHaveCount(0);
@@ -592,7 +592,7 @@ test('a past session card resumes into Chat with its history replayed above the 
   fs.writeFileSync(path.join(newerDir, 'workspace.yaml'), `id: ${newerId}\ncwd: ${work}\ncreated_at: ${later}\nupdated_at: ${later}\nname: Newer chat\n`);
   fs.writeFileSync(path.join(newerDir, 'events.jsonl'), JSON.stringify({ type: 'user.message', data: { content: 'newest one' } }) + '\n');
   fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify({
-    firstRunDone: true, skipWelcome: true, agentCommand: 'copilot', agentCwd: work,
+    firstRunDone: true, skipWelcome: true, resumeLastOnLaunch: true, agentCommand: 'copilot', agentCwd: work,
   }));
   const { app, win } = await launch(homeDir, bin);
   await chatReady(win);
@@ -988,7 +988,7 @@ test('a long resumed conversation opens scrolled to its last message', async () 
     lines.push({ type: 'assistant.message', data: { content: 'answer number ' + i + '. ' + 'Lorem ipsum dolor sit amet. '.repeat(6) } });
   }
   fs.writeFileSync(path.join(dir, 'events.jsonl'), lines.map((o) => JSON.stringify(o)).join('\n') + '\n');
-  fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify({ firstRunDone: true, skipWelcome: true, agentCommand: 'copilot', agentCwd: work }));
+  fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify({ firstRunDone: true, skipWelcome: true, resumeLastOnLaunch: true, agentCommand: 'copilot', agentCwd: work }));
   const { app, win } = await launch(homeDir, bin);
   const pane = win.locator('.chat-pane.show');
   await expect(pane.locator('.chat-item-user')).toHaveCount(40, { timeout: 15_000 });
@@ -1022,7 +1022,7 @@ test('a session log over the replay limit still resumes into Chat, showing its l
   out.write(JSON.stringify({ type: 'assistant.message', data: { content: 'the most recent answer' } }) + '\n');
   await new Promise((r) => out.end(r));
   expect(fs.statSync(path.join(dir, 'events.jsonl')).size).toBeGreaterThan(13 * 1024 * 1024);
-  fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify({ firstRunDone: true, skipWelcome: true, agentCommand: 'copilot', agentCwd: work }));
+  fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify({ firstRunDone: true, skipWelcome: true, resumeLastOnLaunch: true, agentCommand: 'copilot', agentCwd: work }));
   const { app, win } = await launch(homeDir, bin);
   const pane = win.locator('.chat-pane.show');
   await expect(pane.locator('.chat-item-text', { hasText: 'the most recent answer' })).toBeVisible({ timeout: 15_000 });
