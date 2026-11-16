@@ -1523,7 +1523,7 @@ function resumeHeldByAgentOutput(text) {
     || (/--fork-session/.test(t) && /background agent/i.test(t));
 }
 
-async function closeRejectedResumeTab(tab) {
+async function closeRejectedResumeTab(tab, reason) {
   if (!tab || !tab.resumeAttempt || tab.resumeAttempt.failureHandled) return;
   tab.resumeAttempt.failureHandled = true;
   tab.restarting = true;
@@ -1532,7 +1532,8 @@ async function closeRejectedResumeTab(tab) {
   const id = tab.resumeAttempt.id ? ` ${String(tab.resumeAttempt.id).slice(0, 8)}` : '';
   const header = tab.resumeAttempt.previousHeader || null;
   if (header && Object.prototype.hasOwnProperty.call(header, 'subBase')) setChatSubBase(header.subBase);
-  toast(`${agent}${id} is not resumable yet; refreshed sessions`, 'error');
+  const why = reason ? `: ${String(reason).replace(/\s+/g, ' ').slice(0, 140)}` : '';
+  toast(`${agent}${id} is not resumable yet; refreshed sessions${why}`, 'error');
   await closeTab(tab.id);
   try { await refreshRecentList(); } catch (err) { console.warn('recent refresh after rejected resume failed', err); }
   if (currentPage === 'sessions') {
@@ -2127,6 +2128,8 @@ async function openNewChatTab(opts = {}) {
   tab.isShell = !!opts.shell;
   if (tab.isShell) { tab.title = 'Terminal'; tab.titleEarned = true; }
   tab.launchCommand = opts.command || null;
+  // A resume the CLI turns down closes this tab instead of leaving it dead.
+  if (opts.resumeOf) tab.resumeAttempt = { agent: opts.resumeOf.agent, id: opts.resumeOf.id, startedAt: Date.now(), chat: true, failureHandled: false };
   tab.connection = opts.connection || (opts.command ? 'cli' : (cfg && cfg.agentVendor === 'openai' ? 'endpoint' : 'cli'));
   tab.cwd = opts.cwd || null;
   tab.handoff = opts.handoff || null;
@@ -3350,6 +3353,10 @@ function startChatForTab(tab) {
     // Closed or switched away while starting: nothing here to update.
     if (!TABS.has(tab.id) || tab.chat !== c || tab.mode !== 'chat') return false;
     c.setStarting(false);
+    if ((!res || !res.ok) && !(res && res.auth) && tab.resumeAttempt && tab.resumeAttempt.chat) {
+      closeRejectedResumeTab(tab, res && res.error).catch((err) => console.warn('closing rejected resume tab failed', err));
+      return false;
+    }
     if (!res || !res.ok) {
       if (res && res.compat) { c.flush(); showCompatCard(tab, res); }
       else c.apply({ type: 'error', text: `Could not start ${cli}: ${(res && res.error) || 'no reason given'}` });
@@ -3891,6 +3898,7 @@ async function resumeIntoChat(d, { keepPage = false, forceChat = false } = {}) {
     // A fork mints its own session id, so it must not claim the parent's; the
     // resolver links it once the CLI assigns one. A plain resume keeps its id.
     sessionId: forking ? undefined : d.id,
+    resumeOf: forking ? null : { agent, id: d.id },
     title: forking ? '' : savedSessionDisplayTitle(d),
     customTitle: !forking && !!names[d.id],
   });
@@ -4046,6 +4054,7 @@ if (window.husk.chat) {
     const tab = TABS.get(tabId);
     // Late events from a child being stopped belong to no thread on screen.
     if (!tab || !tab.chat || tab.mode !== 'chat' || tab.chatStopping) return;
+    if (ev && (ev.type === 'session' || ev.type === 'turn_end') && tab.resumeAttempt && tab.resumeAttempt.chat) tab.resumeAttempt = null;
     if (ev && ev.type === 'session' && ev.sessionId && !tab.agentId) {
       tab.agentId = String(ev.sessionId);
       tab.agentIdProvisional = false;
@@ -4061,6 +4070,10 @@ if (window.husk.chat) {
     if (buf) { buf.exitCode = code; return; }
     const tab = TABS.get(tabId);
     if (!tab || !tab.chat || tab.mode !== 'chat' || tab.chatStopping) return;
+    if (tab.resumeAttempt && tab.resumeAttempt.chat && Date.now() - tab.resumeAttempt.startedAt < 20000) {
+      closeRejectedResumeTab(tab).catch((err) => console.warn('closing rejected resume tab failed', err));
+      return;
+    }
     const turnOpen = tab.chat.isRunning() || !!tab.chat.getState().turnOpen;
     tab.chat.apply(turnOpen
       ? { type: 'error', text: `Agent exited (code ${code})` }
