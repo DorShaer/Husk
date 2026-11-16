@@ -35,8 +35,10 @@ const ALLOW_ALL = 'allow-all';
 // (an older build, a wrapper that ignores --acp) must fail the start instead
 // of leaving the tab on "Starting" forever.
 const HANDSHAKE_MS = 20000;
+// A start that timed out is tried once more after this pause, with twice the time.
+const RETRY_DELAY_MS = 1000;
 
-function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, recordPrompt, appVersion, platform, comSpec, log, handshakeMs, controlTimeoutMs, contextWindow } = {}) {
+function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, recordPrompt, appVersion, platform, comSpec, log, handshakeMs, retryDelayMs, controlTimeoutMs, contextWindow } = {}) {
   // Resolve a model's context-window size for the composer meter. Injected by the
   // host, which owns the model table; without it the claude chip stays hidden.
   const windowFor = typeof contextWindow === 'function' ? contextWindow : () => null;
@@ -44,6 +46,8 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, record
   const sessions = new Map();
   const isWin = (platform || process.platform) === 'win32';
   const handshakeLimit = typeof handshakeMs === 'number' && handshakeMs > 0 ? handshakeMs : HANDSHAKE_MS;
+  const retryDelay = typeof retryDelayMs === 'number' && retryDelayMs >= 0 ? retryDelayMs : RETRY_DELAY_MS;
+  const startTokens = new Map();
   const note = typeof log === 'function' ? log : () => {};
   let permSeq = 0;
 
@@ -170,7 +174,8 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, record
       if (sessions.get(s.tabId) === s) sessions.delete(s.tabId);
       // A child Husk stopped or replaced on purpose (stop, restart in place)
       // exits quietly: reporting it would mark the tab dead under its successor.
-      if (s.stopped) return;
+      // One that dies mid-handshake is reported by the start result instead.
+      if (s.stopped || s.handshaking) return;
       const why = tailStderr(s);
       if (code !== 0 && code !== null && why) send(s.tabId, { type: 'error', text: why });
       if (typeof emitExit === 'function') emitExit(s.tabId, code === null ? (signal || -1) : code);
@@ -194,13 +199,32 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, record
 
   // claudeSessionId pins claude's transcript to a known id (the same trick
   // spawnPty uses) so the status panel can find this tab's .jsonl by name.
-  async function start({ tabId, command, cwd, claudeSessionId, keepLog, openai } = {}) {
+  // A failed handshake: auth goes to sign-in, anything else carries what Husk
+  // expected so the thread can offer Retry and the terminal view.
+  function failure(error, auth, e, cli, expected) {
+    const timeout = !!(e && e.code === 'HANDSHAKE_TIMEOUT');
+    return auth ? { ok: false, error, auth: true } : { ok: false, error, auth: false, timeout, compat: { cli, expected, reason: timeout ? 'timeout' : 'refused' } };
+  }
+
+  // A handshake that times out is tried once more; one stopped meanwhile is not.
+  async function start(opts = {}) {
+    const token = {};
+    if (opts.tabId) startTokens.set(opts.tabId, token);
+    const first = await startOnce(opts, handshakeLimit);
+    if (!first || !first.timeout) return first;
+    send(opts.tabId, { type: 'status', text: 'No answer yet. Trying once more.' });
+    await new Promise((r) => { const t = setTimeout(r, retryDelay); token.wake = () => { clearTimeout(t); r(); }; });
+    if (startTokens.get(opts.tabId) !== token) return Object.assign({}, first, { timeout: false });
+    return startOnce(opts, handshakeLimit * 2);
+  }
+
+  async function startOnce({ tabId, command, cwd, claudeSessionId, keepLog, openai } = {}, limit) {
     if (!tabId) return { ok: false, error: 'tabId required' };
     // Bring your own key, native: an OpenAI-compatible endpoint (a vendor, or a
     // local Ollama). No child process; prompts stream over HTTP and surface as
     // the same events the claude transport emits.
     if (openai && openai.baseUrl && openai.model) {
-      if (sessions.has(tabId)) await stop({ tabId });
+      if (sessions.has(tabId)) await halt({ tabId });
       const s = {
         tabId, transport: 'openai', exe: 'openai', command: String(command || '').trim(), cwd: cwd || null,
         child: null, framer: null, acp: null, sessionId: 'openai-' + Date.now().toString(36),
@@ -216,7 +240,7 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, record
     }
     const transport = transportFor(command);
     if (!transport) return { ok: false, error: `${String(command || '').split(/\s+/)[0] || 'agent'} has no chat protocol yet` };
-    if (sessions.has(tabId)) await stop({ tabId });
+    if (sessions.has(tabId)) await halt({ tabId });
 
     const env = typeof buildEnv === 'function' ? buildEnv(transport) : Object.assign({}, process.env);
     const tokens = String(command || 'claude').trim().split(/\s+/).filter(Boolean);
@@ -247,15 +271,16 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, record
       });
       s.framer = createFramer((msg) => s.acp.receive(msg), (raw) => note(`acp non-json line: ${raw.slice(0, 200)}`));
       sessions.set(tabId, s);
+      s.handshaking = true;
       wireChild(s);
       try {
         let timer = null;
         const expiry = new Promise((_, reject) => {
           timer = setTimeout(() => {
-            const err = new Error(`${exeName} did not answer the ACP handshake within ${Math.round(handshakeLimit / 1000)}s. It may not support ${transport === 'acp' ? (acpArgs(command) || []).join(' ') : 'this mode'} in this version.`);
+            const err = new Error(`${exeName} did not answer the ACP handshake within ${Math.round(limit / 1000)}s. It may not support ${(acpArgs(command) || []).join(' ')} in this version.`);
             err.code = 'HANDSHAKE_TIMEOUT';
             reject(err);
-          }, handshakeLimit);
+          }, limit);
           if (timer && timer.unref) timer.unref();
         });
         const handshake = (async () => {
@@ -265,6 +290,7 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, record
         const res = await Promise.race([handshake, expiry]);
         clearTimeout(timer);
         s.sessionId = res && res.sessionId ? String(res.sessionId) : null;
+        s.handshaking = false;
         send(tabId, normalizeAcpSession(res));
       } catch (e) {
         const detail = tailStderr(s) || (e && e.message) || 'ACP handshake failed';
@@ -272,8 +298,8 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, record
         // in ACP terms, or its own login error on stderr). The result says
         // so, and the host opens the CLI's own sign-in.
         const authy = /auth|login|sign in|credential|unauthori|not logged/i.test(detail) || (e && e.code === -32000);
-        await stop({ tabId });
-        return { ok: false, error: detail, auth: authy };
+        await halt({ tabId });
+        return failure(detail, authy, e, exeName, `an ACP answer to ${[exeName].concat(acpArgs(command) || []).join(' ')}`);
       }
       return { ok: true, transport, sessionId: s.sessionId };
     }
@@ -314,11 +340,16 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, record
       s.framer = createFramer((msg) => s.acp.receive(msg), (raw) => note(`codex non-json line: ${raw.slice(0, 200)}`));
       s.codexModel = codexModel(command);
       sessions.set(tabId, s);
+      s.handshaking = true;
       wireChild(s);
       try {
         let timer = null;
         const expiry = new Promise((_, reject) => {
-          timer = setTimeout(() => reject(new Error(`${exeName} did not answer the app-server handshake within ${Math.round(handshakeLimit / 1000)}s. It may not support app-server in this version.`)), handshakeLimit);
+          timer = setTimeout(() => {
+            const err = new Error(`${exeName} did not answer the app-server handshake within ${Math.round(limit / 1000)}s. It may not support app-server in this version.`);
+            err.code = 'HANDSHAKE_TIMEOUT';
+            reject(err);
+          }, limit);
           if (timer && timer.unref) timer.unref();
         });
         const handshake = (async () => {
@@ -336,12 +367,13 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, record
         s.codexModel = null;
         const ev = codexSession(res.thread, res.models);
         s.sessionId = ev.sessionId || null;
+        s.handshaking = false;
         send(tabId, ev);
       } catch (e) {
         const detail = (e && e.message) || tailStderr(s) || 'app-server handshake failed';
         const authy = /auth|login|sign in|credential|unauthori|not logged/i.test(detail);
-        await stop({ tabId });
-        return { ok: false, error: detail, auth: authy };
+        await halt({ tabId });
+        return failure(detail, authy, e, exeName, `an app-server answer to ${exeName} ${APP_SERVER_ARGS.join(' ')}`);
       }
       return { ok: true, transport, sessionId: s.sessionId };
     }
@@ -613,7 +645,7 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, record
       return { ok: true, transport: 'codex', model: id };
     }
     // claude takes set_model on its control channel and applies it from the
-    // next turn, with no restart (verified on claude 2.1.310).
+    // next turn; a CLI that does not answer is restarted under the model below.
     const live = await new Promise((resolve) => {
       const rid = 'sm-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
       const timer = setTimeout(() => { if (s.ctlWaiters) s.ctlWaiters.delete(rid); resolve(null); }, typeof controlTimeoutMs === 'number' ? controlTimeoutMs : 10000);
@@ -665,6 +697,13 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, record
   }
 
   async function stop({ tabId } = {}) {
+    const pending = startTokens.get(tabId);
+    startTokens.delete(tabId);
+    if (pending && pending.wake) pending.wake();
+    return halt({ tabId });
+  }
+
+  async function halt({ tabId } = {}) {
     const s = sessions.get(tabId);
     if (!s) return { ok: true };
     s.stopped = true;

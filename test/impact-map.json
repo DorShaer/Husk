@@ -419,6 +419,8 @@
         "terminal-page.spec.js",
         "status-resize.spec.js",
         "chat-handoff.spec.js",
+        "chat-compat.spec.js",
+        "handoff-terminal.spec.js",
         "usage-bell.spec.js",
         "appearance.spec.js",
         "foundation.spec.js",

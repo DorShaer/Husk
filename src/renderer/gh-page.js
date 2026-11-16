@@ -105,7 +105,7 @@
     const when = ago(row.updatedAt);
     if (when) metaBits.push(el('span', { class: 'gh-meta' }, when));
     if (state.kind === 'pulls') {
-      const checks = checksChip(row.checks);
+      const checks = state.checksUnavailable ? el('span', { class: 'gh-checks is-unavailable' }, 'checks unavailable') : checksChip(row.checks);
       if (checks) metaBits.push(checks);
       if (row.changedFiles) {
         metaBits.push(el('span', { class: 'gh-meta is-diff' }, `${row.changedFiles} file${row.changedFiles === 1 ? '' : 's'}`));
@@ -162,7 +162,7 @@
 
       const c = row.checks;
       kids.push(field('Checks', state.checksUnavailable
-        ? el('span', { class: 'gh-meta' }, 'checks unavailable for this view')
+        ? el('span', { class: 'gh-meta' }, 'Checks unavailable: GitHub did not return them in time')
         : c && c.total
           ? el('span', {}, `${c.passed} passed, ${c.failed} failed, ${c.pending} running, ${c.total} total`)
           : el('span', { class: 'gh-meta' }, 'no checks ran')));

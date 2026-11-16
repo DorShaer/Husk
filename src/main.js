@@ -37,7 +37,7 @@ const { applyMechanical, createStreamFilter } = require('./lib/rule-lint');
 const { deepFirstUserMessage } = require('./lib/session-head');
 const { listClaudeTranscripts, realPath: realSessionPath } = require('./lib/session-scan');
 const { createChatSessionRegistry } = require('./lib/chat-session-registry');
-const { transportFor: chatTransportFor, commandSessionId: chatCommandSessionId } = require('./lib/chat-transport');
+const { transportFor: chatTransportFor, commandSessionId: chatCommandSessionId, untestedVersion } = require('./lib/chat-transport');
 const { transcriptToEvents } = require('./lib/transcript-replay');
 const { createTranscriptStore, transcriptId, pruneDir, writePrivate } = require('./lib/chat-transcript-store');
 const { buildHandoff } = require('./lib/handoff');
@@ -1852,6 +1852,9 @@ const chatRuntime = createChatRuntime({
     try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('chat:exit', { tabId, code }); } catch (_) {}
   },
   appVersion: app.getVersion(),
+  // Test runs shorten the handshake wait; unset in normal use.
+  handshakeMs: Number(process.env.HUSK_HANDSHAKE_MS) || undefined,
+  retryDelayMs: process.env.HUSK_HANDSHAKE_MS ? 100 : undefined,
   contextWindow: (model, cwd, used) => resolveContextWindow(cwd || null, model, used || 0),
   log: (line) => { try { console.error(`[chat] ${line}`); } catch (_) {} },
 });
@@ -2005,6 +2008,20 @@ function dropChatShadowSession(tabId) {
   }
 }
 
+// One quiet line in the thread the first time a CLI version outside its tested range chats.
+async function noticeUntestedVersion(tabId, cmd) {
+  const out = untestedVersion(cmd, await agentVersionAsync(cmd.split(/\s+/)[0]));
+  if (!out) return;
+  const key = `${out.cli}@${out.version}`;
+  const seen = Array.isArray(config.compatNoticed) ? config.compatNoticed : [];
+  if (seen.includes(key)) return;
+  config.compatNoticed = seen.concat(key).slice(-50);
+  saveConfig(config);
+  const range = out.min === out.max ? `${out.min}.x` : `${out.min}.x to ${out.max}.x`;
+  const text = `${out.cli} ${out.version} is outside the versions Husk was tested with for ${out.feature} (${range}). Chat keeps working as long as the CLI answers.`;
+  try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('chat:event', { tabId, event: { type: 'status', text } }); } catch (_) {}
+}
+
 ipcMain.handle('chat:start', async (_e, { tabId, command, cwd, replay, handoff, connection } = {}) => {
   const selected = resolveChatConnection({ config, connection, command });
   if (!selected.ok) return selected;
@@ -2028,6 +2045,8 @@ ipcMain.handle('chat:start', async (_e, { tabId, command, cwd, replay, handoff, 
   pendingHandoffs.delete(tabId);
   dailyTabs.set(tabId, { awaitingBaseline: !!(seed && seed.length) });
   const res = await chatRuntime.start({ tabId, command: cmd, cwd: dir, claudeSessionId, keepLog: seed, openai: byokOpenai });
+  if (res && !res.ok && res.compat) res.compat.version = await agentVersionAsync(cmd.split(/\s+/)[0]);
+  if (res && res.ok && selected.connection === 'cli') noticeUntestedVersion(tabId, cmd).catch(() => {});
   if (res && res.ok) {
     res.connection = selected.connection;
     const shadow = chatShadowSession(tabId, dir, selected.connection === 'cli' && transport === 'claude' ? (res.sessionId || claudeSessionId) : null, cmd);
@@ -5336,7 +5355,8 @@ ipcMain.handle('agents:authCommand', (_e, { command, verb } = {}) => {
   return { program, command: args ? `${program} ${args.join(' ')}` : program, own: !!args };
 });
 
-ipcMain.handle('agents:detect', () => {
+ipcMain.handle('agents:detect', async () => {
+  const versions = await Promise.all(KNOWN_AGENTS.map((a) => (isOnPath(a.command) ? agentVersionAsync(a.command) : '')));
   // Probe the install tools too so the renderer can decide between Install
   // and 'Open install page'. npm and pipx are the most likely available.
   const tools = {
@@ -5345,7 +5365,8 @@ ipcMain.handle('agents:detect', () => {
     pip: isOnPath('pip') || isOnPath('pip3'),
   };
   return {
-    agents: KNOWN_AGENTS.map((a) => ({
+    agents: KNOWN_AGENTS.map((a, i) => ({
+      version: versions[i],
       id: a.id,
       label: a.label,
       command: a.command,
@@ -5624,6 +5645,19 @@ function getAgentVersion(cmd) {
   } catch (_) { v = ''; }
   _agentVersionCache[cmd] = v;
   return v;
+}
+// The same probe off the main thread, sharing the cache.
+function agentVersionAsync(cmd) {
+  if (cmd in _agentVersionCache) return Promise.resolve(_agentVersionCache[cmd]);
+  return new Promise((resolve) => {
+    const child = require('child_process').execFile(cmd, ['--version'], { timeout: 4000, encoding: 'utf8', env: buildAgentEnv() }, (err, out) => {
+      const m = !err && String(out).match(/\d+\.\d+(?:\.\d+)?/);
+      const v = err ? '' : (m ? m[0] : String(out).trim().split('\n')[0].slice(0, 40));
+      _agentVersionCache[cmd] = v;
+      resolve(v);
+    });
+    try { child.stdin.end(); } catch (_) {}
+  });
 }
 
 // Compact git summary for the status panel: branch, ahead/behind, and the

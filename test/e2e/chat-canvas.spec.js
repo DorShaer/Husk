@@ -211,6 +211,28 @@ test('a long list of PR checks scrolls to its last check in a short window', asy
   }
 });
 
+test('checks GitHub did not return in time read as unavailable, not as none', async () => {
+  const { homeDir, bin } = makeHome();
+  const pulls = JSON.parse(JSON.stringify(PULLS));
+  delete pulls[0].statusCheckRollup;
+  fs.writeFileSync(path.join(bin, 'pulls.json'), JSON.stringify(pulls));
+  fs.writeFileSync(path.join(bin, 'gh'), '#!/bin/sh\ncase "$*" in *statusCheckRollup*) echo "HTTP 504: Gateway Timeout" >&2; exit 1 ;; *"pr list"*) cat "$(dirname "$0")/pulls.json" ;; *) echo "gh version 2.60.0" ;; esac\n');
+  const { app, win } = await launch(homeDir, bin);
+  try {
+    await win.locator('#btn-canvas').click();
+    const canvas = win.locator('#chat-canvas');
+    await canvas.locator('.cc-tab[data-tab="pr"]').click();
+    await expect(canvas.locator('.cc-fields')).toContainText('Checks unavailable');
+    await expect(canvas.locator('.cc-fields')).not.toContainText('no checks ran');
+    await canvas.locator('.cc-tab[data-tab="checks"]').click();
+    await expect(canvas.locator('.cc-body')).toContainText('Checks unavailable');
+    await expect(canvas.locator('.cc-body')).not.toContainText('No checks ran');
+  } finally {
+    await app.close();
+    fs.rmSync(homeDir, { recursive: true, force: true });
+  }
+});
+
 test('Fix and Explain submit their prompt to the CLI in Terminal mode', async () => {
   const { homeDir, bin } = makeHome();
   const { app, win } = await launch(homeDir, bin);

@@ -601,3 +601,70 @@ test('only accepted user prompts reach durable recording and injected context st
   assert.strictEqual(recorded[0].event.text, 'My message');
   await rt.stop({ tabId: 'record' });
 });
+
+function retryHarness(over = {}) {
+  const spawned = [];
+  const children = [];
+  const events = [];
+  const rt = createChatRuntime({
+    spawn: (exe, args, opts) => { const c = fakeChild(); spawned.push({ exe, args, opts }); children.push(c); return c; },
+    resolveExe: (n) => '/abs/' + n, emit: (tabId, ev) => events.push(ev), emitExit: () => {}, platform: 'win32',
+    handshakeMs: 20, retryDelayMs: 5, ...over,
+  });
+  return { rt, spawned, children, events };
+}
+
+test('a silent CLI is tried once more, then fails with what Husk expected', async () => {
+  const { rt, spawned, events } = retryHarness();
+  const r = await rt.start({ tabId: 't1', command: 'copilot', cwd: '/w' });
+  assert.equal(spawned.length, 2);
+  assert.equal(r.ok, false);
+  assert.equal(r.auth, false);
+  assert.deepEqual(r.compat, { cli: 'copilot', expected: 'an ACP answer to copilot --acp', reason: 'timeout' });
+  assert.ok(events.some((e) => e.type === 'status' && /Trying once more/.test(e.text)));
+  assert.equal(rt.size(), 0);
+});
+
+test('a CLI that rejects the protocol flag fails once, with its own words and no retry', async () => {
+  const { rt, spawned, children } = retryHarness();
+  const p = rt.start({ tabId: 't1', command: 'gemini', cwd: '/w' });
+  await tick();
+  children[0].stderr.emit('data', "error: unknown option '--acp'\n");
+  children[0].emit('exit', 1, null);
+  const r = await p;
+  assert.equal(spawned.length, 1);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /unknown option '--acp'/);
+  assert.equal(r.compat.reason, 'refused');
+  assert.equal(r.compat.cli, 'gemini');
+});
+
+test('a slow CLI that answers on the retry opens the chat', async () => {
+  const { rt, spawned, children } = retryHarness();
+  const p = rt.start({ tabId: 't1', command: 'copilot', cwd: '/w' });
+  while (spawned.length < 2) await new Promise((r) => setTimeout(r, 2));
+  const c = children[1];
+  c.feed({ jsonrpc: '2.0', id: 1, result: {} });
+  await tick();
+  c.feed({ jsonrpc: '2.0', id: 2, result: { sessionId: 'S2' } });
+  const r = await p;
+  assert.deepEqual(r, { ok: true, transport: 'acp', sessionId: 'S2' });
+});
+
+test('a codex app-server that never answers is retried and fails with what Husk expected', async () => {
+  const { rt, spawned } = retryHarness();
+  const r = await rt.start({ tabId: 't1', command: 'codex', cwd: '/w' });
+  assert.equal(spawned.length, 2);
+  assert.equal(r.compat.reason, 'timeout');
+  assert.equal(r.compat.expected, 'an app-server answer to codex app-server');
+});
+
+test('a chat stopped while its start waits to retry is not started again', async () => {
+  const { rt, spawned, events } = retryHarness({ retryDelayMs: 60000 });
+  const p = rt.start({ tabId: 't1', command: 'copilot', cwd: '/w' });
+  while (!events.some((e) => e.type === 'status')) await new Promise((r) => setTimeout(r, 2));
+  await rt.stop({ tabId: 't1' });
+  const r = await p;
+  assert.equal(r.ok, false);
+  assert.equal(spawned.length, 1);
+});

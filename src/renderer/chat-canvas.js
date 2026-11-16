@@ -31,6 +31,7 @@ const st = {
   prState: 'idle',
   prMessage: '',
   prReadAt: 0,
+  checksUnavailable: false,
   check: '',
   seq: 0,
   diffSeq: 0,
@@ -148,6 +149,7 @@ async function loadPr() {
   st.prState = r.state;
   st.prMessage = r.message;
   st.prReadAt = r.readAt;
+  st.checksUnavailable = !!r.checksUnavailable;
   if (r.branch) st.branch = r.branch;
   const runs = st.pr && Array.isArray(st.pr.checkRuns) ? st.pr.checkRuns : [];
   if (!runs.some((c) => c.name === st.check)) {
@@ -300,7 +302,7 @@ function paintPr(body, foot) {
   const grid = h('div', 'cc-fields');
   grid.appendChild(field('Branches', h('span', '', `${p.head || '?'} into ${p.base || '?'}`)));
   grid.appendChild(field('Changes', h('span', '', null, document.createTextNode(`${p.changedFiles} file${p.changedFiles === 1 ? '' : 's'} `), stat(p.additions, p.deletions))));
-  grid.appendChild(field('Checks', h('span', '', c.total ? `${c.passed} passed, ${c.failed} failed, ${c.pending} running` : 'no checks ran')));
+  grid.appendChild(field('Checks', h('span', '', st.checksUnavailable ? 'Checks unavailable' : c.total ? `${c.passed} passed, ${c.failed} failed, ${c.pending} running` : 'no checks ran')));
   // An empty review decision is not an approval, and the copy says which.
   grid.appendChild(field('Review', h('span', '', p.reviewDecision ? p.reviewDecision.replace(/_/g, ' ').toLowerCase() : 'nobody has reviewed yet')));
   if (p.mergeable) grid.appendChild(field('Mergeable', h('span', '', p.mergeable.toLowerCase())));
@@ -316,6 +318,7 @@ function paintChecks(body, foot) {
   const p = st.pr;
   const runs = Array.isArray(p.checkRuns) ? p.checkRuns : [];
   body.appendChild(h('div', 'cc-crumb', `Pull request #${p.number} / Checks`));
+  if (!runs.length && st.checksUnavailable) { empty(body, 'Checks unavailable', 'GitHub did not return the checks in time. They are read again on the next refresh.'); prFoot(foot); return; }
   if (!runs.length) { empty(body, 'No checks ran', 'This pull request has no check runs to list.'); prFoot(foot); return; }
   const sel = runs.find((c) => c.name === st.check) || runs[0];
 

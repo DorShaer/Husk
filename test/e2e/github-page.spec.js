@@ -132,7 +132,8 @@ test('a degraded check response does not claim no checks ran', async () => {
   });
 
   expect(await win.evaluate(() => document.getElementById('gh-sub').textContent)).toContain('checks unavailable');
-  expect(await win.evaluate(() => document.getElementById('gh-detail').textContent)).toContain('checks unavailable for this view');
+  expect(await win.evaluate(() => document.getElementById('gh-detail').textContent)).toContain('Checks unavailable: GitHub did not return them in time');
+  await expect(win.locator('#gh-list .gh-row[data-number="20"] .gh-checks.is-unavailable')).toHaveText('checks unavailable');
   await app.close();
 });
 
