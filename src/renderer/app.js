@@ -1586,6 +1586,7 @@ window.husk.pty.onData((sessionId, d) => {
   if (nativeCardData(sessionId, d)) return;
   const tab = TABS.get(sessionId) || (!sessionId ? TABS.get(activeTabId) : null);
   if (!tab || tab.restarting) return;
+  tab.lastOutputAt = Date.now();
   if (captureResumeFailure(tab, d)) return;
   if (tab.id === activeTabId && !chatHasInput) {
     chatHasInput = true;
@@ -1893,13 +1894,27 @@ async function switchDiscussion(tab, command, cwd, carry) {
     tab.resumedSessionId = null;
     await restartChat(tab, { command, cwd, skipWelcome: true });
   } else {
+    const since = Date.now();
     await restartPty({ command, cwd, silent: true });
-    if (prepared) {
-      const paste = prepared.context + "\n\nContinue the discussion from where it stopped.";
-      setTimeout(() => { try { tab.term.paste(paste); } catch (_) {} }, 1000);
-    }
+    if (prepared) pasteHandoff(tab, prepared.context, since).catch(() => {});
   }
   noteAgentUsed(command);
+}
+
+// Pastes a carried discussion into a terminal-only CLI once it is at its
+// prompt; when it never gets there, says so and offers to paste by hand.
+async function pasteHandoff(tab, context, since) {
+  const text = context + "\n\nContinue the discussion from where it stopped.";
+  const ready = await window.HuskTerminalReady.waitForTerminalReady({ lastOutputAt: () => tab.lastOutputAt, since, gone: () => !TABS.has(tab.id) || tab.exited });
+  if (!TABS.has(tab.id)) return;
+  let pasted = false;
+  if (ready) { try { tab.term.paste(text); pasted = true; } catch (_) {} }
+  if (pasted) return;
+  toastAction('The discussion was not pasted: the CLI did not reach its prompt.', 'Paste again', () => {
+    if (!TABS.has(tab.id)) return;
+    activateTab(tab.id);
+    try { tab.term.paste(text); } catch (err) { toast(`Could not paste: ${err.message}`, 'error'); }
+  });
 }
 
 function chatIdentity(tab) {
@@ -2023,8 +2038,9 @@ async function offerSavedHandoff(session, anchor) {
     const prepared = await window.husk.chat.handoff(source);
     if (!prepared?.ok) { toast(prepared?.error || 'No discussion to continue', 'error'); return; }
     setPage('chat');
+    const since = Date.now();
     const tab = await openNewChatTab({ command: a.command, cwd: source.cwd, forceChat: true, skipWelcome: true, handoff: source });
-    if (tab && tab.mode !== 'chat') setTimeout(() => { try { tab.term.paste(prepared.context + "\n\nContinue the discussion from where it stopped."); } catch (_) {} }, 1000);
+    if (tab && tab.mode !== 'chat') pasteHandoff(tab, prepared.context, since).catch(() => {});
   } }))]);
 }
 
