@@ -1614,8 +1614,9 @@
               <button class="modal-close" id="aut-orch-close" aria-label="Close">&times;</button>
             </div>
             <div class="modal-body">
-              <p class="ai-hint">Choose a vendor and model for each kind of job, or let Husk decide. These choices are independent of the default for new chats. Changes apply to future runs.</p>
+              <p class="ai-hint">Choose a vendor for each kind of job. A routed CLI runs simple jobs on one model and complex jobs on another; a CLI that is not routed uses its own default model. These choices are independent of the default for new chats. Changes apply to future runs.</p>
               <div class="aut-model-summary"><div id="aut-model-status" class="aut-routing-status" role="status">Finding installed vendors...</div><button class="ghost-btn" id="aut-model-refresh" type="button">Refresh models</button></div>
+              <div id="aut-cli-routing" class="aut-cli-routing" aria-label="Model routing per CLI"></div>
               <div class="pref-row aut-model-row">
                 <span class="pref-row-text"><span class="pref-label">Simple tasks</span><span class="pref-desc">Mechanical work such as formatting, renames and dependency updates.</span></span>
                 <span class="aut-model-picker">

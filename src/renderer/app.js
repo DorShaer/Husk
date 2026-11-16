@@ -14980,9 +14980,113 @@ function orchInitialRouting() {
     if (route && (route.vendor === 'auto' || ORCH_VENDORS.includes(route.vendor))) {
       return [key, { vendor: route.vendor, model: route.vendor !== 'auto' && isUsableModelValue(route.model) ? route.model : '' }];
     }
-    const model = !saved && isUsableModelValue(legacy[key]) ? legacy[key] : '';
-    return [key, { vendor: model && ORCH_VENDORS.includes(legacyVendor) ? legacyVendor : 'auto', model }];
+    // A legacy table names the vendor; its models stay in that CLI's routing.
+    const legacyModel = !saved && isUsableModelValue(legacy[key]);
+    return [key, { vendor: legacyModel && ORCH_VENDORS.includes(legacyVendor) ? legacyVendor : 'auto', model: '' }];
   }));
+}
+// Per-CLI routing: Routed when both tiers name a model, otherwise the CLI's own default.
+const ORCH_DEFAULT_MODELS = { claude: { cheap: 'haiku', smart: 'opus' } };
+let orchModelDraft = {};
+let orchPicker = null;
+let orchPickerSeq = 0;
+function orchCliRouting(vendor) {
+  if (Object.prototype.hasOwnProperty.call(orchModelDraft, vendor) && orchModelDraft[vendor] === null) return null;
+  const entry = { ...(ORCH_DEFAULT_MODELS[vendor] || {}), ...(orchModelDraft[vendor] || {}) };
+  return isUsableModelValue(entry.cheap) && isUsableModelValue(entry.smart) ? entry : null;
+}
+function orchEl(tag, attrs = {}, ...kids) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'onclick') node.addEventListener('click', v);
+    else if (k === 'text') node.textContent = v;
+    else node.setAttribute(k, v);
+  }
+  node.append(...kids.filter(Boolean));
+  return node;
+}
+function renderCliPicker() {
+  const p = orchPicker;
+  const label = orchAgentLabel(p.vendor);
+  const status = orchEl('div', { class: 'aut-routing-status', role: 'status', 'data-state': p.error ? 'error' : p.loading ? 'loading' : 'ready',
+    text: p.loading ? `Reading the models ${label} lists...`
+      : p.typed ? 'Enter the exact model ids this CLI accepts.'
+      : p.error ? `${p.error} You can enter a model id instead.`
+      : `${p.live.length} models listed by ${label} just now.` });
+  const field = (tier, text) => {
+    const id = `aut-cli-pick-${tier}`;
+    let control;
+    if (p.typed) {
+      control = orchEl('input', { type: 'text', id, placeholder: 'Exact model id', autocomplete: 'off', spellcheck: 'false' });
+      control.value = p[tier];
+      control.addEventListener('input', () => { p[tier] = control.value.trim(); });
+    } else {
+      control = orchEl('select', { id }, orchEl('option', { value: '', text: p.loading ? 'Loading...' : 'Choose a model' }),
+        ...p.live.map((m) => orchEl('option', { value: m, text: p.labels[m] && p.labels[m] !== m ? `${p.labels[m]} (${m})` : m })));
+      control.value = p[tier];
+      control.disabled = p.loading || !p.live.length;
+      control.addEventListener('change', () => { p[tier] = control.value; });
+    }
+    return orchEl('label', { class: 'aut-cli-pick-field', for: id }, orchEl('span', { class: 'aut-routing-label', text }), control);
+  };
+  const toggle = orchEl('button', { type: 'button', class: 'aut-cli-link', id: 'aut-cli-pick-mode', text: p.typed ? 'Choose from the list' : 'Enter a model id',
+    onclick: () => { p.typed = !p.typed; p.cheap = ''; p.smart = ''; renderCliRouting(); } });
+  const use = orchEl('button', { type: 'button', class: 'btn-primary', id: 'aut-cli-pick-use', text: 'Use these models', onclick: () => {
+    if (!isUsableModelValue(p.cheap) || !isUsableModelValue(p.smart)) { toast('Choose a model id for both simple and complex jobs.', 'error'); return; }
+    orchModelDraft[p.vendor] = { cheap: p.cheap, smart: p.smart, seenAt: p.typed ? null : p.readAt };
+    orchPicker = null;
+    renderCliRouting();
+    bindOrchestratorConfig();
+  } });
+  const cancel = orchEl('button', { type: 'button', class: 'ghost-btn', text: 'Cancel', onclick: () => { orchPicker = null; renderCliRouting(); } });
+  return orchEl('div', { class: 'aut-cli-picker', 'data-vendor': p.vendor }, status,
+    orchEl('div', { class: 'aut-cli-pick-grid' }, field('cheap', 'Simple jobs'), field('smart', 'Complex jobs')),
+    orchEl('div', { class: 'aut-cli-pick-foot' }, toggle, orchEl('span', { class: 'aut-cli-spacer' }), cancel, use));
+}
+function renderCliRouting() {
+  const box = $('#aut-cli-routing');
+  if (!box) return;
+  box.replaceChildren();
+  for (const agent of orchAgents) {
+    const vendor = agent.command;
+    const routed = orchCliRouting(vendor);
+    const actions = routed
+      ? [orchEl('button', { type: 'button', class: 'ghost-btn', text: 'Change', onclick: () => openCliPicker(vendor) }),
+        orchEl('button', { type: 'button', class: 'ghost-btn', text: 'Stop routing', onclick: () => {
+          if (ORCH_DEFAULT_MODELS[vendor]) orchModelDraft[vendor] = null; else delete orchModelDraft[vendor];
+          renderCliRouting();
+          bindOrchestratorConfig();
+        } })]
+      : [orchEl('button', { type: 'button', class: 'ghost-btn aut-cli-setup', text: 'Set up routing', onclick: () => openCliPicker(vendor) })];
+    box.append(orchEl('div', { class: 'aut-cli-row', 'data-vendor': vendor, 'data-state': routed ? 'routed' : 'unrouted' },
+      orchEl('div', { class: 'aut-cli-text' },
+        orchEl('span', { class: 'pref-label', text: agent.label }),
+        orchEl('span', { class: 'pref-desc aut-cli-state', text: routed
+          ? `Routed. Simple jobs run on ${routed.cheap}, complex jobs on ${routed.smart}.`
+          : 'Not routed. This CLI uses its own default model for every task.' })),
+      orchEl('div', { class: 'aut-cli-actions' }, ...actions)));
+    if (orchPicker && orchPicker.vendor === vendor) box.append(renderCliPicker());
+  }
+}
+async function openCliPicker(vendor) {
+  const seq = ++orchPickerSeq;
+  const current = orchCliRouting(vendor) || {};
+  orchPicker = { vendor, seq, loading: true, live: [], labels: {}, readAt: 0, error: '', typed: false, cheap: '', smart: '' };
+  renderCliRouting();
+  document.querySelector('.aut-cli-picker')?.scrollIntoView({ block: 'nearest' });
+  let catalog;
+  try { catalog = await window.husk.models.list({ command: vendor, refresh: true }); }
+  catch (err) { catalog = { error: (err && err.message) || 'Could not read models.' }; }
+  if (!orchPicker || orchPicker.seq !== seq) return;
+  const live = (Array.isArray(catalog && catalog.live) ? catalog.live : []).filter(isUsableModelValue);
+  Object.assign(orchPicker, {
+    loading: false, live, readAt: (catalog && catalog.readAt) || Date.now(),
+    labels: Object.fromEntries(((catalog && catalog.models) || []).map((m) => [m.value, m.label || m.value])),
+    error: live.length ? '' : ((catalog && catalog.error) || 'This CLI did not list its models.'),
+    cheap: live.includes(current.cheap) ? current.cheap : '',
+    smart: live.includes(current.smart) ? current.smart : '',
+  });
+  renderCliRouting();
 }
 function orchAgentLabel(vendor) {
   return orchAgents.find((a) => a.command === vendor)?.label || vendor;
@@ -14995,27 +15099,37 @@ function orchVendorOptions(select, current, automaticLabel = 'Automatic (Husk de
   if (current !== 'auto' && !orchAgents.some((a) => a.command === current)) add(current, `${current} (not installed)`);
   select.value = current;
 }
-function fillOrchSelect(select, custom, vendor, current, status) {
+function fillOrchSelect(select, custom, vendor, current, status, tier = 'smart') {
   if (!select) return;
   const catalog = orchCatalogs.get(vendor) || {};
   const models = (catalog.models || []).filter((m) => isUsableModelValue(m.value));
+  const installed = orchAgents.some((a) => a.command === vendor);
+  const routed = vendor !== 'auto' ? orchCliRouting(vendor) : null;
+  // Model controls exist only where a model choice is real: a routed CLI, or a saved pin.
+  const showModel = vendor !== 'auto' && !!(routed || current);
   select.replaceChildren();
   const add = (value, label) => { const option = document.createElement('option'); option.value = value; option.textContent = label; select.append(option); };
-  add('', 'Automatic (Husk decides)');
+  add('', routed ? `${routed[tier]} (this CLI's routing)` : "This CLI's default model");
   for (const model of models) add(model.value, model.label || model.value);
   if (vendor !== 'auto') add('__custom__', 'Enter model id...');
   const unknown = current && !models.some((m) => m.value === current);
   select.value = unknown ? '__custom__' : current || '';
-  select.disabled = vendor === 'auto';
-  if (custom) { custom.hidden = !unknown; custom.value = unknown ? current : ''; custom.disabled = vendor === 'auto'; }
+  select.disabled = !showModel;
+  select.hidden = !showModel;
+  const label = select.id && document.querySelector(`label[for="${select.id}"]`);
+  if (label) label.hidden = !showModel;
+  if (custom) { custom.hidden = !showModel || !unknown; custom.value = unknown ? current : ''; custom.disabled = !showModel; }
+  const setup = status && status.parentElement && status.parentElement.querySelector('.aut-role-setup');
+  const notRouted = vendor !== 'auto' && installed && !showModel;
+  if (setup) { setup.hidden = !notRouted; setup.dataset.vendor = vendor; }
   if (status) {
-    const installed = orchAgents.some((a) => a.command === vendor);
-    status.textContent = vendor === 'auto' ? 'Husk chooses an installed vendor; its default model handles this job.'
+    status.textContent = vendor === 'auto' ? 'Husk picks an installed CLI; that CLI\'s routing picks the model.'
       : !installed ? 'This vendor is not installed. Choose an installed vendor or Automatic.'
+      : notRouted ? 'This CLI uses its own default model for every task.'
       : catalog.loading ? `Loading ${orchAgentLabel(vendor)} models...`
-      : catalog.error ? `${catalog.error} Automatic is still available.`
+      : catalog.error ? `${catalog.error} This CLI's routing still applies.`
       : models.length ? `${models.length} models. ${catalog.sourceLabel || ''}`
-      : 'No models loaded. Use Automatic, refresh, or enter an exact model id.';
+      : 'No models loaded. This CLI\'s routing applies, or enter an exact model id.';
     status.dataset.state = vendor !== 'auto' && (!installed || catalog.error) ? 'error' : catalog.loading ? 'loading' : 'ready';
   }
 }
@@ -15029,7 +15143,7 @@ function bindOrchestratorConfig() {
     if (!vendor) continue;
     const route = orchDraft[role.key];
     orchVendorOptions(vendor, route.vendor);
-    fillOrchSelect($(`#aut-mr-${role.id}`), $(`#aut-mr-${role.id}-custom`), route.vendor, route.model, $(`#aut-model-status-${role.id}`));
+    fillOrchSelect($(`#aut-mr-${role.id}`), $(`#aut-mr-${role.id}-custom`), route.vendor, route.model, $(`#aut-model-status-${role.id}`), role.key === 'cheap' ? 'cheap' : 'smart');
   }
   const summary = $('#aut-model-status');
   if (summary) summary.textContent = orchAgents.length ? `${orchAgents.length} vendors installed. Each role can use a different vendor.` : 'No supported vendors detected. Install a CLI to run jobs.';
@@ -15053,6 +15167,7 @@ async function loadOrchModelCatalog(refresh = false) {
     await refreshAgentMenu();
     orchAgents = detectedAgents().filter((a) => ORCH_VENDORS.includes(a.command));
   } catch (_) { orchAgents = []; }
+  if (!orchPicker) renderCliRouting();
   bindOrchestratorConfig();
   await Promise.all([...new Set(Object.values(orchDraft).map((r) => r.vendor))].map((vendor) => orchLoadVendor(vendor, refresh)));
 }
@@ -15070,9 +15185,14 @@ for (const role of ORCH_ROLES) {
     orchDraft[role.key].model = readOrchValue(select, custom);
   });
   custom?.addEventListener('input', () => { orchDraft[role.key].model = custom.value.trim(); });
+  $(`#aut-model-status-${role.id}`)?.after(orchEl('button', { type: 'button', class: 'ghost-btn aut-role-setup', id: `aut-setup-${role.id}`, hidden: '',
+    text: 'Set up routing', onclick: (e) => openCliPicker(e.currentTarget.dataset.vendor) }));
 }
 function openOrchestratorModal() {
   orchDraft = orchInitialRouting();
+  orchModelDraft = JSON.parse(JSON.stringify((cfg && cfg.modelRouting) || {}));
+  orchPicker = null;
+  renderCliRouting();
   bindOrchestratorConfig();
   $('#aut-orch-modal').hidden = false;
   loadOrchModelCatalog(false);
@@ -15091,7 +15211,7 @@ $('#aut-mr-save')?.addEventListener('click', async () => {
     if (route.vendor !== 'auto' && !orchAgents.some((a) => a.command === route.vendor)) { toast(`${orchAgentLabel(route.vendor)} is not installed. Choose another vendor or Automatic.`, 'error'); return; }
   }
   try {
-    cfg = await window.husk.config.set({ taskRouting: JSON.parse(JSON.stringify(orchDraft)) });
+    cfg = await window.husk.config.set({ taskRouting: JSON.parse(JSON.stringify(orchDraft)), modelRouting: JSON.parse(JSON.stringify(orchModelDraft)) });
     closeOrchestratorModal();
     toast('Job routing saved. Running jobs keep their original choices.', 'success');
   } catch (err) { toast(err.message || 'Could not save job routing', 'error'); }
@@ -15104,7 +15224,7 @@ async function loadAutopilotRunModels() {
   const status = $('#aut-run-model-status');
   if (!select) return;
   select.replaceChildren();
-  const option = document.createElement('option'); option.value = ''; option.textContent = vendor === 'auto' ? 'Use job routing' : 'Automatic (Husk decides)'; select.append(option);
+  const option = document.createElement('option'); option.value = ''; option.textContent = vendor === 'auto' ? 'Use job routing' : "This CLI's routing"; select.append(option);
   select.disabled = vendor === 'auto';
   if (status) status.textContent = vendor === 'auto' ? 'Simple and complex jobs use Models routing. Team planner and integrator keep their own choices.' : 'Loading models...';
   if (vendor === 'auto') return;
@@ -15116,7 +15236,7 @@ async function loadAutopilotRunModels() {
     if (!isUsableModelValue(model.value)) continue;
     const item = document.createElement('option'); item.value = model.value; item.textContent = model.label || model.value; select.append(item);
   }
-  if (status) status.textContent = catalog?.error || catalog?.sourceLabel || 'Choose a model or leave Automatic.';
+  if (status) status.textContent = catalog?.error || catalog?.sourceLabel || "Choose a model, or leave it to this CLI's routing.";
 }
 async function bindAutopilotRunRouting() {
   const select = $('#aut-run-vendor');
@@ -23716,7 +23836,7 @@ try {
         fleetStartedAt: (info && info.fleetStartedAt) || null,
         role: (info && info.role) || null, groupId: (info && info.groupId) || null,
         startedAt: Date.now(), caps: null, budget: null, feed: [],
-        model: decision && decision.model || null,
+        model: (info && info.model) || (decision && decision.model) || null,
         tier: decision && decision.tier || null,
         reason: decision && decision.reason || null,
         colorIdx, files: [], state: 'starting', nudges: 0, lastTool: null, lastToolAt: 0, quietMs: 0,

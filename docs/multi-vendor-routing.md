@@ -6,13 +6,30 @@ In Native Chat, **Move discussion** offers another installed vendor. Choose **Co
 
 ## Autopilot Models
 
-Assign a vendor and model independently to:
+Assign a vendor independently to:
 
 - **Simple tasks** and **Complex tasks**, used for solo jobs and team workers.
 - **Planner**, which splits team work.
 - **Integrator**, which combines team results.
 
-Choose a vendor to load its model catalog, or leave the vendor on **Automatic**. An Automatic model uses the selected CLI's default model. Model dropdowns load the same live lists and display names as chat, reusing an open chat's catalog when available. Codex can also list models without opening a discussion. Available catalogs come from the selected vendor; an unavailable catalog leaves Automatic usable. Existing explicit model pins are retained when migrating settings.
+### Routed and Not routed
+
+Each installed CLI is in one of two states, shown at the top of the Models panel:
+
+- **Routed**: you picked a model for simple jobs and a model for complex jobs. Simple jobs run on the first, complex jobs, planning and integration on the second.
+- **Not routed**: "This CLI uses its own default model for every task." No model controls are drawn for it; **Set up routing** opens the picker.
+
+Claude ships Routed with `haiku` for simple jobs and `opus` for complex jobs. **Stop routing** returns any CLI to its own default model.
+
+The picker reads a fresh model list from the CLI itself and offers only the ids it lists. When a CLI cannot list its models, **Enter a model id** accepts typed ids; a value that looks like status text, a file path or anything with spaces is refused.
+
+A picked id is stored with the time the CLI listed it. When a job starts, Husk reads the CLI's list again (cached for five minutes). If the id is gone, the job runs on the CLI's default model and the run log says so in one line; a stale id never fails a run. Typed ids, and ids checked while the list cannot be read, are passed through unchanged.
+
+A role row whose CLI is Routed also offers a model pin for that role alone. A pin always wins over the CLI's routing. Model dropdowns load the same live lists and display names as chat, reusing an open chat's catalog when available.
+
+### What each job ran on
+
+Every job records the vendor and model it ran on, or `<cli> (default)` when no model flag was passed. Artifacts shows it on each Autopilot run, one line per job for a team.
 
 Automatic vendor selection considers installed CLIs in this stable order: Claude, Codex, Gemini, Copilot, Kiro, Aider. Simple tasks and planning use the first installed option; complex tasks and integration use the second when available. Automatic team workers are distributed across installed vendors unless a configured assignment or planner-selected vendor applies. This is a deterministic starting policy, not a quality or price ranking.
 
