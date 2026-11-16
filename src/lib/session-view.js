@@ -295,7 +295,10 @@ function newestOf(entries) {
 
 function byProject(entries, ctx) {
   const buckets = new Map();
+  const gone = [];
   for (const e of entries) {
+    // A folder that was deleted names no project it can be grouped with.
+    if (e.s && e.s.cwdMissing) { gone.push(e); continue; }
     const cwd = sessionCwd(e.s);
     if (!buckets.has(cwd)) buckets.set(cwd, []);
     buckets.get(cwd).push(e);
@@ -320,6 +323,12 @@ function byProject(entries, ctx) {
       || a.name.localeCompare(b.name)
       || a.cwd.localeCompare(b.cwd);
   });
+  if (gone.length) {
+    groups.push({
+      id: 'p:missing', kind: 'project', cwd: '', name: 'Folder no longer exists',
+      note: '', current: false, missing: true, newest: newestOf(gone), rows: gone,
+    });
+  }
   return groups;
 }
 

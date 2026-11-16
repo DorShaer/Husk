@@ -7,6 +7,7 @@ const { withoutContext } = require('./brain');
 const HEAD_BYTES = 32768;
 // Past this size a transcript is kept as a chat without a whole-file read.
 const WHOLE_SCAN_CAP = 4 * 1024 * 1024;
+const MESSAGE_KEEP = 400;
 
 function readHead(filePath, bytes) {
   const buf = Buffer.alloc(bytes);
@@ -22,6 +23,8 @@ function authorship(fullPath, size) {
   try { text = fs.readFileSync(fullPath, 'utf8'); } catch (_) { return null; }
   const out = { human: false, sdk: false, stream: false };
   for (const line of text.split('\n')) {
+    // Only a record carrying one of these keys can set a mark.
+    if (line.indexOf('"promptSource"') === -1 && line.indexOf('"origin"') === -1) continue;
     let obj;
     try { obj = JSON.parse(line); } catch (_) { continue; }
     if (!obj || obj.type !== 'user') continue;
@@ -76,6 +79,9 @@ function scanTranscript(fullPath, size) {
       out.queueContent = withoutContext(obj.content).trim();
     }
   }
+  // Listing shows at most 220 characters of either, and the scan is persisted.
+  out.userMessage = out.userMessage.slice(0, MESSAGE_KEEP);
+  out.queueContent = out.queueContent.slice(0, MESSAGE_KEEP);
   out.receipt = headComplete && !sawAssistant;
   if (out.receipt || human || stream) return out;
   if (headComplete) { out.oneShot = sdk; return out; }
@@ -91,10 +97,12 @@ function scanTranscript(fullPath, size) {
 // Chats under projectsDir, newest file first, up to cap. `reads` returns a
 // per-file-version scratch object so an unchanged file is classified once;
 // `accept` lets the caller drop an entry before it counts toward the cap.
-function listClaudeTranscripts(projectsDir, { cap = 300, reads = () => ({}), accept = () => true } = {}) {
+// Yields between files so a caller can pace the walk; the result's `older` is
+// how many transcripts past the cap were left unread.
+function* claudeTranscripts(projectsDir, { cap = 300, reads = () => ({}), accept = () => true } = {}) {
   let projects = [];
   try { projects = fs.readdirSync(projectsDir, { withFileTypes: true }).filter((e) => e.isDirectory()); }
-  catch (_) { return []; }
+  catch (_) { return Object.assign([], { older: 0 }); }
   const candidates = [];
   for (const proj of projects) {
     const projPath = path.join(projectsDir, proj.name);
@@ -108,18 +116,45 @@ function listClaudeTranscripts(projectsDir, { cap = 300, reads = () => ({}), acc
       if (!st.isFile() || st.size === 0) continue;
       candidates.push({ id: f.slice(0, -6), project: proj.name, fullPath, st });
     }
+    yield;
   }
   candidates.sort((a, b) => b.st.mtimeMs - a.st.mtimeMs);
   const out = [];
-  for (const c of candidates) {
-    if (out.length >= cap) break;
+  let i = 0;
+  for (; i < candidates.length && out.length < cap; i++) {
+    const c = candidates[i];
     const rc = reads(c.fullPath, c.st);
-    c.scan = rc.scan || (rc.scan = scanTranscript(c.fullPath, c.st.size));
+    if (!rc.scan) { rc.scan = scanTranscript(c.fullPath, c.st.size); yield; }
+    c.scan = rc.scan;
     if (c.scan.receipt) continue;
     if (!accept(c)) continue;
     out.push(c);
   }
+  out.older = candidates.length - i;
   return out;
+}
+
+// Runs a generator to completion in one go.
+function drain(it) {
+  for (;;) { const r = it.next(); if (r.done) return r.value; }
+}
+
+// Runs a generator, handing the event loop back whenever a stretch of
+// synchronous work passes budgetMs.
+async function drainPaced(it, budgetMs = 10) {
+  let since = Date.now();
+  for (;;) {
+    const r = it.next();
+    if (r.done) return r.value;
+    if (Date.now() - since >= budgetMs) {
+      await new Promise((resolve) => setImmediate(resolve));
+      since = Date.now();
+    }
+  }
+}
+
+function listClaudeTranscripts(projectsDir, opts) {
+  return drain(claudeTranscripts(projectsDir, opts));
 }
 
 // The folder a path really names, through any links. A folder that is gone
@@ -146,4 +181,4 @@ function realPath(p) {
   return out;
 }
 
-module.exports = { HEAD_BYTES, WHOLE_SCAN_CAP, scanTranscript, listClaudeTranscripts, realPath };
+module.exports = { HEAD_BYTES, WHOLE_SCAN_CAP, scanTranscript, claudeTranscripts, listClaudeTranscripts, drain, drainPaced, realPath };
