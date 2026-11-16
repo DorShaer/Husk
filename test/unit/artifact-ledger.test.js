@@ -29,7 +29,7 @@ test('both stores land in one list with one shape', () => {
   for (const r of rows) {
     assert.deepStrictEqual(Object.keys(r).sort(), [
       'agent', 'detail', 'dollars', 'endedAt', 'failedStep', 'files', 'hasLog',
-      'id', 'key', 'ms', 'outcome', 'source', 'startedAt', 'steps', 'title',
+      'id', 'jobs', 'key', 'model', 'ms', 'outcome', 'source', 'startedAt', 'steps', 'title',
       'tokens', 'workspace',
     ]);
   }
@@ -219,4 +219,14 @@ test('summarising nothing is a zero-run summary rather than an error', () => {
   assert.strictEqual(s.runs, 0);
   assert.strictEqual(s.ms, null);
   assert.deepStrictEqual(L.summarise(null).runs, 0);
+});
+
+test('an autopilot row carries the model each job ran on', () => {
+  const solo = L._internal.autopilotRow({ sessionId: 's1', model: 'gpt-x' });
+  assert.strictEqual(solo.model, 'gpt-x');
+  assert.deepStrictEqual(solo.jobs, []);
+  const team = L._internal.autopilotRow({ sessionId: 's2', model: 'opus', members: [
+    { role: 'simple', agent: 'codex', model: 'mini' }, { isIntegrator: true, agent: 'claude', model: 'opus' },
+  ] });
+  assert.deepStrictEqual(team.jobs, [{ role: 'simple', agent: 'codex', model: 'mini' }, { role: 'integrator', agent: 'claude', model: 'opus' }]);
 });

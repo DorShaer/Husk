@@ -88,6 +88,14 @@ setInterval(() => {
     expect(integration.vendor).toBe('codex');
     expect(integration.args).toContain('integrator-pin');
     expect(integration.args).not.toContain('changed');
+    // Each job's receipt records the vendor and model it ran on, and Artifacts shows them per job.
+    const history = await win.evaluate(() => window.husk.autopilot.history({}));
+    const teamRun = history.runs.find((r) => r.memberCount === 3);
+    expect(teamRun, JSON.stringify(history.runs)).toBeTruthy();
+    const jobs = await win.evaluate((runs) => window.husk.artifacts.build([], runs), history.runs)
+      .then((rows) => rows.find((r) => r.jobs.length === 3).jobs);
+    expect(jobs.map((j) => `${j.agent}:${j.model}`).sort()).toEqual(['claude:complex-pin', 'codex:integrator-pin', 'codex:simple-pin']);
+    expect(history.runs.find((r) => r.memberCount === 1).model).toBe('simple-pin');
     expect(calls().every((c) => c.anthropicKey !== 'fixture-openai-key' && c.anthropicUrl !== 'http://127.0.0.1:1/v1')).toBe(true);
     release(integration);
   } finally {

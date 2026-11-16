@@ -15,7 +15,7 @@ test('simple and complex jobs use independent vendors and model pins', () => {
 test('run vendor/model overrides role settings; run Automatic follows role', () => {
   assert.equal(resolveTaskRoute({ config, role: 'cheap', available, requested: { vendor: 'claude', model: 'override' } }).command, 'claude --model override');
   assert.equal(resolveTaskRoute({ config, role: 'cheap', available, requested: { vendor: 'auto', model: '' } }).command, 'codex --model test-codex');
-  assert.equal(resolveTaskRoute({ config, role: 'cheap', available, requested: { vendor: 'claude', model: '' } }).command, 'claude');
+  assert.equal(resolveTaskRoute({ config, role: 'cheap', available, requested: { vendor: 'claude', model: '' } }).command, 'claude --model haiku');
 });
 test('Automatic is deterministic, uses installed vendors, and ignores new-chat default', () => {
   for (const agentCommand of ['codex', 'gemini', 'claude']) {
@@ -45,7 +45,7 @@ test('team worker role choices override planner suggestions; planner and integra
   const team = resolveCollabRoutes({ config, agents, available });
   assert.equal(team.ok, true);
   assert.deepEqual(team.workers.map((a) => a.vendor), ['codex', 'claude']);
-  assert.equal(team.planner.command, 'claude');
+  assert.equal(team.planner.command, 'claude --model opus');
   assert.equal(team.integrator.command, 'codex --model test-integrator');
   assert.ok(team.workers.every((a) => a.reason && a.route.vendor && a.model));
 });
@@ -91,4 +91,30 @@ test('explicit workflow commands preserve their arguments and paths with node mo
   assert.equal(result.ok, true);
   assert.equal(result.routes.a.command, 'codex --profile work --model replacement');
   assert.equal(result.routes.b.command, '/local/tools/claude --setting custom');
+});
+
+test('a job without a model pin follows its CLI routing, and a stale pick falls back with a notice', () => {
+  const routing = { taskRouting: { cheap: { vendor: 'codex', model: '' } }, modelRouting: { codex: { cheap: 'mini-1', smart: 'big-1', seenAt: 1 } } };
+  assert.equal(resolveTaskRoute({ config: routing, role: 'cheap', available }).command, 'codex --model mini-1');
+  const stale = resolveTaskRoute({ config: routing, role: 'cheap', available, catalogs: { codex: { live: ['mini-2'] } } });
+  assert.equal(stale.command, 'codex');
+  assert.equal(stale.model, '');
+  assert.match(stale.notice, /mini-1 is no longer in codex's model list/);
+  assert.match(stale.reason, /own default model/);
+  const unrouted = resolveTaskRoute({ config: { taskRouting: { cheap: { vendor: 'codex', model: '' } } }, role: 'cheap', available });
+  assert.equal(unrouted.command, 'codex');
+  assert.equal(unrouted.notice, '');
+});
+
+test('a legacy single-vendor routing table supplies models through the CLI routing', () => {
+  const legacy = { agentCommand: 'codex', modelRouting: { codex: { cheap: 'mini-1', smart: 'big-1', seenAt: 1 } } };
+  const r = resolveTaskRoute({ config: legacy, role: 'cheap', available, catalogs: { codex: { live: ['big-1'] } } });
+  assert.equal(r.command, 'codex');
+  assert.match(r.notice, /no longer/);
+});
+
+test('an explicit command reports the model it pins', () => {
+  assert.equal(resolveTaskRoute({ available, agentCommand: 'codex --model gpt-x' }).model, 'gpt-x');
+  assert.equal(resolveTaskRoute({ available, agentCommand: 'gemini -m=flash' }).model, 'flash');
+  assert.equal(resolveTaskRoute({ available, agentCommand: 'codex' }).model, '');
 });
