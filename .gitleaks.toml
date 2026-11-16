@@ -11,9 +11,9 @@ description = """
 Content we ship but do not author, where the default rules fire on ordinary \
 text rather than on anything secret.
 
-Earlier vendored locations of the assistant framework. Two paths are listed \
-because a history scan still reaches where this tree lived before (libs/pai, \
-and pai/ further back).
+A bundled assistant framework that Husk no longer ships. A history scan still \
+reaches the commits where it lived (pai/, libs/pai, libs/lifeos), so its \
+paths stay listed.
 
 Vendored browser bundles. Minified code trips the generic-api-key rule on \
 identifiers such as `t.FourKeyMap=t.TwoKeyMap`: high entropy, the word "Key", \
@@ -23,28 +23,9 @@ The generated apt index published to the gh-pages branch. Its `Depends:` lines \
 name real Debian packages, and `libsecret-1-0` is enough for the same rule to \
 fire.
 
-The framework's current path, libs/lifeos, is deliberately NOT excluded as a \
-tree. Doing so hid 11.5 MB from every scan, and the extraResources build step \
-copies that whole tree into resources/lifeos, so a credential vendored into it \
-later would have been invisible to the scanner and shipped in every release at \
-once. Scanning it costs 286 ms and produces exactly the four files listed \
-below, each allowed by name:
-
-  ArbolSystem.md   a curl example whose host is a placeholder subdomain
-  SecurityFilter   a fixture asserting the redactor masks API keys, so the
-                   match is test input for the code that hides such values
-  nuclei system.md prose describing a generate_jwt helper's signature
-  eightsleep.ts    the vendor's own mobile-app OAuth constants, taken from the
-                   open-source Home Assistant integration and documented as
-                   such in the file header. Not personal credentials, and
-                   rotating them is the vendor's to do.
-
-Those four patterns anchor on a /lifeos/ path segment rather than on the tree
-that contains it, so one entry covers all three layouts the same file is seen
-in: libs/lifeos/... in the repo, resources/lifeos/... in an installed app, and
-a bare lifeos/... when the resources directory itself is the scan root. Paths
-in a report are relative to the scan root, which is why anchoring on the repo
-layout alone silently stops matching the moment a package is scanned.
+Four files of that framework under a /lifeos/ path segment, each allowed by \
+name: a placeholder-host curl example, a redactor test fixture, prose about a \
+JWT helper, and a vendor's public mobile-app OAuth constants.
 
 Built .asar archives. A local working copy has dist/ in it, which is
 gitignored and so never present in CI; a scan of the working tree therefore

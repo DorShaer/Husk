@@ -70,14 +70,6 @@
     ],
     "extraResources": [
       {
-        "from": "libs/lifeos",
-        "to": "lifeos",
-        "filter": [
-          "**/*",
-          "!skills/**/Examples/**"
-        ]
-      },
-      {
         "from": "installer/prompts",
         "to": "installer/prompts",
         "filter": [

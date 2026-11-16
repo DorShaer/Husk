@@ -9,8 +9,6 @@ paths:
   - src
 
 paths-ignore:
-  - libs/lifeos
-  - libs/pai
   - src/renderer/vendor
   - node_modules
   - docs
