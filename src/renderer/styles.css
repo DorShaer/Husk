@@ -5210,6 +5210,12 @@ body .chat-pane .chat-composer textarea.chat-input:focus-visible {
   margin: 0; padding: var(--space-2) var(--space-3); max-height: 320px; overflow: auto;
   font-family: var(--font-mono); font-size: var(--fs-mono); line-height: 1.45; color: var(--text-2); white-space: pre-wrap;
 }
+/* A chat that could not start: what was found, what was expected, and the ways on. */
+.chat-compat-facts { margin: 0; padding: var(--space-2) var(--space-3); display: grid; grid-template-columns: auto 1fr; gap: 4px var(--space-3); font-size: var(--fs-label); }
+.chat-compat-facts dt { color: var(--text-3); }
+.chat-compat-facts dd { margin: 0; color: var(--text-2); font-family: var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-compat-actions { display: flex; gap: var(--space-2); padding: 0 var(--space-3) var(--space-2); }
+.chat-compat-actions button { height: 26px; padding: 0 12px; }
 .chat-allowall {
   flex: 0 0 auto; height: 22px; padding: 0 8px; border: 1px solid color-mix(in srgb, var(--amber) 55%, transparent);
   border-radius: var(--radius-pill); background: color-mix(in srgb, var(--amber) 12%, transparent);

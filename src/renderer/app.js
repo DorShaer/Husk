@@ -3267,6 +3267,52 @@ async function openNativeCommand(tab, text) {
   });
 }
 
+// A chat whose protocol did not start: what was found, what Husk expected, and
+// two ways on, trying again or the same CLI in the terminal view.
+function showCompatCard(tab, res) {
+  const list = tab && tab.chat && tab.chat.el ? tab.chat.el.querySelector('.chat-thread-inner') : null;
+  if (!list) return;
+  const k = res.compat || {};
+  const el = document.createElement('div');
+  el.className = 'chat-native-card chat-compat-card is-done';
+  const head = document.createElement('div');
+  head.className = 'chat-native-head';
+  const title = document.createElement('span');
+  title.className = 'chat-native-title';
+  title.textContent = `${k.cli || 'The CLI'} chat could not start`;
+  const pill = document.createElement('span');
+  pill.className = 'chat-pill chat-native-pill';
+  pill.dataset.state = 'error';
+  pill.textContent = k.reason === 'timeout' ? 'no answer' : 'refused';
+  head.append(title, pill);
+  const facts = document.createElement('dl');
+  facts.className = 'chat-compat-facts';
+  for (const [label, value] of [['Found', `${k.cli || ''} ${k.version || '(version unknown)'}`.trim()], ['Expected', k.expected || ''], ['Said', res.error || 'no reason given']]) {
+    const dt = document.createElement('dt');
+    dt.textContent = label;
+    const dd = document.createElement('dd');
+    dd.textContent = value;
+    facts.append(dt, dd);
+  }
+  const actions = document.createElement('div');
+  actions.className = 'chat-compat-actions';
+  const retry = document.createElement('button');
+  retry.type = 'button';
+  retry.className = 'btn-primary chat-compat-retry';
+  retry.textContent = 'Retry';
+  retry.addEventListener('click', () => { if (TABS.has(tab.id)) startChatForTab(tab); });
+  const term = document.createElement('button');
+  term.type = 'button';
+  term.className = 'ghost-btn chat-compat-terminal';
+  term.textContent = 'Open in Terminal view';
+  term.title = 'Runs the same CLI in its own interface; it does not need the chat protocol';
+  term.addEventListener('click', () => { if (TABS.has(tab.id)) setTabMode(tab, 'terminal').catch(() => {}); });
+  actions.append(retry, term);
+  el.append(head, facts, actions);
+  list.appendChild(el);
+  el.scrollIntoView({ block: 'end' });
+}
+
 // Starts this tab's headless agent with a fresh thread. Resolves true once the
 // agent took the start; tab.chatStart holds the same promise so a prompt typed
 // while it boots waits for it instead of being refused.
@@ -3305,7 +3351,8 @@ function startChatForTab(tab) {
     if (!TABS.has(tab.id) || tab.chat !== c || tab.mode !== 'chat') return false;
     c.setStarting(false);
     if (!res || !res.ok) {
-      c.apply({ type: 'error', text: `Could not start ${cli}: ${(res && res.error) || 'no reason given'}` });
+      if (res && res.compat) { c.flush(); showCompatCard(tab, res); }
+      else c.apply({ type: 'error', text: `Could not start ${cli}: ${(res && res.error) || 'no reason given'}` });
       c.setExited(true);
       tab.exited = true;
       refreshShellStatusBar();

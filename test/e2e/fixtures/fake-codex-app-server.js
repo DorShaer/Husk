@@ -17,7 +17,7 @@ if (process.argv[2] !== 'app-server') {
       try { fs.appendFileSync(process.env.HUSK_CANVAS_TERMINAL_LOG, chunk); } catch (_) {}
     });
   } else {
-    process.stdout.write('fake codex 0.0.1\n');
+    process.stdout.write('fake codex 0.168.0\n');
     process.exit(0);
   }
 }

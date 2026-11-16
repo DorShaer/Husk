@@ -67,4 +67,34 @@ function commandSessionId(agentCommand) {
   return null;
 }
 
-module.exports = { transportFor, acpArgs, userFlags, commandSessionId, SESSION_ID };
+// The version range each CLI's chat transport was tested on. For display and a
+// one-time notice only: the handshake, not the version, decides whether chat runs.
+const TESTED = {
+  claude: { feature: 'stream-json chat', min: '2.1', max: '2.1' },
+  copilot: { feature: 'ACP chat', min: '1.0', max: '1.0' },
+  gemini: { feature: 'ACP chat', min: '0.68', max: '0.68' },
+  'kiro-cli': { feature: 'ACP chat', min: '2.16', max: '2.16' },
+  codex: { feature: 'app-server chat', min: '0.167', max: '0.169' },
+};
+
+// Compares a version to a bound on the bound's own precision, so 2.1.323 is within '2.1'.
+function cmpTo(version, bound) {
+  const v = String(version).split('.').map((n) => parseInt(n, 10) || 0);
+  const b = String(bound).split('.').map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < b.length; i++) if ((v[i] || 0) !== b[i]) return (v[i] || 0) < b[i] ? -1 : 1;
+  return 0;
+}
+
+// untestedVersion returns what is outside the tested range for this CLI and
+// version, or null when it is inside, unknown or not a version.
+function untestedVersion(agentCommand, version) {
+  const t = transportFor(agentCommand);
+  const key = t === 'claude' ? 'claude' : agentBaseName(agentCommand);
+  const row = TESTED[key];
+  const v = /\d+\.\d+(?:\.\d+)?/.exec(String(version || ''));
+  if (!row || !v) return null;
+  if (cmpTo(v[0], row.min) >= 0 && cmpTo(v[0], row.max) <= 0) return null;
+  return { cli: key, version: v[0], feature: row.feature, min: row.min, max: row.max };
+}
+
+module.exports = { transportFor, acpArgs, userFlags, commandSessionId, SESSION_ID, TESTED, untestedVersion };
