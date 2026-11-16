@@ -124,28 +124,31 @@
   --term-fg: #e8ecf4;
 }
 
-/* Eclipse: a true black field with quiet surfaces, so the accent carries the light. */
+/* Eclipse: the onboarding's own look. A true black field, the dark tokens of the
+   cinematic welcome, and selection drawn as an accent outline with a glow ring. */
 [data-theme="eclipse"] {
   --bg: #000000;
-  --bg-1: rgba(255, 255, 255, 0.045);
-  --bg-2: rgba(255, 255, 255, 0.07);
-  --bg-3: rgba(255, 255, 255, 0.09);
-  --bg-4: rgba(255, 255, 255, 0.12);
-  --line: rgba(255, 255, 255, 0.07);
-  --line-2: rgba(255, 255, 255, 0.12);
-  --line-3: rgba(255, 255, 255, 0.20);
-  --text: #f5f5f7;
-  --text-2: rgba(245, 245, 247, 0.70);
-  --text-3: rgba(245, 245, 247, 0.48);
+  --bg-1: rgba(255, 255, 255, 0.055);
+  --bg-2: rgba(255, 255, 255, 0.085);
+  --bg-3: rgba(255, 255, 255, 0.10);
+  --bg-4: rgba(255, 255, 255, 0.14);
+  --line: rgba(255, 255, 255, 0.08);
+  --line-2: rgba(255, 255, 255, 0.14);
+  --line-3: rgba(255, 255, 255, 0.22);
+  --text: #f4f4f6;
+  --text-2: rgba(244, 244, 246, 0.72);
+  --text-3: rgba(244, 244, 246, 0.48);
   --rose: #ff6b7e;
   --emerald: #5bd49a;
-  --amber: #ffcc33;
+  --amber: #f6b73c;
   --info: #6fb5ff;
-  --notif-bg: #0d0d0d;
-  --bg-radial: radial-gradient(1000px circle at 50% 28%, rgba(255, 212, 0, 0.035), transparent 65%);
+  --notif-bg: #0c0a09;
+  --bg-radial: none;
   --term-bg: #000000;
-  --term-fg: #e8e8ea;
+  --term-fg: #f4f4f6;
 }
+[data-theme="eclipse"] .cs-card.is-active { background: var(--bg-1); box-shadow: 0 0 0 1px var(--accent), 0 0 0 4px var(--accent-glow); }
+[data-theme="eclipse"][data-rail="collapsed"] .rail-item.active { background: transparent; box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-glow); }
 
 /* Nord: arctic blue-grey. */
 [data-theme="nord"] {
@@ -595,11 +598,11 @@
 [data-accent="gold"] {
   --accent: #ffd400;
   --accent-2: #ffe14d;
-  --accent-3: #c9a600;
-  --accent-glow: rgba(255, 212, 0, 0.30);
+  --accent-3: #e6bf00;
+  --accent-glow: rgba(129, 140, 248, 0.32);
   --focus-ring: 0 0 0 3px var(--accent-glow);
   --grad: linear-gradient(135deg, #ffd400, #ffe14d);
-  --on-accent: #0a0a0a;
+  --on-accent: #0c0a09;
 }
 [data-accent="amber"] {
   --accent: #fbbf24;
