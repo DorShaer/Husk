@@ -1884,12 +1884,11 @@ const chatRuntime = createChatRuntime({
 });
 
 // The agent's own words are repaired before anything else sees them: no model,
-// no tokens. Em dashes are always stripped; enforced Brain rules apply on top.
+// no tokens. Only the user's enforced Brain rules apply.
 // Each tab streams through one filter that holds back a tail a match could
 // still grow into, released when the block or the turn ends.
-const ALWAYS_ENFORCED = [{ check: { builtin: 'no-em-dash' } }];
 const ruleFilters = new Map(); // tabId -> { kind, f, at }
-const enforcedRules = (tabId) => ALWAYS_ENFORCED.concat(brain.mechanicalRules({ scope: brainScope(tabId) }));
+const enforcedRules = (tabId) => brain.mechanicalRules({ scope: brainScope(tabId) });
 function flushRules(tabId, rules, drop) {
   const cur = ruleFilters.get(tabId);
   if (!cur) return null;
@@ -1902,8 +1901,10 @@ function enforceRules(tabId, event) {
     const t = event && event.type;
     const streaming = (t === 'text' || t === 'thought') && typeof event.text === 'string';
     const rules = enforcedRules(tabId);
-    const out = [];
     const cur = ruleFilters.get(tabId);
+    // No enforced rules and nothing held back: the reply passes untouched.
+    if (!rules.length && !cur) return [event];
+    const out = [];
     if (cur && !(streaming && cur.kind === t)) {
       // A final message replaces the streamed block, held tail included.
       const rest = flushRules(tabId, rules, t === 'text_final' && cur.kind === 'text');
