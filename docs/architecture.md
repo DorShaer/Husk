@@ -61,8 +61,6 @@ husk/
 │       ├── styles.css
 │       ├── assets/            App-time assets (logo)
 │       └── vendor/            Bundled xterm.js + addons
-├── libs/
-│   └── lifeos/                Bundled LifeOS framework, third-party
 ├── installer/                 Source installers and packaging assets
 │   ├── install.sh             Source install, Linux / macOS
 │   ├── install.ps1            Source install, Windows
@@ -71,8 +69,7 @@ husk/
 │   ├── index.html             The dorshaer.github.io/Husk landing page
 │   ├── after-install.sh       deb / rpm post-install
 │   ├── after-remove.sh        deb / rpm post-remove
-│   ├── prompts/               Curated default Husk prompts (seed -> ~/.config/husk/prompts/)
-│   └── lib/                   verify.sh / verify.ps1 download-and-verify helpers
+│   └── prompts/               Curated default Husk prompts (seed -> ~/.config/husk/prompts/)
 ├── scripts/                   Installers served over the network, plus the dev launcher
 │   ├── install.sh             The Linux / macOS one-liner
 │   ├── install.ps1            The Windows one-liner
@@ -210,7 +207,7 @@ Session history comes from each CLI's own local logs. For example, Claude stores
 
 Artifact names follow `husk-v${version}-${os}-${arch}.${ext}` (configured under `build.{linux,mac,win}.artifactName` in `package.json`), so a release directory looks like `husk-v<version>-linux-x86_64.AppImage`, `husk-v<version>-mac-arm64.dmg`, `husk-v<version>-win-x64.exe`, etc.
 
-`libs/pai/` and `installer/` are shipped as `extraResources`, not inside the asar, so the main process can copy from `process.resourcesPath/pai/` and `process.resourcesPath/installer/prompts/` into `~/.claude/` and `~/.config/husk/prompts/` on first launch (`bootstrapPaiIfNeeded` and `bootstrapHuskPromptsIfNeeded` in `src/main.js`).
+`installer/` is shipped as `extraResources`, not inside the asar, so the main process can copy from `process.resourcesPath/installer/prompts/` into `~/.config/husk/prompts/` on first launch (`bootstrapHuskPromptsIfNeeded` in `src/main.js`).
 
 The release workflow in `.github/workflows/release.yml` builds for all three OSes on `git tag v*` push, then:
 - generates a `SHA256SUMS` over the release directory,

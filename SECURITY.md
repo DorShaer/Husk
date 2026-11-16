@@ -61,8 +61,8 @@ Out of scope:
 **Voice subsystem**
 - Piper (Linux and Windows) and `say` (macOS) are spawned with `spawn()` and an argv array, not `exec()` with a shell string, so user-supplied text reaches the binary as a discrete argv entry and never through a shell.
 
-**Installer dependency pinning**
-- `install.sh` and `install.ps1` fetch any third-party installer (for example the bun script) to a temp file and verify its SHA-256 against a constant pinned in the script before executing. The helpers live in `installer/lib/verify.sh` and `installer/lib/verify.ps1`. The pinning policy and how to refresh a pin are documented at the top of those files.
+**Installer scope**
+- `install.sh` and `install.ps1` install Husk's own npm dependencies and register the app. They do not download or run any third-party installer script.
 
 **Release artifact integrity**
 - Every GitHub Release ships a `SHA256SUMS` file covering every binary in the release.

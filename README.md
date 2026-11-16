@@ -139,7 +139,7 @@ Prefer to grab an installer by hand? Pull the latest for your OS from the [relea
 | macOS | `husk-v<version>-mac-arm64.dmg` (Apple Silicon) or `husk-v<version>-mac-x64.dmg` (Intel); drag to Applications |
 | Windows | `husk-v<version>-win-x64.exe` (NSIS installer) |
 
-No Node, no npm, no `git clone`. Husk bundles its own Electron runtime and copies the agent reasoning layer into `~/.claude/` on first launch.
+No Node, no npm, no `git clone`. Husk bundles its own Electron runtime.
 
 > **macOS first launch (unsigned builds).** The .dmg ships unsigned today. Drag Husk to Applications, try to open it, click **Cancel** on the Gatekeeper prompt, then open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**. A second prompt confirms and Husk launches normally from then on. Faster path if you live in the terminal: `xattr -dr com.apple.quarantine /Applications/Husk.app`. Apple Developer ID signing is on the roadmap.
 
@@ -165,7 +165,7 @@ cd husk
 ./installer/install.sh
 ```
 
-`install.sh` runs `npm install`, rebuilds `node-pty` for Electron's Node ABI, registers Husk with your OS (`.desktop` on Linux, `.app` bundle in `~/Applications` on macOS), and bootstraps LifeOS into `~/.claude/`.
+`install.sh` runs `npm install`, rebuilds `node-pty` for Electron's Node ABI, registers Husk with your OS (`.desktop` on Linux, `.app` bundle in `~/Applications` on macOS).
 
 For pure dev mode without system registration:
 
@@ -250,10 +250,6 @@ husk/
 │       ├── styles.css
 │       ├── assets/
 │       └── vendor/            Bundled xterm.js + addons
-├── installer/                 OS install assets + verify helpers
-│   └── lib/                   Download-and-verify (verify.sh, verify.ps1)
-├── libs/
-│   └── lifeos/                Bundled LifeOS framework, third-party
 ├── test/                      Unit tests (node:test) + Electron smoke
 │   ├── unit/                  node:test unit suite (500+ tests)
 │   └── e2e/                   Playwright smoke (real Electron boot)
@@ -289,29 +285,23 @@ husk/
 - `src/lib/` holds the pure helpers: shell-quote, path-confine, pty-spawn, user-path, agent-md, workflow-graph, the `mcp/` per-agent adapters, the `autonomy/` Autopilot safety modules, and about twenty more (see `docs/architecture.md`). Each is small, with no Electron / fs / spawn coupling, and unit-tested. New IPC handler logic should land here.
 - `src/preload.js` exposes a narrow `window.husk` API to the renderer through `contextBridge`. The renderer never gets Node access.
 - `src/renderer/` is the renderer: a single-page Electron view with rail navigation, the native chat thread (`chat-ui.js`, `chat-md.js`) beside an embedded xterm, a status panel, and the Chat / Terminal / Agents / Workflows / Autopilot / Projects / Prompts / Skills / MCP / Plugins / Source / Files / Schedule / Artifacts / GitHub / Sessions surfaces plus Preferences.
-- `libs/lifeos/` is the bundled LifeOS framework, copied into `~/.claude/` on first install. It contains the system prompt, Algorithm phase machine, agents, commands, hooks, the identity scaffold and curated skills. Husk exposes enabled skills through the shared Agent Skills library. An install that already has the older `~/.claude/PAI/` layout is left alone rather than given a second framework beside it.
-- `installer/` holds OS install assets and the SHA-256 download verifier (`verify.sh`, `verify.ps1`).
 - `installer/` holds the source installers (`install.sh`, `install.ps1`, `uninstall.sh`) alongside the packaging assets they use. `scripts/` holds the published one-line installers and the dev launcher (`run.sh`). The repo root stays free of loose scripts.
 
 ### Updating what we vendor
 
 ```bash
-./scripts/update-vendor.sh            # framework + dependencies, every gate
+./scripts/update-vendor.sh            # dependencies, every gate
 ./scripts/update-vendor.sh --fast     # skip the package build and the e2e run
 ./scripts/update-vendor.sh --commit   # commit once everything passes
 ```
 
-Refreshes `libs/lifeos/` from the latest upstream release and the npm tree
-within the ranges `package.json` already allows, then refuses to leave anything
+Refreshes the npm tree within the ranges `package.json` already allows, then refuses to leave anything
 staged unless it passes:
 
-- **Privacy.** The whole vendored tree, plus every line the run added elsewhere,
-  is searched for identifiers belonging to the machine running it: home
-  directory, username, hostname, git name and email. Those are read from the
-  environment at run time and never written to a file, because hard-coding them
-  is the thing being guarded against. The framework is always taken from the
-  published release tarball, never from a local `~/.claude`, which is where a
-  maintainer's own notes and answered templates live.
+- **Privacy.** Every line the run added is searched for identifiers belonging
+  to the machine running it: home directory, username, hostname, git name and
+  email. Those are read from the environment at run time and never written to a
+  file, because hard-coding them is the thing being guarded against.
 - **Secrets and CVEs.** gitleaks over full history and trivy over the manifests,
   both pinned to the versions CI uses so a local pass means a CI pass.
 - **Package size.** Builds the `.deb` and fails below the 100 MiB ceiling that
@@ -319,10 +309,6 @@ staged unless it passes:
 - **Tests.** Unit always, end-to-end unless `--fast`.
 
 A failing gate restores the working tree, so a bad run leaves nothing behind.
-Local corrections to vendored files (a dependency range moved off an
-unpatchable version, say) live in `VENDOR_FIXUPS` inside the script and are
-re-applied after each refresh, since re-vendoring would otherwise revert them
-silently.
 
 ### Testing
 
@@ -368,8 +354,6 @@ Husk stores your data on your machine. No telemetry. No analytics. Network reque
 Husk is source-available under the [Elastic License 2.0](LICENSE). You can use it, read it and change it, at home or at work, for free. You may not offer it to others as a hosted service, remove or bypass any license-key gate, or strip the notices. Releases before 2.13.0 were published under the MIT License and stay available under it.
 
 ## Credits
-
-Husk's reasoning, thinking format, and Algorithm phase machine come from [LifeOS](https://github.com/danielmiessler/LifeOS) (formerly PAI) and Telos by **Daniel Miessler**. If you find Husk useful go show him some love.
 
 The terminal embedding uses [`xterm.js`](https://github.com/xtermjs/xterm.js) plus [`node-pty`](https://github.com/microsoft/node-pty). On Linux the PTY is established through `script(1)` so `claude --resume` gets its controlling terminal. Voice is via [Piper TTS](https://github.com/rhasspy/piper). The workflow editor uses [Drawflow](https://github.com/jerosoler/Drawflow).
 

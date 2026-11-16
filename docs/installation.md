@@ -86,7 +86,7 @@ Full step-by-step guide, including building your own packages and troubleshootin
 ```bash
 git clone https://github.com/DorShaer/Husk.git husk
 cd husk
-./installer/install.sh   # registers Husk with the OS and bootstraps LifeOS into ~/.claude/
+./installer/install.sh   # registers Husk with the OS
 # or
 ./scripts/run.sh         # dev mode, no system registration
 ```
@@ -94,11 +94,9 @@ cd husk
 `install.sh` detects the platform with `uname` and runs the right registration model:
 - Linux: wrapper at `~/.local/bin/husk`, a `.desktop` entry, a hicolor PNG icon, and an optional GNOME favorites pin.
 - macOS: wrapper at `~/.local/bin/husk` plus a real `~/Applications/Husk.app` bundle (with `.icns` generated from the source PNG when `iconutil` and `sips` are present).
-- Windows: `install.sh` does not run on Windows; use `install.ps1` (PowerShell source install, same SHA-256-pinned dependency fetching) or the packaged `.exe`.
+- Windows: `install.sh` does not run on Windows; use `install.ps1` (PowerShell source install) or the packaged `.exe`.
 
 Both Linux and macOS source installs run `npm install` and `npm run rebuild` (electron-rebuild against Electron's Node ABI) on the first install.
-
-Any third-party script the installer fetches (currently just the bun installer) is downloaded to a temp file and SHA-256-verified against a pin in `install.sh` before it runs. See `installer/lib/verify.sh` and `installer/lib/verify.ps1` for the pinning policy and how to refresh a pin.
 
 ## Uninstall
 
