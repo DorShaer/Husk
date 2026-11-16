@@ -3794,12 +3794,11 @@ async function csLoad() {
   return cs.loading;
 }
 
-// On a cold boot the newest past session comes back in Chat view with its
-// history, the same path a Sessions card takes. Returns false when there is
-// nothing to resume or Chat cannot carry it, and the caller opens a fresh chat.
-// config.resumeLastOnLaunch: false turns it off.
+// Launch opens a fresh chat. With config.resumeLastOnLaunch: true the newest past
+// session comes back in Chat view instead, the same path a Sessions card takes.
+// Returns false when it is off, there is nothing to resume, or Chat cannot carry it.
 async function resumeLastSessionOnBoot() {
-  if (cfg && cfg.resumeLastOnLaunch === false) return false;
+  if (!cfg || cfg.resumeLastOnLaunch !== true) return false;
   if (preferredTabMode() !== 'chat') return false;
   let r = null;
   try { r = await sessionsFetch(); } catch (_) { return false; }
