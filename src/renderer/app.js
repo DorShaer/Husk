@@ -21088,8 +21088,7 @@ async function boot() {
   const reattached = await reattachSessions();
   const landInChat = !reloadState || !reloadState.page || reloadState.page === 'chat';
   if (!reattached && landInChat) {
-    // Pick up where the last conversation left off rather than opening an empty
-    // chat. + New in the Sessions column starts a fresh one.
+    // A cold launch opens a fresh chat unless resuming the last session is turned on.
     let resumed = false;
     try { resumed = await resumeLastSessionOnBoot(); } catch (_) { resumed = false; }
     if (!resumed) await startPty();
