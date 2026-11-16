@@ -36,7 +36,10 @@ const ALLOW_ALL = 'allow-all';
 // of leaving the tab on "Starting" forever.
 const HANDSHAKE_MS = 20000;
 
-function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, recordPrompt, appVersion, platform, comSpec, log, handshakeMs, controlTimeoutMs } = {}) {
+function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, recordPrompt, appVersion, platform, comSpec, log, handshakeMs, controlTimeoutMs, contextWindow } = {}) {
+  // Resolve a model's context-window size for the composer meter. Injected by the
+  // host, which owns the model table; without it the claude chip stays hidden.
+  const windowFor = typeof contextWindow === 'function' ? contextWindow : () => null;
   if (typeof spawn !== 'function') throw new TypeError('spawn is required');
   const sessions = new Map();
   const isWin = (platform || process.platform) === 'win32';
@@ -381,6 +384,19 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, record
           : [];
         s.permInputs.set(String(ev.request_id), { input: r.input || {}, suggestions });
       }
+      // Claude never reports a context-window size, unlike codex. Derive the
+      // composer meter from each assistant message's own usage: one model call,
+      // so prompt + cache is the live occupancy, always within the window. The
+      // result event is skipped on purpose; its usage is the turn total summed
+      // across every internal tool-use call, which overshoots the window. Same
+      // used = prompt + cache figure the status panel reads from the transcript.
+      if (ev && ev.message && typeof ev.message.model === 'string' && ev.message.model && ev.message.model !== '<synthetic>') s.model = ev.message.model;
+      const cu = ev && ev.message && ev.message.usage;
+      if (cu) {
+        const used = (cu.input_tokens || 0) + (cu.cache_creation_input_tokens || 0) + (cu.cache_read_input_tokens || 0);
+        const size = used > 0 ? (windowFor(s.model || '', s.cwd, used) || 0) : 0;
+        if (used > 0 && size > 0) send(tabId, { type: 'usage', used, size });
+      }
       const events = normalizeClaudeEvent(ev);
       for (const ne of events) {
         if (ne.type === 'session' && ne.sessionId) {
@@ -397,7 +413,19 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, record
           }
         }
       }
-      for (const ne of events) { if (ne && ne.type === 'permission') offer(s, tabId, ne); else send(tabId, ne); }
+      // The CLI reports an API failure twice: as a synthetic assistant message and
+      // again as the failed result. Hold synthetic text until the turn ends and
+      // drop it when the failure carries the same words.
+      const synthetic = ev && ev.type === 'assistant' && ev.message && ev.message.model === '<synthetic>';
+      for (const ne of events) {
+        if (synthetic && ne && ne.type === 'text_final') { (s.heldSynthetic = s.heldSynthetic || []).push(ne); continue; }
+        if (ne && ne.type === 'turn_end' && s.heldSynthetic) {
+          const failure = ne.isError && ne.text ? ne.text.trim() : '';
+          for (const held of s.heldSynthetic) if (!failure || held.text.trim() !== failure) send(tabId, held);
+          s.heldSynthetic = null;
+        }
+        if (ne && ne.type === 'permission') offer(s, tabId, ne); else send(tabId, ne);
+      }
     }, (raw) => note(`claude non-json line: ${raw.slice(0, 200)}`));
     sessions.set(tabId, s);
     wireChild(s);

@@ -33,6 +33,7 @@ const { isLive: agentIsLive } = require('./lib/agent-state');
 const { createChatRuntime } = require('./lib/chat-runtime');
 const UsageMonitor = require('./lib/usage-monitor');
 const { createBrain, FILE_MAX_BYTES: BRAIN_FILE_MAX_BYTES, withoutContext: withoutBrainContext } = require('./lib/brain');
+const { applyMechanical, BUILTINS } = require('./lib/rule-lint');
 const { deepFirstUserMessage } = require('./lib/session-head');
 const { listClaudeTranscripts, realPath: realSessionPath } = require('./lib/session-scan');
 const { createChatSessionRegistry } = require('./lib/chat-session-registry');
@@ -44,6 +45,7 @@ const { issueUrl } = require('./lib/feedback-url');
 const { sanitizeZoom } = require('./lib/ui-zoom');
 const themes = require('./lib/themes');
 const bgImage = require('./lib/background-image');
+const { isOfficeDoc, extractDocText } = require('./lib/doc-extract');
 const Subagents = require('./lib/subagents');
 const StatuslineTrust = require('./lib/statusline-trust');
 const { parseAgentMd } = require('./lib/agent-md');
@@ -156,6 +158,7 @@ const COPILOT_DIR = process.env.COPILOT_HOME || path.join(HOME, '.copilot');
 const CONFIG_DIR = path.join(HOME, '.config', 'husk');
 const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
 const BACKGROUNDS_DIR = path.join(CONFIG_DIR, 'backgrounds');
+const BRAIN_MEDIA_DIR = path.join(CONFIG_DIR, 'brain-media');
 const HUSK_PROMPTS_DIR = path.join(CONFIG_DIR, 'prompts');
 const SHARED_SKILLS_DIR = path.join(HOME, '.agents', 'skills');
 const DISABLED_SHARED_SKILLS_DIR = path.join(CONFIG_DIR, 'skills-disabled');
@@ -1381,38 +1384,7 @@ function readClaudeSettings() {
   } catch (_) { return null; }
 }
 
-// Base context-window capacity (tokens) per model family, across the agents
-// Husk can launch (claude, copilot, codex, gemini). The id is matched with its
-// tier suffix already stripped, and null for an unknown family. Claude models
-// report their 200K default tier here; the 1M tier is a "[1m]" suffix handled by
-// resolveContextWindow. Sources verified 2026-06: Anthropic models reference
-// (Opus/Sonnet/Haiku 200K default, 1M tier); OpenAI Codex docs (GPT-5.x-Codex
-// 400K product cap, GPT-4.1 1M, GPT-4o 128K, o-series 200K); Google Gemini docs
-// (Gemini 2.x/3 = 1M); GitHub Copilot CLI docs (128K default, 1M extended).
-const MODEL_CONTEXT_WINDOWS = [
-  // Anthropic / Claude Opus: 1M context window (the Opus tier ships with the
-  // long-context window, so it is the base here, not an opt-in [1m] tier).
-  [/^claude-opus/, 1000000],
-  // Anthropic / Claude: 200K default; 1M only when the [1m] tier is selected.
-  [/^claude-/, 200000],
-  // OpenAI / Codex CLI.
-  [/^gpt-5.*codex/, 400000],
-  [/^gpt-5/, 400000],
-  [/^gpt-4\.1/, 1000000],
-  [/^gpt-4o/, 128000],
-  [/^gpt-4/, 128000],
-  [/^o[1-9]/, 200000],          // o1 / o3 / o4 reasoning models
-  [/codex/, 192000],
-  // Google / Gemini CLI.
-  [/^gemini-/, 1000000],
-  // GitHub Copilot CLI: default tier (extended 1M is opt-in per request).
-  [/copilot/, 128000],
-];
-function baseContextWindow(model) {
-  const m = String(model || '').toLowerCase();
-  for (const [re, size] of MODEL_CONTEXT_WINDOWS) if (re.test(m)) return size;
-  return null;
-}
+const { baseContextWindow, fitWindow } = require('./lib/context-window');
 
 // Resolve the live context-window size for the active model. The transcript
 // records only the bare model id (e.g. "claude-opus-4-8"); the 1M tier is a
@@ -1461,7 +1433,7 @@ function resolveContextWindow(cwd, model, ctxTokens) {
     }
     // Known model family → its base context window.
     const base = baseContextWindow(bare);
-    if (base) return base;
+    if (base) return fitWindow(base, ctxTokens);
   } catch (_) {}
   // Unknown model: anything past the 200K base must be a 1M window.
   return ctxTokens > 200000 ? 1000000 : 200000;
@@ -1872,6 +1844,16 @@ const chatRuntime = createChatRuntime({
   resolveExe: resolveAgentExe,
   recordPrompt: (tabId, event) => { const t = chatTranscripts.get(tabId); if (t) transcriptStore.append(t.id, event); },
   emit: (tabId, event) => {
+    // The agent's own words are repaired here, before anything else sees them.
+    // No model, no tokens. Em dashes are always stripped, so no rule is needed to
+    // keep them off the screen; any extra mechanical Brain rules apply on top.
+    try {
+      if (event && (event.type === 'text' || event.type === 'text_final' || event.type === 'thought') && typeof event.text === 'string') {
+        event.text = BUILTINS['no-em-dash'].fix(event.text);
+        const mech = brain.mechanicalRules({ scope: brainScope(tabId) });
+        if (mech.length) event.text = applyMechanical(event.text, mech);
+      }
+    } catch (_) {}
     try { if (event && event.type === 'session' && event.sessionId) chatSessionRegistry.add(event.sessionId); } catch (_) {}
     try { brainObserve(tabId, event); } catch (_) {}
     try { const t = chatTranscripts.get(tabId); if (t) transcriptStore.append(t.id, event); } catch (_) {}
@@ -1885,6 +1867,7 @@ const chatRuntime = createChatRuntime({
     try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('chat:exit', { tabId, code }); } catch (_) {}
   },
   appVersion: app.getVersion(),
+  contextWindow: (model, cwd, used) => resolveContextWindow(cwd || null, model, used || 0),
   log: (line) => { try { console.error(`[chat] ${line}`); } catch (_) {} },
 });
 
@@ -2201,7 +2184,14 @@ ipcMain.handle('background:setDisplay', (_e, { dim, blur } = {}) => {
 
 // Answers husk-bg requests with a stored image and nothing else.
 function serveBackground(request) {
-  const file = request.method === 'GET' ? bgImage.storedPathForUrl(BACKGROUNDS_DIR, request.url) : null;
+  // The same scheme serves two content-addressed stores: the chat background and
+  // Brain images. Both name files by hash. storedPathForUrl only validates the
+  // name, not that the file is present, so the dir that actually holds it is the
+  // one whose candidate path exists.
+  const candidates = request.method === 'GET'
+    ? [BACKGROUNDS_DIR, BRAIN_MEDIA_DIR].map((d) => bgImage.storedPathForUrl(d, request.url)).filter(Boolean)
+    : [];
+  const file = candidates.find((p) => { try { return fs.statSync(p).isFile(); } catch (_) { return false; } });
   if (!file) return new Response(null, { status: 404 });
   try {
     return new Response(bgImage.readRegularFile(file), {
@@ -2343,21 +2333,33 @@ ipcMain.handle('brain:addFiles', async (_e, { global } = {}) => {
     const name = path.basename(p);
     try {
       let content;
-      const fd = fs.openSync(p, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0));
-      try {
-        const st = fs.fstatSync(fd);
+      // PDF and office documents are binary; their text is extracted first.
+      // Everything else is read as UTF-8 and rejected later if it is binary.
+      if (isOfficeDoc(p)) {
+        let st;
+        try { st = fs.statSync(p); } catch (_) { failed.push({ name, error: 'could not open that file' }); continue; }
         if (!st.isFile()) { failed.push({ name, error: 'choose a regular file to learn from' }); continue; }
         if (st.size > BRAIN_FILE_MAX_BYTES) { failed.push({ name, error: 'that file is too large to learn from' }); continue; }
-        const buf = Buffer.alloc(BRAIN_FILE_MAX_BYTES + 1);
-        let total = 0;
-        while (total < buf.length) {
-          const n = fs.readSync(fd, buf, total, buf.length - total, total);
-          if (!n) break;
-          total += n;
-        }
-        if (total > BRAIN_FILE_MAX_BYTES) { failed.push({ name, error: 'that file is too large to learn from' }); continue; }
-        content = buf.subarray(0, total).toString('utf8');
-      } finally { fs.closeSync(fd); }
+        try { content = await extractDocText(p); }
+        catch (_) { failed.push({ name, error: 'could not read text from that document' }); continue; }
+        if (!content) { failed.push({ name, error: 'no readable text in that document' }); continue; }
+      } else {
+        const fd = fs.openSync(p, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0));
+        try {
+          const st = fs.fstatSync(fd);
+          if (!st.isFile()) { failed.push({ name, error: 'choose a regular file to learn from' }); continue; }
+          if (st.size > BRAIN_FILE_MAX_BYTES) { failed.push({ name, error: 'that file is too large to learn from' }); continue; }
+          const buf = Buffer.alloc(BRAIN_FILE_MAX_BYTES + 1);
+          let total = 0;
+          while (total < buf.length) {
+            const n = fs.readSync(fd, buf, total, buf.length - total, total);
+            if (!n) break;
+            total += n;
+          }
+          if (total > BRAIN_FILE_MAX_BYTES) { failed.push({ name, error: 'that file is too large to learn from' }); continue; }
+          content = buf.subarray(0, total).toString('utf8');
+        } finally { fs.closeSync(fd); }
+      }
       const r = brain.addFile({ path: p, content, scope });
       if (r.ok) added.push({ id: r.node.id, name, chunks: r.chunks });
       else failed.push({ name, error: r.error });
@@ -2365,6 +2367,25 @@ ipcMain.handle('brain:addFiles', async (_e, { global } = {}) => {
   }
   if (added.length) brainActivity('learn', added.map((a) => a.id));
   return { ok: true, added, failed };
+});
+ipcMain.handle('brain:addImage', async (_e, { global, caption } = {}) => {
+  const picked = await dialog.showOpenDialog(mainWindow, {
+    title: 'Teach the Brain from an image',
+    properties: ['openFile'],
+    filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg'] }],
+  });
+  if (picked.canceled || !picked.filePaths.length) return { ok: true, canceled: true };
+  const p = picked.filePaths[0];
+  const name = path.basename(p);
+  const scope = global ? '' : chatCwd(null);
+  try {
+    const bytes = bgImage.readRegularFile(p);
+    const ref = bgImage.storeImage(BRAIN_MEDIA_DIR, bytes);
+    const r = brain.addImage({ name, caption, ref, scope });
+    if (!r.ok) return { ok: false, error: r.error };
+    brainActivity('learn', [r.node.id]);
+    return { ok: true, id: r.node.id, name };
+  } catch (err) { return { ok: false, error: err.message || 'that image could not be used' }; }
 });
 ipcMain.handle('brain:remove', (_e, { id } = {}) => brain.remove(id));
 ipcMain.handle('brain:pin', (_e, { id, pinned } = {}) => brain.setPinned(id, pinned));

@@ -481,6 +481,37 @@
   --term-light: 1;
 }
 
+/* Glass: the material pushed to its limit. A cool graphite ground lit by vivid
+   blue, violet, teal and rose pools, brighter and more translucent surfaces, and
+   a stronger specular lip so every pane refracts the colour behind it. The chrome
+   blur is deepened in the GLASS OVERRIDES block, scoped to this theme. */
+[data-theme="glass"] {
+  --bg: #0a0e16;
+  --bg-1: rgba(255, 255, 255, 0.07);
+  --bg-2: rgba(255, 255, 255, 0.11);
+  --bg-3: rgba(255, 255, 255, 0.15);
+  --bg-4: rgba(255, 255, 255, 0.20);
+  --line:   rgba(255, 255, 255, 0.12);
+  --line-2: rgba(255, 255, 255, 0.20);
+  --line-3: rgba(255, 255, 255, 0.30);
+  --text: #f2f5fb;
+  --text-2: rgba(242, 245, 251, 0.74);
+  --text-3: rgba(242, 245, 251, 0.50);
+  --rose:    #ff7a9c;
+  --emerald: #4fe0b0;
+  --amber:   #ffd166;
+  --info:    #7ab5ff;
+  --notif-bg: #121826;
+  --bg-radial: radial-gradient(900px circle at 10% 0%, rgba(99, 140, 255, 0.11), transparent 62%),
+    radial-gradient(760px circle at 92% 10%, rgba(168, 120, 255, 0.10), transparent 58%),
+    radial-gradient(820px circle at 72% 96%, rgba(60, 214, 200, 0.09), transparent 62%),
+    radial-gradient(900px circle at 30% 88%, rgba(255, 120, 170, 0.055), transparent 64%);
+  --term-bg: #0a0e16;
+  --term-fg: #e8ecf6;
+  --hl-top: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  --hl-top-strong: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
 /* Accent palettes. Orange is the default. */
 :root,
 [data-accent="orange"] {
@@ -7775,7 +7806,7 @@ body[data-mode="light"] .sx {
   display: grid;
   grid-template-columns: var(--sx-roster-w) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
-  background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);   /* --bg-1 is translucent in 8 of 10 themes */
+  background: linear-gradient(var(--bg-1), var(--bg-1)), var(--bg);   /* --bg-1 is translucent in most themes */
   border: 1px solid var(--line);
   border-radius: var(--radius-xl);
   overflow: hidden;
@@ -11816,6 +11847,46 @@ kbd {
 [data-mode="dark"] ::selection {
   background: rgba(122, 166, 255, 0.35);
   color: white;
+}
+
+/* ── Glass theme: the chrome pushed past the base material ──────────────────────
+   The dark overrides above paint chrome at a fixed blur; Glass deepens the blur and
+   saturation and brightens the surface and rim so every pane visibly refracts the
+   vivid backdrop. Scoped to the theme, so the other dark themes are untouched. */
+[data-theme="glass"] #topbar {
+  background: rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(34px) saturate(185%);
+  -webkit-backdrop-filter: blur(34px) saturate(185%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+[data-theme="glass"] .rail,
+[data-theme="glass"] #status-panel {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(40px) saturate(185%);
+  -webkit-backdrop-filter: blur(40px) saturate(185%);
+}
+[data-theme="glass"] .rail { border-right-color: rgba(255, 255, 255, 0.11); }
+[data-theme="glass"] #status-panel { border-left-color: rgba(255, 255, 255, 0.11); }
+[data-theme="glass"] .modal-card {
+  background: rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(56px) saturate(200%);
+  -webkit-backdrop-filter: blur(56px) saturate(200%);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+[data-theme="glass"] .mcp-row,
+[data-theme="glass"] .ai-row,
+[data-theme="glass"] .plugin-row,
+[data-theme="glass"] .plugin-card,
+[data-theme="glass"] .mcp-card {
+  background: rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(28px) saturate(170%);
+  -webkit-backdrop-filter: blur(28px) saturate(170%);
+  border-color: rgba(255, 255, 255, 0.11);
+}
+[data-theme="glass"] .ghost-btn:not(.ghost-btn-danger),
+[data-theme="glass"] .iconbtn {
+  backdrop-filter: blur(16px) saturate(170%);
+  -webkit-backdrop-filter: blur(16px) saturate(170%);
 }
 
 /* ── Workflow run: the flow played out on its own graph ────────────────────── */
@@ -18128,6 +18199,7 @@ body[data-mode="light"] .br-stage {
 .br-detail[hidden] { display: none; }
 .br-detail-title { font-size: var(--fs-body-lg); font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
 .br-detail-text { font-size: var(--fs-body); color: var(--text-2); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.br-detail-image { display: block; max-width: 100%; max-height: 320px; margin: 10px 0; border-radius: var(--radius-lg); border: 1px solid var(--line-2); object-fit: contain; }
 .br-detail-meta { font-size: var(--fs-label); color: var(--text-3); }
 .br-detail-acts { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .br-rules-held { padding: 6px 8px; }
@@ -18238,7 +18310,10 @@ body[data-mode="light"] .br-stage {
    What changed, the pull request and its checks, beside the thread. The stage
    gives it a share of its width and the chat keeps the rest. Diff rows are the
    Source page's own (.sc-dl), so the tokens they read are set here too. */
-.chat-stage { --cc-w: clamp(380px, 46%, 760px); }
+.chat-stage { --cc-w: min(var(--cc-w-user, clamp(380px, 46%, 760px)), calc(100% - 320px)); }
+.cc-resize { position: absolute; top: 0; bottom: 0; right: calc(var(--cc-w) - 4px); width: 7px; z-index: 3; cursor: col-resize; touch-action: none; display: none; }
+.chat-stage.has-canvas .cc-resize { display: block; }
+.cc-resize:hover, .cc-resize:focus-visible, .cc-resize.is-dragging { background: color-mix(in srgb, var(--accent) 45%, transparent); }
 .chat-stage.has-canvas .terminal-wrap,
 .chat-stage.has-canvas .chat-empty { right: var(--cc-w); }
 #btn-canvas.is-on { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
@@ -18351,7 +18426,7 @@ body[data-mode="light"] .br-stage {
 .rail-mark { position: absolute; top: 1px; left: 22px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: var(--radius-pill); background: var(--rose); color: #fff; font-size: 10px; font-weight: 700; line-height: 15px; text-align: center; pointer-events: none; }
 /* In a narrow window the canvas takes the whole stage, since two columns would
    leave neither wide enough to read. */
-@media (max-width: 1100px) { .chat-stage { --cc-w: 100%; } }
+@media (max-width: 1100px) { .chat-stage { --cc-w: 100%; } .chat-stage.has-canvas .cc-resize { display: none; } }
 
 .usage-bell { position: relative; }
 .usage-bell[data-state="close"], .usage-bell[data-state="critical"] { color: var(--amber); }

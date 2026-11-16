@@ -77,7 +77,6 @@ test('short window keeps the rail bottom and status footer visible', async () =>
     return {
       vh: window.innerHeight,
       prefsBottom: bottom('#btn-open-prefs'),
-      toolBottom: bottom('#rail-agent-pill'),
       spFootBottom: bottom('.sp-foot'),
       railScrollable: scrollEl.scrollHeight > scrollEl.clientHeight,
       // The status body scales #sp-fit down to a floor and scrolls past it, so
@@ -94,7 +93,6 @@ test('short window keeps the rail bottom and status footer visible', async () =>
 
   // Bottom-pinned controls fit inside the window (allow a 1px rounding slack).
   expect(info.prefsBottom).toBeLessThanOrEqual(info.vh + 1);
-  expect(info.toolBottom).toBeLessThanOrEqual(info.vh + 1);
   expect(info.spFootBottom).toBeLessThanOrEqual(info.vh + 1);
   // The rail sends its overflow to its scroll region rather than off the window.
   expect(info.railScrollable).toBe(true);

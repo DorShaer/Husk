@@ -374,4 +374,4 @@ Husk's reasoning, thinking format, and Algorithm phase machine come from [LifeOS
 The terminal embedding uses [`xterm.js`](https://github.com/xtermjs/xterm.js) plus [`node-pty`](https://github.com/microsoft/node-pty). On Linux the PTY is established through `script(1)` so `claude --resume` gets its controlling terminal. Voice is via [Piper TTS](https://github.com/rhasspy/piper). The workflow editor uses [Drawflow](https://github.com/jerosoler/Drawflow).
 
 
-More detail: [chat continuation, Brain rules and usage](docs/chat-continuation.md), [local sharing](docs/local-sharing.md), and [local review scope and verification](docs/roadmap-review.md).
+More detail: [chat continuation, Brain rules and usage](docs/chat-continuation.md) and [local sharing](docs/local-sharing.md).

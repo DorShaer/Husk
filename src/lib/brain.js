@@ -13,6 +13,8 @@
 // The file system and the clock are injected, so the whole thing is unit tested
 // without touching a disk.
 
+const { isMechanical } = require('./rule-lint');
+
 const KINDS = new Set(['note', 'file', 'chunk', 'decision']);
 // Kinds that hold text worth recalling. A file node is only the parent of its chunks.
 const RECALLABLE = new Set(['note', 'chunk', 'decision']);
@@ -252,6 +254,23 @@ function createBrain({ file, fs, now, saveDelayMs, canonPath } = {}) {
     return { ok: true, node };
   }
 
+  // An image the user teaches the Brain. The bytes are stored by the host and
+  // referenced by { hash, ext }; the recallable text is the file name and the
+  // caption, so an image is found the same lexical way a note is.
+  function addImage({ name, caption, ref, scope } = {}) {
+    scope = canon(scope);
+    const hash = str(ref && ref.hash);
+    const ext = str(ref && ref.ext);
+    if (!/^[a-f0-9]{64}$/.test(hash) || !/^(png|jpg)$/.test(ext)) return { ok: false, error: 'that image could not be stored' };
+    const label = str(name).trim().slice(0, TITLE_MAX) || 'image';
+    const cap = str(caption).trim().slice(0, NOTE_MAX_CHARS);
+    const body = cap ? `${label}\n${cap}` : label;
+    const node = push({ id: newId(), kind: 'note', title: titleOf(cap || label), text: body, image: { hash, ext }, scope: str(scope), createdAt: clock(), hits: 0 });
+    note('learn', node.title, [node.id], scope);
+    save();
+    return { ok: true, node };
+  }
+
   // A rule is a note its author marked as one. Only this and setRule make one.
   function addRule({ text, scope } = {}) {
     const body = ruleLine(text).slice(0, RULE_MAX_CHARS);
@@ -295,7 +314,9 @@ function createBrain({ file, fs, now, saveDelayMs, canonPath } = {}) {
     const held = [];
     const lines = [];
     if (state.enabled) {
-      const reach = state.nodes.filter((n) => n.kind === 'note' && n.rule === true && !n.ruleOff && inScope(n, scope))
+      // Mechanical rules are enforced on the output, not injected into the
+      // prompt, so they leave the turn budget and cost no tokens.
+      const reach = state.nodes.filter((n) => n.kind === 'note' && n.rule === true && !n.ruleOff && !isMechanical(n) && inScope(n, scope))
         .sort((a, b) => (!!b.pinned - !!a.pinned) || (b.createdAt - a.createdAt));
       let used = 0;
       for (const n of reach) {
@@ -309,6 +330,14 @@ function createBrain({ file, fs, now, saveDelayMs, canonPath } = {}) {
     return { sent, held, lines, context: lines.length ? [RULES_HEAD, ...lines, RULES_TAIL].join('\n') : '' };
   }
   const rules = ({ scope } = {}) => standing(canon(scope));
+
+  // The active mechanical rules in reach of this workspace. main applies them
+  // to the agent's output before it reaches the screen.
+  function mechanicalRules({ scope } = {}) {
+    if (!state.enabled) return [];
+    const s = canon(scope);
+    return state.nodes.filter((n) => n.kind === 'note' && n.rule === true && !n.ruleOff && isMechanical(n) && inScope(n, s));
+  }
 
   // Adding a file again replaces what it taught before, so an edited document
   // does not leave its old paragraphs behind.
@@ -506,6 +535,7 @@ function createBrain({ file, fs, now, saveDelayMs, canonPath } = {}) {
       log: state.log.filter((e) => all || inScope(e, scope)).slice().reverse(),
       nodes: nodes.map((n) => ({
         id: n.id, kind: n.kind, title: n.title, text: n.text, scope: n.scope, source: n.source, parent: n.parent,
+        image: n.image || null,
         pinned: !!n.pinned, rule: n.kind === 'note' && n.rule === true, ruleOn: !n.ruleOff, hits: n.hits || 0, createdAt: n.createdAt, lastHitAt: n.lastHitAt || 0,
       })),
       edges,
@@ -514,7 +544,7 @@ function createBrain({ file, fs, now, saveDelayMs, canonPath } = {}) {
 
   load();
   return {
-    addNote, addRule, setRule, rules, addFile, captureTurn, remove, setPinned, setEnabled, recall, resonate, graph, load, save,
+    addNote, addRule, setRule, rules, mechanicalRules, addFile, addImage, captureTurn, remove, setPinned, setEnabled, recall, resonate, graph, load, save,
     isEnabled: () => state.enabled,
     size: () => state.nodes.length,
   };

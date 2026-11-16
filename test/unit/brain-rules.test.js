@@ -246,3 +246,21 @@ test('the rule block reaches the agent on the ACP and stream wires, and the thre
     assert.equal(tab.events.find((e) => e.type === 'user').text, 'rename the helper');
   }
 });
+
+test('a mechanical rule is enforced, not injected: it skips the prompt and survives save/load', () => {
+  const { fs, b } = brain();
+  b.addRule({ text: 'Answer in British English' });
+  const mech = b.addRule({ text: 'no em dashes' });
+  // The judgment rule rides the prompt; the mechanical one does not.
+  const r = b.rules({ scope: '/p' });
+  assert.deepEqual(r.sent.includes(mech.node.id), false);
+  assert.doesNotMatch(r.context, /em dash/);
+  assert.match(r.context, /British English/);
+  // It is available to the output enforcer instead.
+  assert.deepEqual(b.mechanicalRules({ scope: '/p' }).map((n) => n.id), [mech.node.id]);
+  // And it persists as a rule across a reload.
+  const b2 = createBrain({ file: '/b.json', fs, now: () => 9999, saveDelayMs: 1 });
+  b2.load();
+  assert.deepEqual(b2.mechanicalRules({ scope: '/p' }).map((n) => n.id), [mech.node.id]);
+  assert.deepEqual(b2.rules({ scope: '/p' }).sent.includes(mech.node.id), false);
+})

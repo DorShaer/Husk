@@ -22,8 +22,7 @@ test('new-chat vendor selection and saved defaults leave existing discussions al
     await win.evaluate(() => document.querySelectorAll('.modal').forEach((m) => { m.hidden = true; }));
     await expect.poll(() => win.evaluate(async () => (await window.husk.chat.list()).sessions.length)).toBe(1);
     const original = await win.evaluate(async () => (await window.husk.chat.list()).sessions[0]);
-    await win.locator('#rail-agent-pill').click();
-    await win.locator('#rail-agent-menu [data-cmd="kiro-cli"]').click();
+    await win.evaluate(async () => { setPage('chat'); await openNewChatTab({ command: 'kiro-cli', preferChat: true, connection: 'cli' }); });
     await expect.poll(() => win.evaluate(async () => (await window.husk.chat.list()).sessions.length)).toBe(2);
     expect(await win.evaluate(() => cfg.agentCommand)).toBe('gemini');
     const before = await win.evaluate(async () => (await window.husk.chat.list()).sessions);

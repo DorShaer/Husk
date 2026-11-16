@@ -629,16 +629,6 @@
           </nav>
         </div>
 
-        <!-- Start another chat without changing existing chats or jobs. -->
-        <div class="rail-section rail-section-tool">
-          <button class="rail-agent" id="rail-agent-pill" title="Start a chat" aria-label="Start a chat">
-            <span class="ra-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="7" width="15" height="12" rx="3"/><path d="M12 4v3"/><circle cx="12" cy="3.2" r="0.9" fill="currentColor" stroke="none"/><circle cx="9.5" cy="12.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="14.5" cy="12.5" r="1.1" fill="currentColor" stroke="none"/><path d="M9.5 16h5"/><path d="M2.5 12.5h2M19.5 12.5h2"/></svg></span>
-            <span class="ra-name" id="ra-name">New chat</span>
-            <span class="ra-chev">▾</span>
-          </button>
-          <div class="rail-agent-menu" id="rail-agent-menu" hidden></div>
-        </div>
-
         <div class="rail-section">
           <nav class="rail-nav">
             <button class="rail-item" id="btn-open-prefs" data-page="prefs" title="Preferences">
@@ -750,6 +740,7 @@
               <div id="terminal"></div>
             </div>
             <aside id="chat-canvas" class="cc" aria-label="Changes, pull request and checks" hidden></aside>
+            <div id="cc-resize" class="cc-resize" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize the changes panel" title="Drag to resize, double-click to reset"></div>
           </div>
           </div>
         </div>
@@ -2473,6 +2464,7 @@
               <button class="ghost-btn" id="br-add-note" type="button"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span class="btn-label">Add note</span></button>
               <button class="ghost-btn" id="br-add-rule" type="button" title="An instruction sent with every message, in chat and terminal"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span class="btn-label">Add rule</span></button>
               <button class="btn-primary" id="br-add-files" type="button"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg> Add files</button>
+              <button class="ghost-btn" id="br-add-image" type="button"><svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg> Add image</button>
             </div>
           </div>
           <div class="page-body br-body">

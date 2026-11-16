@@ -46,7 +46,7 @@ The timeout is 30 seconds. Reports must contain a `vulnerabilities` array, or `n
 
 When a verdict is absent, HIGH or CRITICAL findings with a WG1-prefixed id block installation; other findings require review. A numeric nonzero exit code can still accompany a valid blocking report. A killed scanner, timeout or unreadable output is Unscanned. Cached results depend on both the staged content hash and the scanner executable's size and modification time.
 
-Wolf's artifact-capable executable supports this contract. The ordinary workflow-only scanner does not substitute for artifact mode. Wolf is external to the Husk package and must be selected separately.
+Husk's security scanner supports this contract in its artifact mode. The ordinary workflow-only mode does not substitute for it. The scanner is external to the Husk package and must be selected separately.
 
 ## Publisher trust
 

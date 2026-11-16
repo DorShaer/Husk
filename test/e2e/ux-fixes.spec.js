@@ -33,23 +33,23 @@ async function ready(app) {
   return win;
 }
 
-test('AI tool selector sits at the bottom, above Preferences', async () => {
+test('the rail ends with Preferences and carries no new-chat tool pill', async () => {
   const app = await launch();
   const win = await ready(app);
   const order = await win.evaluate(() => {
     const items = Array.from(document.querySelectorAll('#rail *'));
-    const idx = (sel) => items.indexOf(document.querySelector(sel));
+    const idx = (sel) => { const el = document.querySelector(sel); return el ? items.indexOf(el) : -1; };
     return {
-      autopilot: idx('#rail-autopilot'),
-      toolPill: idx('#rail-agent-pill'),
+      terminal: idx('.rail-item[data-page="terminal"]'),
       prefs: idx('#btn-open-prefs'),
+      hasToolPill: !!document.querySelector('#rail-agent-pill'),
       autopilotText: (document.querySelector('#rail-autopilot')?.textContent || '').trim(),
       headerAutopilotExists: !!document.getElementById('btn-autopilot'),
     };
   });
-  // Tool pill sits after the nav items and immediately before Preferences.
-  expect(order.toolPill).toBeGreaterThan(order.autopilot);
-  expect(order.prefs).toBeGreaterThan(order.toolPill);
+  // The rail no longer carries the new-chat pill; Preferences stays last.
+  expect(order.hasToolPill).toBe(false);
+  expect(order.prefs).toBeGreaterThan(order.terminal);
   // The row is its name alone, with no maturity tag beside it.
   expect(order.autopilotText).toBe('Autopilot');
   expect(order.headerAutopilotExists).toBe(false);

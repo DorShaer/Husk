@@ -170,6 +170,34 @@ test('claude start spawns stream-json argv and prompt writes a user line', async
   assert.equal(events[1].ev.type, 'text');
 });
 
+test('claude turns per-turn token usage into a context-window meter', async () => {
+  const events = [];
+  const children = [];
+  const rt = createChatRuntime({
+    spawn: () => { const c = fakeChild(); children.push(c); return c; },
+    buildEnv: () => ({ PATH: '/bin' }),
+    resolveExe: (name) => '/abs/' + name,
+    emit: (tabId, ev) => events.push({ tabId, ev }),
+    emitExit: () => {},
+    appVersion: '2.12.0',
+    platform: 'win32',
+    contextWindow: (model) => /opus/.test(model) ? 1000000 : 200000,
+  });
+  await rt.start({ tabId: 't2', command: 'claude', cwd: '/w' });
+  const c = children[0];
+  // An assistant message carries the model and the prompt + cache token counts.
+  c.feed({ type: 'assistant', message: { model: 'claude-opus-4-8', usage: { input_tokens: 1000, cache_read_input_tokens: 50000, cache_creation_input_tokens: 2000 } } });
+  const usage = events.find((e) => e.ev.type === 'usage');
+  assert.ok(usage, 'a usage event is emitted');
+  assert.equal(usage.ev.used, 53000);
+  assert.equal(usage.ev.size, 1000000);
+  // The result event carries the turn total summed across every internal
+  // tool-use call, which overshoots the window; it must not drive the meter.
+  const before = events.filter((e) => e.ev.type === 'usage').length;
+  c.feed({ type: 'result', subtype: 'success', usage: { input_tokens: 2000, cache_read_input_tokens: 6000000, cache_creation_input_tokens: 0 } });
+  assert.equal(events.filter((e) => e.ev.type === 'usage').length, before, 'result does not emit a usage event');
+});
+
 test('claude permission round-trips the captured input and clears on result', async () => {
   const { rt, children, events } = harness();
   await rt.start({ tabId: 't2', command: 'claude', cwd: '/w' });
@@ -190,6 +218,32 @@ test('claude permission round-trips the captured input and clears on result', as
   c.feed({ type: 'result', subtype: 'success', is_error: false, duration_ms: 5 });
   assert.equal(rt.info('t2').turnOpen, false);
   assert.equal(events[events.length - 1].ev.type, 'turn_end');
+});
+
+test('claude API failure is shown once, not as assistant text and again as the error', async () => {
+  const { rt, children, events } = harness();
+  await rt.start({ tabId: 't2', command: 'claude', cwd: '/w' });
+  const c = children[0];
+  await rt.prompt({ tabId: 't2', text: 'go' });
+  const msg = 'API Error: request flagged. Request ID: req_1';
+  c.feed({ type: 'assistant', message: { model: '<synthetic>', content: [{ type: 'text', text: msg }] } });
+  c.feed({ type: 'result', subtype: 'success', is_error: true, result: msg });
+  const shown = events.filter((e) => e.ev.type === 'text_final' || (e.ev.type === 'turn_end' && e.ev.text));
+  assert.equal(shown.length, 1);
+  assert.equal(shown[0].ev.type, 'turn_end');
+  assert.equal(shown[0].ev.text, msg);
+});
+
+test('claude synthetic text that is not the failure still reaches the thread', async () => {
+  const { rt, children, events } = harness();
+  await rt.start({ tabId: 't2', command: 'claude', cwd: '/w' });
+  const c = children[0];
+  await rt.prompt({ tabId: 't2', text: 'go' });
+  c.feed({ type: 'assistant', message: { model: '<synthetic>', content: [{ type: 'text', text: 'No response requested.' }] } });
+  c.feed({ type: 'result', subtype: 'success', is_error: false });
+  const i = events.findIndex((e) => e.ev.type === 'text_final');
+  assert.equal(events[i].ev.text, 'No response requested.');
+  assert.ok(i < events.findIndex((e) => e.ev.type === 'turn_end'), 'held text is sent before the turn ends');
 });
 
 test('claude cancel writes an interrupt control request', async () => {

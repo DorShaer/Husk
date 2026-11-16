@@ -847,7 +847,7 @@ const WHATS_NEW = {
       },
       {
         title: 'Choose your look',
-        body: 'New installs start with the Light theme and indigo buttons. Pick from 11 themes and change Husk’s interface size in Preferences. The Brain follows your selected theme.',
+        body: 'New installs start with the Light theme and indigo buttons. Pick from ' + ((window.HuskThemes && window.HuskThemes.THEMES.length) || 20) + ' themes and change Husk’s interface size in Preferences. The Brain follows your selected theme.',
         media: 'assets/wn-2140-appearance.png',
         mediaAlt: 'Appearance preferences with the Light theme, indigo accent, and interface size controls',
       },
@@ -4434,6 +4434,65 @@ for (const column of LEFT_COLUMNS) {
     }
   });
 }
+// The changes panel resizes from its left edge; the chat keeps at least CANVAS_CHAT_MIN.
+const CANVAS_MIN = 320, CANVAS_CHAT_MIN = 320;
+function applyCanvasWidth() {
+  const stage = document.querySelector('.chat-stage');
+  if (!stage) return;
+  const n = Number(cfg && cfg.canvasWidth);
+  if (cfg && cfg.canvasWidth != null && Number.isFinite(n)) stage.style.setProperty('--cc-w-user', `${Math.round(Math.max(CANVAS_MIN, n))}px`);
+  else stage.style.removeProperty('--cc-w-user');
+}
+(function wireCanvasResize() {
+  const grip = document.getElementById('cc-resize');
+  const stage = document.querySelector('.chat-stage');
+  if (!grip || !stage) return;
+  let dragging = false, width = 0, frame = null;
+  const panel = () => document.getElementById('chat-canvas');
+  const apply = (value) => {
+    const max = Math.max(CANVAS_MIN, stage.getBoundingClientRect().width - CANVAS_CHAT_MIN);
+    width = Math.round(Math.max(CANVAS_MIN, Math.min(max, value)));
+    stage.style.setProperty('--cc-w-user', `${width}px`);
+    grip.setAttribute('aria-valuenow', width);
+    if (!frame) frame = requestAnimationFrame(() => { frame = null; fitNow(); });
+  };
+  const save = async (value) => { try { cfg = await window.husk.config.set({ canvasWidth: value }); } catch (_) {} };
+  const move = (event) => { if (dragging) apply(stage.getBoundingClientRect().right - event.clientX); };
+  const stop = () => {
+    if (!dragging) return;
+    dragging = false;
+    grip.classList.remove('is-dragging');
+    document.body.classList.remove('is-resizing-left');
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', stop);
+    window.removeEventListener('pointercancel', stop);
+    window.removeEventListener('blur', stop);
+    fitNow();
+    save(width);
+  };
+  grip.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    width = panel().getBoundingClientRect().width;
+    dragging = true;
+    grip.classList.add('is-dragging');
+    document.body.classList.add('is-resizing-left');
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', stop);
+    window.addEventListener('pointercancel', stop);
+    window.addEventListener('blur', stop);
+  });
+  const reset = () => { stage.style.removeProperty('--cc-w-user'); fitNow(); save(null); };
+  grip.addEventListener('dblclick', reset);
+  grip.addEventListener('keydown', (event) => {
+    if (event.key === 'Home') { event.preventDefault(); reset(); }
+    else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault();
+      apply(panel().getBoundingClientRect().width + (event.key === 'ArrowLeft' ? 16 : -16));
+      save(width);
+    }
+  });
+})();
 // One control owns the side panel, in the top bar, so it is in the same place
 // whether the panel is showing or hidden.
 const topStatusToggle = $('#btn-status-toggle');
@@ -14627,6 +14686,8 @@ async function paintAgentCommandPicker() {
 }
 
 function bindPrefs() {
+  // Boot binds the page once config has loaded.
+  if (!cfg) return;
   $('#pref-agent').value = cfg.agentCommand || '';
   paintAgentCommandPicker();
   $('#pref-agent-name').value = cfg.agentName || 'Husk';
@@ -15084,7 +15145,6 @@ $('#pref-save').addEventListener('click', async () => {
   bindPrefs();
   renderSkills();
   updateAgentPill();
-  paintAgentMenu();
   toast('Defaults saved for new chats', 'success');
 });
 
@@ -15609,10 +15669,7 @@ async function renderChatsPanelSessions() {
 
   const btnPickTool = $('#ce-btn-pick-tool');
   if (btnPickTool) {
-    btnPickTool.addEventListener('click', () => {
-      const pill = $('.rail-agent');
-      if (pill) pill.click();
-    });
+    btnPickTool.addEventListener('click', (e) => openNewTabMenu(e));
     // Sync tool name label with current agent
     // Initial sync happens in boot() after cfg loads.
   }
@@ -16763,12 +16820,10 @@ $('#plugins-zero-cmd')?.addEventListener('click', async (e) => {
   }
 });
 
-// ─── Start a chat with a vendor (rail button + dropdown) ────────────────────────
-let agentMenuOpen = false;
+// ─── Agent detection shared by the new-chat menus ──────────────────────────────
 let agentsCache = [];
 function updateAgentPill() {
   const cmd = (cfg && cfg.agentCommand) ? cfg.agentCommand.trim().split(/\s+/)[0] : 'claude';
-  $('#ra-name').textContent = 'New chat';
   const ceToolName = $('#ce-tool-name');
   if (ceToolName) ceToolName.textContent = cmd || 'agent';
 }
@@ -16778,64 +16833,7 @@ async function refreshAgentMenu() {
   // the older bare-array shape so a renderer running against an older main
   // (e.g. partial upgrade) still works.
   agentsCache = Array.isArray(r) ? r : (r && Array.isArray(r.agents) ? r.agents : []);
-  paintAgentMenu();
 }
-function paintAgentMenu() {
-  const menu = $('#rail-agent-menu');
-  if (!menu) return;
-  const endpoint = endpointChatAvailable() ? `<button class="rail-agent-item" data-connection="endpoint" data-cmd="${escapeAttr(cfg.agentCommand || 'claude')}" data-available="1"><span class="rai-name">New chat with API endpoint</span><span class="rai-cmd">${escapeHtml(cfg.agentModel)}</span></button>` : '';
-  const rows = agentsCache.map((a) => `
-    <button class="rail-agent-item" data-cmd="${escapeAttr(a.command)}" data-available="${a.available ? '1' : '0'}">
-      <span class="rai-name">New chat with ${escapeHtml(a.label)}</span>
-      <span class="rai-cmd">${escapeHtml(a.command)}</span>
-    </button>
-  `).join('');
-  // eslint-disable-next-line no-unsanitized/property -- Agent row values are escaped via escapeHtml/escapeAttr.
-  menu.innerHTML = `${endpoint}${rows}
-    <div class="rail-agent-divider"></div>
-    <button class="rail-agent-config" id="rai-config">New chat defaults…</button>`;
-  menu.querySelectorAll('.rail-agent-item').forEach((el) => {
-    el.addEventListener('click', async () => {
-      if (el.dataset.available === '0') {
-        toast(`${el.querySelector('.rai-name').textContent} is not installed on this system`, 'error');
-        return;
-      }
-      const cmd = el.dataset.cmd;
-      closeAgentMenu();
-      setPage('chat');
-      await openNewChatTab({ command: cmd, preferChat: true, connection: el.dataset.connection || 'cli' });
-    });
-  });
-  const cfgBtn = menu.querySelector('#rai-config');
-  if (cfgBtn) cfgBtn.addEventListener('click', () => { closeAgentMenu(); openPrefs('agent'); });
-}
-function openAgentMenu() {
-  // Paint instantly from cache, then re-detect so an agent installed since
-  // launch shows as available. refreshAgentMenu repaints when it resolves.
-  paintAgentMenu();
-  $('#rail-agent-menu').hidden = false;
-  agentMenuOpen = true;
-  refreshAgentMenu();
-}
-function closeAgentMenu() {
-  $('#rail-agent-menu').hidden = true;
-  agentMenuOpen = false;
-}
-$('#rail-agent-pill').addEventListener('click', async (e) => {
-  e.stopPropagation();
-  if (document.body.dataset.rail === 'collapsed') {
-    document.body.dataset.rail = 'expanded';
-    syncRailToggleTitle();
-    cfg = await window.husk.config.set({ railExpanded: true });
-    setTimeout(fitNow, 200);
-  }
-  if (agentMenuOpen) closeAgentMenu(); else openAgentMenu();
-});
-window.addEventListener('click', (e) => {
-  if (!agentMenuOpen) return;
-  if (e.target.closest('#rail-agent-pill') || e.target.closest('#rail-agent-menu')) return;
-  closeAgentMenu();
-});
 // The zoom level is applied immediately in the keydown handler; the toast and
 // the terminal refit are debounced so a rapid burst settles to one fit (and
 // one pty.resize / SIGWINCH) instead of one per keypress.
@@ -20805,6 +20803,7 @@ async function boot() {
   document.body.dataset.status = cfg.statusCollapsed ? 'collapsed' : 'expanded';
   applyStatusWidth(cfg.statusWidth);
   applyLeftWidths();
+  applyCanvasWidth();
   syncChatLayout();
   syncRailToggleTitle();
   syncStatusToggleTitle();

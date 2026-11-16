@@ -24,6 +24,7 @@ const THEMES = [
   { id: 'monokai', name: 'Monokai', bg: '#272822' },
   { id: 'everforest', name: 'Everforest', bg: '#2d353b' },
   { id: 'kanagawa', name: 'Kanagawa', bg: '#1f1f28' },
+  { id: 'glass', name: 'Glass', bg: '#0a0e16' },
   { id: 'hc-dark', name: 'High contrast dark', bg: '#000000', highContrast: true },
   { id: 'hc-light', name: 'High contrast light', light: true, bg: '#ffffff', highContrast: true },
 ];

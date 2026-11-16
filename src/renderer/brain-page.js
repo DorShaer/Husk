@@ -679,6 +679,13 @@
     if (!n) return;
     box.appendChild(h('div', 'section-label', labelOf(n)));
     box.appendChild(h('div', 'br-detail-title', n.title));
+    if (n.image && n.image.hash && n.image.ext) {
+      const img = h('img', 'br-detail-image');
+      img.src = `husk-bg://image/${n.image.hash}.${n.image.ext}`;
+      img.alt = n.title || 'image';
+      img.loading = 'lazy';
+      box.appendChild(img);
+    }
     const parts = n.kind === 'file' ? state.data.nodes.filter((c) => c.parent === n.id) : [];
     box.appendChild(h('div', 'br-detail-text', n.kind === 'file' ? n.source : n.text));
     const meta = [
@@ -906,6 +913,20 @@
       if (res.added.length) say(`Learned ${plural(res.added.length, 'file', 'files')}${bad ? `. Skipped ${bad}` : ''}`);
       else if (bad) say(`Skipped ${bad}`);
       await load();
+    });
+
+    byId('br-add-image').addEventListener('click', async () => {
+      // Any text typed in the note box rides along as the caption, the words the
+      // image is recalled by. The picker takes the file itself.
+      const captionEl = byId('br-note-text');
+      const caption = (captionEl && !byId('br-note-form').hidden) ? captionEl.value : '';
+      const res = await call(() => api.addImage({ global: false, caption }));
+      if (!res || res.canceled) return;
+      if (!res.ok) { say(res.error || 'That image could not be used.'); return; }
+      byId('br-note-form').hidden = true;
+      if (captionEl) captionEl.value = '';
+      await load();
+      select(res.id);
     });
   }
 

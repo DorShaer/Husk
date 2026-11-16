@@ -234,3 +234,44 @@ test('Fix and Explain submit their prompt to the CLI in Terminal mode', async ()
     fs.rmSync(homeDir, { recursive: true, force: true });
   }
 });
+
+test('the canvas widens from its left edge, keeps the chat floor, and double-click resets it', async () => {
+  const { homeDir, bin } = makeHome();
+  // Fold the side panel so the stage has room to widen the canvas.
+  const cfgFile = path.join(homeDir, '.config', 'husk', 'config.json');
+  fs.writeFileSync(cfgFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(cfgFile, 'utf8')), statusCollapsed: true }));
+  const { app, win } = await launch(homeDir, bin);
+  const config = () => JSON.parse(fs.readFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), 'utf8'));
+  const width = () => win.evaluate(() => Math.round(document.getElementById('chat-canvas').getBoundingClientRect().width));
+  const stage = () => win.evaluate(() => document.querySelector('.chat-stage').getBoundingClientRect().width);
+  const drag = async (dx) => {
+    const g = await win.locator('#cc-resize').boundingBox();
+    const x = g.x + g.width / 2, y = g.y + g.height / 2;
+    await win.mouse.move(x, y);
+    await win.mouse.down();
+    await win.mouse.move(x + dx, y, { steps: 10 });
+    await win.mouse.up();
+  };
+  try {
+    await win.locator('#btn-canvas').click();
+    await expect(win.locator('#cc-resize')).toBeVisible();
+    const start = await width();
+
+    await drag(-40);
+    const wide = await width();
+    expect(wide).toBeGreaterThanOrEqual(start + 35);
+    expect(wide).toBeLessThanOrEqual(start + 45);
+    await expect.poll(() => config().canvasWidth).toBe(wide);
+
+    // However far the edge goes, the chat keeps its floor.
+    await drag(-2000);
+    expect(Math.round((await stage()) - (await width()))).toBeGreaterThanOrEqual(319);
+
+    await win.locator('#cc-resize').dblclick();
+    await expect.poll(width).toBe(start);
+    await expect.poll(() => config().canvasWidth).toBe(null);
+  } finally {
+    await app.close();
+    fs.rmSync(homeDir, { recursive: true, force: true });
+  }
+});

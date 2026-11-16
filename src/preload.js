@@ -352,6 +352,7 @@ contextBridge.exposeInMainWorld('husk', {
     addRule: (opts) => ipcRenderer.invoke('brain:addRule', opts || {}),
     rule: (id, patch) => ipcRenderer.invoke('brain:rule', Object.assign({}, patch, { id })),
     addFiles: (opts) => ipcRenderer.invoke('brain:addFiles', opts || {}),
+    addImage: (opts) => ipcRenderer.invoke('brain:addImage', opts || {}),
     remove: (id) => ipcRenderer.invoke('brain:remove', { id }),
     pin: (id, pinned) => ipcRenderer.invoke('brain:pin', { id, pinned }),
     setEnabled: (on) => ipcRenderer.invoke('brain:setEnabled', { on }),

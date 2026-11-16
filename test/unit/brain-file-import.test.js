@@ -9,7 +9,7 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '../../src/main.js'), 'utf8');
 const start = source.indexOf("ipcMain.handle('brain:addFiles'");
-const end = source.indexOf("ipcMain.handle('brain:remove'", start);
+const end = source.indexOf("ipcMain.handle('brain:addImage'", start);
 const limit = require('../../src/lib/brain').FILE_MAX_BYTES;
 
 function importer(t, { content = 'Original runbook', afterStat } = {}) {
@@ -33,6 +33,8 @@ function importer(t, { content = 'Original runbook', afterStat } = {}) {
   vm.runInNewContext(source.slice(start, end), {
     ipcMain: { handle(_name, fn) { handler = fn; } },
     fs: io, path, Buffer, BRAIN_FILE_MAX_BYTES: limit, mainWindow: null,
+    isOfficeDoc: require('../../src/lib/doc-extract').isOfficeDoc,
+    extractDocText: require('../../src/lib/doc-extract').extractDocText,
     dialog: { showOpenDialog: async () => ({ canceled: false, filePaths: [file] }) },
     chatCwd: () => dir, brainActivity: () => {},
     brain: { addFile(args) { learned.push(args); return { ok: true, node: { id: 'note' }, chunks: 1 }; } },
