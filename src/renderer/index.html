@@ -1082,6 +1082,14 @@
                     <option value="manual">Manually only</option>
                     <option value="ai-suggested">Let AI decide (suggested by context)</option>
                   </select>
+                  <span class="wf-trigger-label">Step time limit:</span>
+                  <select class="wf-step-select" id="wf-default-timeout" style="width:auto;flex:0 0 auto">
+                    <option value="">5 minutes</option>
+                    <option value="900000">15 minutes</option>
+                    <option value="1800000">30 minutes</option>
+                    <option value="3600000">60 minutes</option>
+                    <option value="7200000">120 minutes</option>
+                  </select>
                 </div>
               </div>
               <div class="wf-canvas-wrap">
@@ -1165,6 +1173,17 @@
                           <option value="full">Full output</option>
                           <option value="last50">Last 50 lines</option>
                           <option value="none">None</option>
+                        </select>
+                      </div>
+                      <div class="form-row">
+                        <label class="form-label" for="wf-np-timeout">Time limit</label>
+                        <select class="wf-step-select" id="wf-np-timeout">
+                          <option value="">Workflow default</option>
+                          <option value="300000">5 minutes</option>
+                          <option value="900000">15 minutes</option>
+                          <option value="1800000">30 minutes</option>
+                          <option value="3600000">60 minutes</option>
+                          <option value="7200000">120 minutes</option>
                         </select>
                       </div>
                       </div>
@@ -3375,24 +3394,6 @@
           <div class="aut-diff-loading" id="aut-diff-loading" hidden>Loading diff...</div>
           <div class="aut-diff-message" id="aut-diff-message" hidden></div>
           <div class="aut-diff-content" id="aut-diff-content"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Race Card: shareable image preview -->
-    <div id="race-card-modal" class="modal" hidden>
-      <div class="modal-card modal-card-md">
-        <div class="modal-head">
-          <h2 class="modal-title">Race Card</h2>
-          <button class="modal-close" id="rc-close" aria-label="Close">&times;</button>
-        </div>
-        <div class="modal-body">
-          <p class="ra-hint">A shareable image of this race. Repo path and file names are not included.</p>
-          <div class="rc-preview"><canvas id="rc-canvas" width="1200" height="630"></canvas></div>
-        </div>
-        <div class="modal-foot">
-          <button class="ghost-btn" id="rc-save">Save PNG</button>
-          <button class="btn-primary" id="rc-copy">Copy image</button>
         </div>
       </div>
     </div>

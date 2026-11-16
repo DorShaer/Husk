@@ -47,6 +47,8 @@ const WorkflowReceipt = require('./workflow-receipt');
 const {
   ALLOWED_AGENT_COMMANDS,
   clipText,
+  clampStepTimeout,
+  stepTimeoutFor,
   sanitizeGraph,
   graphToOrderedSteps,
   wfIsAiRouted,
@@ -167,7 +169,7 @@ const TRACKED_FILES_BUCKETS = ['0', '1-100', '100-1k', '1k-10k', '10k-100k', '10
 
 const TOP_KEYS = ['kind', 'schemaVersion', 'artifactId', 'revision', 'name', 'description',
   'publishedAt', 'publisher', 'huskVersion', 'graph', 'graphHash', 'requires', 'receipts', 'notes'];
-const NODE_KEYS = ['id', 'name', 'agentCommand', 'model', 'branchMode', 'prompt', 'passContext', 'x', 'y'];
+const NODE_KEYS = ['id', 'name', 'agentCommand', 'model', 'branchMode', 'prompt', 'passContext', 'x', 'y', 'timeoutMs'];
 const EDGE_KEYS = ['id', 'from', 'to', 'condition'];
 const CONDITION_KEYS = ['type', 'value'];
 const REQUIRES_KEYS = ['agentCommands', 'models', 'mcpServers', 'skills', 'workspace', 'huskMin'];
@@ -687,7 +689,18 @@ function validateArtifactInner(obj) {
         `agentCommand: ${JSON.stringify(agentCommand).slice(0, 80)}`);
     }
 
+    // An out-of-range limit is clamped and the requested value kept for the install review.
+    const limit = {};
+    if (has(n, 'timeoutMs')) {
+      const requested = get(n, 'timeoutMs');
+      bad = badInt(requested, `graph.nodes[${i}].timeoutMs`, 0, Number.MAX_SAFE_INTEGER);
+      if (bad) return bad;
+      limit.timeoutMs = clampStepTimeout(requested);
+      if (limit.timeoutMs !== requested) limit.timeoutRequestedMs = requested;
+    }
+
     validNodes[i] = {
+      ...limit,
       id: nodeIdAt[i],
       name: nodeName,
       agentCommand,
@@ -799,7 +812,10 @@ function validateArtifactInner(obj) {
   // costs nothing for a file this module wrote, since buildArtifact already
   // emits canonical order, and makes one fingerprint mean one record.
   const idMap = projection.idMap;
+  const requestedById = new Map(validNodes.filter((v) => v.timeoutRequestedMs !== undefined).map((v) => [v.id, v.timeoutRequestedMs]));
   const canonicalNodes = projection.nodes.map((entry, i) => ({
+    ...(entry.source.timeoutMs ? { timeoutMs: entry.source.timeoutMs } : {}),
+    ...(requestedById.has(entry.sourceId) ? { timeoutRequestedMs: requestedById.get(entry.sourceId) } : {}),
     id: `n${i}`,
     name: entry.source.name,
     agentCommand: entry.source.agentCommand,
@@ -1791,6 +1807,8 @@ function buildArtifactInner(workflow, opts) {
     passContext: entry.source.passContext,
     x: quantiseCoordinate(entry.source.x - minX),
     y: quantiseCoordinate(entry.source.y - minY),
+    // The file carries the limit each step runs under, the workflow default folded in.
+    ...((entry.source.timeoutMs || g.defaultTimeoutMs) ? { timeoutMs: stepTimeoutFor(entry.source, g) } : {}),
   }));
 
   // Edge ids are reassigned in canonical order for the same reason node ids

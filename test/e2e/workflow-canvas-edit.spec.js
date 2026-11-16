@@ -126,6 +126,47 @@ test('Backspace while writing a prompt never touches the graph', async () => {
   }
 });
 
+test('a step time limit and the workflow default save with the graph and load back', async () => {
+  test.setTimeout(90_000);
+  const home = makeHome();
+  const { app, win } = await openBuilder(home);
+  try {
+    await win.evaluate(seed);
+    await win.waitForTimeout(300);
+    await win.evaluate(() => {
+      const n = document.querySelector('#wf-canvas .drawflow-node');
+      showNodePanel(n.id.slice(5));
+    });
+    await win.waitForSelector('#wf-node-panel:not([hidden])');
+    await win.selectOption('#wf-np-timeout', '1800000');
+    await win.selectOption('#wf-default-timeout', '900000');
+    await win.fill('#wf-name-input', 'Limits');
+    const id = await win.evaluate(() => saveWorkflow({ stay: true }));
+    const saved = JSON.parse(fs.readFileSync(path.join(home, '.config', 'husk', 'workflows.json'), 'utf8')).find((w) => w.id === id);
+    expect(saved.graph.defaultTimeoutMs).toBe(900000);
+    expect(saved.graph.nodes.map((n) => n.timeoutMs || 0).sort()).toEqual([0, 1800000]);
+
+    await win.evaluate((wid) => openWorkflowBuilder(wid), id);
+    await win.waitForTimeout(800);
+    expect(await win.inputValue('#wf-default-timeout')).toBe('900000');
+    const limits = await win.evaluate(() => [...document.querySelectorAll('#wf-canvas .drawflow-node')].map((n) => {
+      showNodePanel(n.id.slice(5));
+      return document.getElementById('wf-np-timeout').value;
+    }).sort());
+    expect(limits).toEqual(['', '1800000']);
+
+    // The install review names each imported limit, and the value the file asked for when it was clamped.
+    const review = await win.evaluate(() => window.WfxArtifactUi.renderSteps({ nodes: [
+      { id: 'n0', name: 'Long', agentCommand: 'claude', model: null, branchMode: 'parallel', prompt: 'p', passContext: 'full', timeoutMs: 7200000, timeoutRequestedMs: 99999999 },
+      { id: 'n1', name: 'Short', agentCommand: 'claude', model: null, branchMode: 'parallel', prompt: 'q', passContext: 'full', timeoutMs: 900000 },
+    ], edges: [] }).textContent);
+    expect(review).toContain('120 min time limit (the file asked for 1667 min)');
+    expect(review).toContain('15 min time limit');
+  } finally {
+    await app.close();
+  }
+});
+
 test('removing a step takes its connections with it', async () => {
   test.setTimeout(90_000);
   const { app, win } = await openBuilder(makeHome());

@@ -3876,58 +3876,6 @@ input[type="checkbox"].aut-recent-check:indeterminate {
 .fx-chip:hover { background: var(--bg-4); color: var(--text); }
 .fx-chip-x { opacity: 0.7; }
 
-/* ── Race scorecard (head-to-head agent comparison) ── */
-.aut-races { display: flex; flex-direction: column; gap: 14px; }
-.aut-race {
-  border: 1px solid var(--line); border-radius: var(--radius-xl); background: var(--bg-1);
-  overflow: hidden;
-}
-.aut-race-head {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 12px 14px; border-bottom: 1px solid var(--line);
-}
-.aut-race-goal { font-size: var(--fs-small); color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.aut-race-head-right { display: flex; align-items: center; gap: 8px; flex: none; }
-.aut-race-tag { flex: none; font-size: var(--fs-nano); font-weight: 700; color: var(--text-3); background: var(--bg-2); border-radius: var(--radius-pill); padding: 3px 10px; }
-.aut-race-cardbtn {
-  font-size: var(--fs-nano); font-weight: 600; cursor: pointer;
-  color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
-  border-radius: var(--radius-pill); padding: 4px 12px; transition: background var(--motion-fast);
-}
-.aut-race-cardbtn:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
-.rc-preview { display: flex; justify-content: center; padding: 4px 0; }
-.rc-preview canvas { width: 100%; max-width: 560px; height: auto; border-radius: var(--radius-xl); border: 1px solid var(--line); }
-.aut-race-cols { display: grid; gap: 10px; padding: 12px; }
-.aut-race-col {
-  display: flex; flex-direction: column; gap: 8px;
-  border: 1px solid var(--line-2); border-radius: var(--radius-lg); padding: 12px; min-width: 0;
-  background: var(--bg-2); transition: border-color var(--motion-fast);
-}
-.aut-race-col.is-winner { border-color: var(--emerald); background: color-mix(in srgb, var(--emerald) 8%, var(--bg-2)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--emerald) 30%, transparent); }
-.aut-race-col.is-empty { opacity: 0.62; }
-.aut-race-col-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.aut-race-agent { font-family: var(--font-mono); font-size: var(--fs-small); font-weight: 700; color: var(--text); text-transform: capitalize; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.aut-race-winner { flex: none; font-size: var(--fs-pico); font-weight: 800; letter-spacing: 0.06em; color: #04160c; background: var(--emerald); border-radius: var(--radius-pill); padding: 2px 7px; }
-.aut-race-metrics { display: flex; flex-direction: column; gap: 3px; }
-.aut-race-metric { display: flex; align-items: center; justify-content: space-between; font-size: var(--fs-micro); padding: 2px 0; }
-.aut-race-metric-k { color: var(--text-3); font-family: var(--font-body); }
-.aut-race-metric-v { font-family: var(--font-mono); color: var(--text-2); }
-.aut-race-metric.is-best .aut-race-metric-v { color: var(--emerald); font-weight: 700; }
-.aut-race-metric.is-best .aut-race-metric-k::after { content: ' \2713'; color: var(--emerald); }
-.aut-race-reason { font-size: var(--fs-nano); color: var(--text-3); line-height: 1.4; min-height: 15px; }
-.aut-race-actions { display: flex; gap: 6px; margin-top: auto; padding-top: 4px; }
-.aut-race-btn {
-  flex: 1; min-width: 0; padding: 6px 8px; border-radius: var(--radius-md); cursor: pointer;
-  font-size: var(--fs-nano); font-weight: 600; color: var(--text-2);
-  background: var(--bg-3); border: 1px solid var(--line-2); transition: background var(--motion-fast), color var(--motion-fast), border-color var(--motion-fast), opacity var(--motion-fast), transform var(--motion-fast);
-}
-.aut-race-btn:hover:not(:disabled) { color: var(--text); border-color: var(--line-3); }
-.aut-race-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.aut-race-btn.is-apply { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, transparent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
-.aut-race-btn.is-apply:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 18%, transparent); }
-@media (max-width: 720px) { .aut-race-cols { grid-template-columns: 1fr !important; } }
-
 /* ── Autopilot swarm bar (N > 1 concurrent runs) ── */
 /* Shared by the Agents-card rows in the cockpit rail. */
 .aut-swarm-card-meta { 

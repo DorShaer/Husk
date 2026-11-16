@@ -2088,10 +2088,11 @@ ipcMain.handle('chat:handoffTo', (_e, { source, targetTabId } = {}) => {
 
 // Who the claude CLI is signed in as, for the notice after a sign-in finishes.
 // Read from the CLI itself rather than its credential files.
-ipcMain.handle('auth:status', async (_e, { tabId } = {}) => {
-  if (chatTransportFor(activeAgentCommand(tabId)) !== 'claude') return { ok: false, error: 'The active CLI has no sign-in status to report' };
+ipcMain.handle('auth:status', async (_e, { tabId } = {}) => readCliSignIn(activeAgentCommand(tabId)));
+async function readCliSignIn(command) {
+  if (chatTransportFor(command) !== 'claude') return { ok: false, error: 'The active CLI has no sign-in status to report' };
   const env = buildAgentEnv();
-  const exe = resolveAgentExe(activeAgentCommand(tabId).split(/\s+/)[0], env.PATH);
+  const exe = resolveAgentExe(String(command).split(/\s+/)[0], env.PATH);
   try {
     const out = await new Promise((resolve, reject) => {
       execFile(exe, ['auth', 'status', '--json'], { env, timeout: 15000, maxBuffer: 256 * 1024 }, (err, stdout) => {
@@ -2109,7 +2110,14 @@ ipcMain.handle('auth:status', async (_e, { tabId } = {}) => {
   } catch (err) {
     return { ok: false, error: (err && err.message) || 'could not read the sign-in status' };
   }
-});
+}
+// An actionable message when a one-shot run failed because its CLI is signed out, else null.
+async function signedOutMessage(command) {
+  const s = await readCliSignIn(command).catch(() => null);
+  if (!s || !s.ok || s.loggedIn) return null;
+  const cli = String(command).trim().split(/\s+/)[0];
+  return `${cli} is not signed in. Open a chat with ${cli} and type /login to sign in, then try again.`;
+}
 ipcMain.handle('chat:list', () => ({ ok: true, sessions: chatRuntime.list().map((c) => ({ ...c, connection: c.transport === 'openai' ? 'endpoint' : 'cli' })) }));
 // chat:history reads a past session's on-disk log and returns it as chat
 // events, so a resumed session opens in Chat view with its conversation
@@ -2499,7 +2507,6 @@ const AP_MAX_CONCURRENT = 4;
 const AUT_OUTPUT_FLUSH_MS = 250;
 
 const { applyWorktreeChanges, isSafeRelPath: isSafeApplyRelPath } = require('./lib/autopilot-apply');
-const { rankRuns } = require('./lib/race-judge');
 const Orchestrator = require('./lib/autopilot-orchestrator');
 const { classifyTier } = require('./lib/model-routing');
 const { resolveTaskRoute, availableRoutes, resolveCollabRoutes, resolveWorkflowRoutes } = require('./lib/task-routing');
@@ -2668,7 +2675,7 @@ function reconcileOrphanWorktrees() {
     }
     // Orphan with real work: preserve it for review rather than delete.
     retainRun(runId, {
-      runId, sessionId: runId, raceId: null, goal: null,
+      runId, sessionId: runId, goal: null,
       groupId: null, role: null, isIntegrator: false, agent: null,
       worktreePath: wtPath, workspaceRoot, changes,
       metrics: { durationMs: 0, tokens: 0, dollars: 0, fileCount: changes.length },
@@ -3619,7 +3626,7 @@ ipcMain.handle('autopilot:start', async (_e, payload = {}) => {
 // normal isolated run labeled with its role. When the last worker finishes, an
 // integrator run merges every worker worktree into its own, which becomes the
 // single Apply target. This tracker is the only dedicated state; everything else
-// rides the existing run model the way raceId does.
+// rides the existing run model.
 const collabGroups = new Map(); // groupId -> { goal, caps, snapshot, workspaceRoot, remaining, workers, integratorSpawned }
 // Set while the collab orchestrator is planning (before any worker run
 // exists), so Stop can cancel that phase instead of reporting no active run.
@@ -3680,7 +3687,10 @@ async function startCollabTeam(payload = {}) {
   });
   activePlanning = null;
   if (planCancelled) return { ok: false, error: 'planning cancelled' };
-  if (!plan.ok) return { ok: false, error: `orchestrator: ${plan.error}` };
+  if (!plan.ok) {
+    const signedOut = await signedOutMessage(plannerRoute.command);
+    return { ok: false, error: signedOut || `orchestrator: ${plan.error}` };
+  }
   const groupId = 'collab-' + Date.now().toString(36) + '-' + crypto.randomBytes(3).toString('hex');
   const teamRoutes = resolveCollabRoutes({ config: routingConfig, agents: plan.agents, requested: payload.routing, available, agentCommand: payload.agentCommand, catalogs });
   if (!teamRoutes.ok) return teamRoutes;
@@ -3880,7 +3890,6 @@ async function doStartRun(runId, payload, workspaceRoot) {
     feedEverStreamed: false, ptyFallbackActive: false, spawnedAt: Date.now(),
     maxReportedTokens: 0,
     finishing: false, tickInterval: null,
-    raceId: (payload && typeof payload.raceId === 'string' && payload.raceId) ? payload.raceId : null,
     groupId: (payload && typeof payload.groupId === 'string' && payload.groupId) ? payload.groupId : null,
     role: (payload && typeof payload.role === 'string' && payload.role) ? payload.role.slice(0, 40) : null,
     isIntegrator: !!(payload && payload.isIntegrator),
@@ -3999,7 +4008,7 @@ async function doStartRun(runId, payload, workspaceRoot) {
     runId, sessionId, workspaceRoot: runRoot, fileCount: snap.fileCount, goal,
     originalGoal: runState.originalGoal || goal,
     fleetStartedAt: runState.fleetStartedAt || null,
-    raceId: runState.raceId, groupId: runState.groupId, role: runState.role,
+    groupId: runState.groupId, role: runState.role,
     model: runState.model,
   });
   if (mainWindow && payload.route && payload.route.notice) {
@@ -4173,7 +4182,6 @@ async function finishRun(runId, detail) {
     const sessionId = r.runner.sessionId;
     const runRoot = r.worktreePath;
     const origRoot = r.workspaceRoot;
-    const raceId = r.raceId || null;
     const groupId = r.groupId || null;
     const runRole = r.role || null;
     const wasIntegrator = !!r.isIntegrator;
@@ -4195,7 +4203,7 @@ async function finishRun(runId, detail) {
       sum = { ok: false, error: (err && err.message) || String(err) };
     }
     if (sum && typeof sum === 'object') {
-      sum.runId = runId; sum.sessionId = sessionId; sum.workspaceRoot = runRoot; sum.raceId = raceId; sum.groupId = groupId; sum.role = runRole;
+      sum.runId = runId; sum.sessionId = sessionId; sum.workspaceRoot = runRoot; sum.groupId = groupId; sum.role = runRole;
       sum.originalGoal = r.originalGoal || goal || null;
       if (r.fleetStartedAt) sum.fleetStartedAt = r.fleetStartedAt;
       // Conclusion payload for the review UI: why the run ended, how many
@@ -4214,7 +4222,7 @@ async function finishRun(runId, detail) {
       const changes = (sum && Array.isArray(sum.diff)) ? sum.diff : [];
       const meter = (sum && sum.summary && sum.summary.meter) || {};
       retainRun(runId, {
-        runId, sessionId, raceId, goal: r.originalGoal || goal, subgoal: goal,
+        runId, sessionId, goal: r.originalGoal || goal, subgoal: goal,
         groupId, role: runRole, isIntegrator: wasIntegrator,
         agent: runAgent,
         worktreePath: runRoot,
@@ -4329,63 +4337,6 @@ ipcMain.handle('autopilot:discardRun', async (_e, payload = {}) => {
 ipcMain.handle('autopilot:retained', () => {
   const map = readRetained();
   return { ok: true, runs: Object.values(map) };
-});
-
-// Group retained runs into races (by raceId) and rank each race with the judge,
-// so the comparison UI can show a head-to-head scorecard with a suggested
-// winner. Runs without a raceId are returned loose (single reviews).
-ipcMain.handle('autopilot:race', () => {
-  const all = Object.values(readRetained());
-  const byRace = new Map();
-  const loose = [];
-  for (const r of all) {
-    if (r && r.raceId) {
-      if (!byRace.has(r.raceId)) byRace.set(r.raceId, []);
-      byRace.get(r.raceId).push(r);
-    } else if (r) {
-      loose.push(r);
-    }
-  }
-  const races = [];
-  for (const [raceId, group] of byRace) {
-    const ranked = rankRuns(group);
-    const goal = (group.find((g) => g.goal) || {}).goal || null;
-    races.push({ raceId, goal, count: ranked.length, runs: ranked });
-  }
-  // Newest race first by the winner's endedAt (fall back to any run's).
-  races.sort((a, b) => {
-    const ta = new Date((a.runs[0] && a.runs[0].endedAt) || 0).getTime();
-    const tb = new Date((b.runs[0] && b.runs[0].endedAt) || 0).getTime();
-    return tb - ta;
-  });
-  return { ok: true, races, loose };
-});
-
-// Apply one run of a race and discard all its siblings in a single move after
-// the winner lands cleanly. If the winner partially fails, every worktree stays
-// retained so no candidate work is destroyed.
-ipcMain.handle('autopilot:applyWinner', async (_e, payload = {}) => {
-  const runId = String(payload && payload.runId || '').trim();
-  const winner = getRetained(runId);
-  if (!winner) return { ok: false, error: 'no retained run with that id' };
-  const undo = captureApplyUndo(winner.sessionId, winner.workspaceRoot, winner.changes || []);
-  if (!undo.ok) return { ok: false, runId, applied: [], failed: [], discarded: 0, error: `${undo.error}; nothing was applied` };
-  const result = applyWorktreeChanges(winner.worktreePath, winner.workspaceRoot, winner.changes || []);
-  if (!result.ok) return { ok: false, runId, applied: result.applied, failed: result.failed, discarded: 0 };
-  try { removeRunWorktree(winner.worktreePath, winner.workspaceRoot); } catch (_) {}
-  dropRetained(runId);
-  // Discard the losing siblings in the same race.
-  let discarded = 0;
-  if (winner.raceId) {
-    for (const r of Object.values(readRetained())) {
-      if (r && r.raceId === winner.raceId && r.runId !== runId) {
-        try { removeRunWorktree(r.worktreePath, r.workspaceRoot); } catch (_) {}
-        dropRetained(r.runId);
-        discarded++;
-      }
-    }
-  }
-  return { ok: result.ok, runId, applied: result.applied, failed: result.failed, discarded };
 });
 
 ipcMain.handle('autopilot:status', (_e, payload = {}) => {
@@ -4623,6 +4574,7 @@ ipcMain.handle('autopilot:history', async (_e, payload = {}) => {
         runId,
         agent,
         model,
+        retained: !!retained,
       });
     } catch (_) {}
   }
@@ -6166,6 +6118,7 @@ function recordWorkflowRun(run, workflow) {
         // Whether the per-step timer killed this step, recorded as a fact rather
         // than inferred later from a duration near the timeout.
         timedOut: st.timedOut === true,
+        timeoutMs: Number.isFinite(st.timeoutMs) ? st.timeoutMs : null,
         // The vendor's own token report for this step, kept verbatim. Only
         // claude is run with stream-json, so this is absent for other agents
         // and the receipt says so.
@@ -6364,7 +6317,12 @@ Return ONLY the prompt text, no explanations, no markdown, no quotes. Start with
     let out = '';
     let err = '';
     let settled = false;
-    const finish = (result) => { if (!settled) { settled = true; resolve(result); } };
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      if (result.ok) { resolve(result); return; }
+      signedOutMessage(cmd).then((m) => resolve(m ? { ok: false, error: m, signedOut: true } : result));
+    };
 
     const child = require('child_process').spawn(cmd, AgentOneShot.oneShotArgs(cmd, prompt), {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -8151,7 +8109,11 @@ function wfEmit(event, channel, data) {
 // How many steps may run at once. Agents are heavy, so parallel branches are
 // bounded rather than unleashed.
 const WF_MAX_PARALLEL = 4;
-const WF_STEP_TIMEOUT_MS = 300000;
+const WF_STEP_TIMEOUT_MS = wfLib.STEP_TIMEOUT_DEFAULT_MS;
+
+function wfFormatLimit(ms) {
+  return ms % 60000 === 0 ? `${ms / 60000} minute${ms === 60000 ? '' : 's'}` : `${Math.round(ms / 1000)} seconds`;
+}
 
 // ─── the run log ──────────────────────────────────────────────────────────────
 //
@@ -8242,6 +8204,7 @@ function wfAuditStepEnd(run, node, state) {
     status: typeof st.status === 'string' ? st.status : 'failed',
     ms: Number.isFinite(st.ms) ? st.ms : 0,
     timedOut: st.timedOut === true,
+    timeoutMs: Number.isFinite(st.timeoutMs) ? st.timeoutMs : null,
     usage: st.usage || null,
   });
 }
@@ -8348,30 +8311,35 @@ async function wfRunStep(event, run, graph, byId, step, incomingCtx) {
   });
   child.stderr.on('data', (d) => { const t = d.toString().trim(); if (t) activity('error', t); });
 
-  const killTimer = setTimeout(() => {
-    activity('error', 'Step timed out after 5 minutes, killing the agent.');
+  const limitMs = wfLib.stepTimeoutFor(step, graph);
+  stepState.timeoutMs = limitMs;
+  const cancelTimer = wfLib.armStepTimer(child, limitMs, () => {
+    activity('error', `Step reached its ${wfFormatLimit(limitMs)} time limit, stopping the agent.`);
     // Recorded before the kill, because the close handler cannot tell a step
     // stopped by the timer from one that failed on its own, and a receipt has to
     // count its censored runs before it quotes a median.
     stepState.timedOut = true;
-    try { child.kill('SIGKILL'); } catch (_) {}
-  }, WF_STEP_TIMEOUT_MS);
+  });
 
   await new Promise((resolve) => {
-    child.on('close', (code) => {
-      clearTimeout(killTimer);
+    child.on('close', async (code) => {
+      cancelTimer();
       run.children.delete(child);
-      if (useStreamJson && !sawAnyEvent && resultText === '') {
-        activity('error', 'No output from the agent. It may need authentication or stream-json is unsupported.');
+      const ms = Date.now() - stepState.startedAt;
+      const silent = resultText === '' && (code !== 0 || (useStreamJson && !sawAnyEvent));
+      if (silent && !stepState.timedOut && run.status !== 'stopped') {
+        const signedOut = await signedOutMessage(cmd);
+        if (signedOut) activity('error', signedOut);
+        else if (useStreamJson && !sawAnyEvent) activity('error', 'No output from the agent. It may need authentication or stream-json is unsupported.');
       }
       stepState.status = run.status === 'stopped' ? 'cancelled' : (code === 0 ? 'done' : 'failed');
-      stepState.ms = Date.now() - stepState.startedAt;
+      stepState.ms = ms;
       stepState.output = resultText;
       wfEmit(event, 'wf:node:done', { runId: run.id, nodeId: step.id, status: stepState.status, output: resultText });
       resolve();
     });
     child.on('error', (e) => {
-      clearTimeout(killTimer);
+      cancelTimer();
       run.children.delete(child);
       activity('error', e.message);
       stepState.status = 'failed';

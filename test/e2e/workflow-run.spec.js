@@ -418,3 +418,72 @@ test('a running workflow cannot be deleted out from under itself', async () => {
     await app.close();
   }
 });
+
+test('a slow step is stopped at its own time limit, and the run records the limit', async () => {
+  test.setTimeout(120000);
+  const env = setup();
+  // Shrugs off SIGTERM, so the run must follow up with SIGKILL after the grace.
+  fs.writeFileSync(path.join(env.binDir, 'claude'), [
+    '#!/usr/bin/env bash',
+    '[ "$2" = "wait" ] || { echo "1.0.0 (fake)"; exit 0; }',
+    `trap 'echo term > "$HOME/term-seen"' TERM`,
+    `echo '{"type":"system","subtype":"init","model":"fake-1"}'`,
+    'while true; do sleep 0.2; done',
+    '',
+  ].join('\n'), { mode: 0o755 });
+  fs.writeFileSync(path.join(env.homeDir, '.config', 'husk', 'workflows.json'), JSON.stringify([{
+    id: 'wf-test', name: 'Slow flow', trigger: 'manual',
+    graph: { nodes: [{ id: 'n1', name: 'Slow', prompt: 'wait', x: 60, y: 80, passContext: 'full', timeoutMs: 1000 }], edges: [] },
+  }]));
+  const runsFile = path.join(env.homeDir, '.config', 'husk', 'workflow-runs.json');
+  const app = await launch(env);
+  try {
+    const win = await app.firstWindow({ timeout: 30_000 });
+    await openRun(win);
+    await expect.poll(() => {
+      try { return JSON.parse(fs.readFileSync(runsFile, 'utf8')).length; } catch (_) { return 0; }
+    }, { timeout: 60000 }).toBe(1);
+    const [run] = JSON.parse(fs.readFileSync(runsFile, 'utf8'));
+    const [step] = run.steps;
+    // 1000 is below the floor, so the step runs under the 10 second minimum.
+    expect(step.timeoutMs).toBe(10000);
+    expect(step.timedOut).toBe(true);
+    expect(step.status).toBe('failed');
+    expect(step.ms).toBeGreaterThanOrEqual(10000 + 4500);
+    expect(step.ms).toBeLessThan(30000);
+    expect(fs.existsSync(path.join(env.homeDir, 'term-seen'))).toBe(true);
+  } finally {
+    await app.close();
+  }
+});
+
+test('a step on a signed-out CLI says so and points to sign-in', async () => {
+  test.setTimeout(120000);
+  const env = setup();
+  fs.writeFileSync(path.join(env.binDir, 'claude'), [
+    '#!/usr/bin/env bash',
+    'if [ "$1" = "auth" ]; then echo \'{"loggedIn":false}\'; exit 0; fi',
+    'if [ "$1" = "-p" ]; then exit 1; fi',
+    'echo "1.0.0 (fake)"',
+    '',
+  ].join('\n'), { mode: 0o755 });
+  const runsFile = path.join(env.homeDir, '.config', 'husk', 'workflow-runs.json');
+  const app = await launch(env);
+  try {
+    const win = await app.firstWindow({ timeout: 30_000 });
+    await openRun(win);
+    await expect.poll(() => {
+      try { return JSON.parse(fs.readFileSync(runsFile, 'utf8')).length; } catch (_) { return 0; }
+    }, { timeout: 60000 }).toBe(1);
+    const [run] = JSON.parse(fs.readFileSync(runsFile, 'utf8'));
+    expect(run.status).toBe('failed');
+    const text = run.steps[0].entries.map((e) => e.text).join('\n');
+    expect(text).toContain('claude is not signed in. Open a chat with claude and type /login to sign in, then try again.');
+    expect(text).not.toContain('No output from the agent');
+    // The same line reaches the step's terminal.
+    await win.click('#wf-run-canvas .wf-rn-node');
+    await win.waitForFunction(() => /not signed in/.test((document.querySelector('#wf-term-body .xterm-rows') || {}).innerText || ''), null, { timeout: 15000 });
+  } finally {
+    await app.close();
+  }
+});
