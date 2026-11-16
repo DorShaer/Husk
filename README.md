@@ -217,7 +217,7 @@ a cleanup path such as `~/.local/share/husk`, the uninstaller skips that path.
 - **Plugins**: browse and manage Husk plugins.
 - **Source**: read the working-tree diff, stage a file or an individual change, and commit, on the branch you are on.
 - **Files**: drag-drop file context, with a tree view of your working directory.
-- **Schedule**: run a workflow or an autopilot goal on a recurrence, every so often, daily, or on a chosen weekday.
+- **Schedule**: run a workflow on a recurrence, every so often, daily, or on a chosen weekday.
 - **Artifacts**: a ledger of every workflow and autopilot run with its outcome, time, tokens and cost, and the per step detail.
 - **GitHub**: the open pull requests and issues for the current project, with their checks, labels and review state, filtered as you type.
 - **Sessions**: resume any prior agent session from its JSONL log. Group the roster into folders you name. Agents a chat started are grouped under that chat rather than listed beside it.
