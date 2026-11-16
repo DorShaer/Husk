@@ -16,18 +16,27 @@ function detectedAgents(agents, lastUsed) {
     .map(({ a }) => ({ command: String(a.command), label: String(a.label || a.command) }));
 }
 
-function newChatEntries({ agents, lastUsed, folder } = {}) {
-  const found = detectedAgents(agents, lastUsed);
+// Connected CLIs lead and the rest go under `more`; an unset list keeps every CLI in `main`.
+function splitConnected(list, connected) {
+  if (!Array.isArray(connected)) return { main: list, more: [] };
+  const on = new Set(connected);
+  return { main: list.filter((a) => on.has(a.command)), more: list.filter((a) => !on.has(a.command)) };
+}
+
+// connected: the commands the user connected, or null for every detected CLI.
+function newChatEntries({ agents, lastUsed, folder, connected = null } = {}) {
+  const { main, more } = splitConnected(detectedAgents(agents, lastUsed), connected);
   const sub = String(folder || '');
-  const chats = found.length
-    ? found.map((a) => ({ kind: 'chat', command: a.command, label: `New chat with ${a.label}`, sub }))
+  const chats = main.length
+    ? main.map((a) => ({ kind: 'chat', command: a.command, label: `New chat with ${a.label}`, sub }))
     // Nothing found yet: offer the configured default.
-    : [{ kind: 'chat', command: found.length ? found[0].command : '', label: 'New chat', sub }];
-  return chats.concat([{ kind: 'terminal', command: '', label: 'Terminal', sub: '' }]);
+    : [{ kind: 'chat', command: '', label: 'New chat', sub }];
+  return chats.concat([{ kind: 'terminal', command: '', label: 'Terminal', sub: '' }],
+    more.map((a) => ({ kind: 'chat', command: a.command, label: `New chat with ${a.label}`, sub, group: 'more' })));
 }
 
 (function publish(exports) {
   if (typeof module !== 'undefined' && module.exports) module.exports = exports;
   if (typeof window !== 'undefined') window.HuskNewChatMenu = exports;
-})({ detectedAgents, newChatEntries });
+})({ detectedAgents, splitConnected, newChatEntries });
 })();

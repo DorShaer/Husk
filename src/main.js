@@ -2113,7 +2113,11 @@ ipcMain.handle('chat:handoffTo', (_e, { source, targetTabId } = {}) => {
 
 // Who the claude CLI is signed in as, for the notice after a sign-in finishes.
 // Read from the CLI itself rather than its credential files.
-ipcMain.handle('auth:status', async (_e, { tabId } = {}) => readCliSignIn(activeAgentCommand(tabId)));
+// A named command is read only when it is one of the known CLIs.
+ipcMain.handle('auth:status', async (_e, { tabId, command } = {}) => {
+  if (command !== undefined && !KNOWN_AGENTS.some((a) => a.command === command)) return { ok: false, error: 'unknown CLI' };
+  return readCliSignIn(command || activeAgentCommand(tabId));
+});
 async function readCliSignIn(command) {
   if (chatTransportFor(command) !== 'claude') return { ok: false, error: 'The active CLI has no sign-in status to report' };
   const env = buildAgentEnv();
