@@ -124,6 +124,29 @@
   --term-fg: #e8ecf4;
 }
 
+/* Eclipse: a true black field with quiet surfaces, so the accent carries the light. */
+[data-theme="eclipse"] {
+  --bg: #000000;
+  --bg-1: rgba(255, 255, 255, 0.045);
+  --bg-2: rgba(255, 255, 255, 0.07);
+  --bg-3: rgba(255, 255, 255, 0.09);
+  --bg-4: rgba(255, 255, 255, 0.12);
+  --line: rgba(255, 255, 255, 0.07);
+  --line-2: rgba(255, 255, 255, 0.12);
+  --line-3: rgba(255, 255, 255, 0.20);
+  --text: #f5f5f7;
+  --text-2: rgba(245, 245, 247, 0.70);
+  --text-3: rgba(245, 245, 247, 0.48);
+  --rose: #ff6b7e;
+  --emerald: #5bd49a;
+  --amber: #ffcc33;
+  --info: #6fb5ff;
+  --notif-bg: #0d0d0d;
+  --bg-radial: radial-gradient(1000px circle at 50% 28%, rgba(255, 212, 0, 0.035), transparent 65%);
+  --term-bg: #000000;
+  --term-fg: #e8e8ea;
+}
+
 /* Nord: arctic blue-grey. */
 [data-theme="nord"] {
   --bg: #2e3440;
@@ -569,6 +592,15 @@
   --grad: linear-gradient(135deg, #c084fc, #d8b4fe);
   --on-accent: #2a0f47;
 }
+[data-accent="gold"] {
+  --accent: #ffd400;
+  --accent-2: #ffe14d;
+  --accent-3: #c9a600;
+  --accent-glow: rgba(255, 212, 0, 0.30);
+  --focus-ring: 0 0 0 3px var(--accent-glow);
+  --grad: linear-gradient(135deg, #ffd400, #ffe14d);
+  --on-accent: #0a0a0a;
+}
 [data-accent="amber"] {
   --accent: #fbbf24;
   --accent-2: #fcd34d;
@@ -618,6 +650,15 @@
   --accent-3: #155e75;
   --accent-glow: rgba(14, 116, 144, 0.22);
   --grad: linear-gradient(135deg, #0e7490, #0891b2);
+  --on-accent: #ffffff;
+}
+[data-mode="light"][data-accent="gold"] {
+  --accent: #8a6b00;
+  --accent-2: #9e7b00;
+  --accent-3: #6b5300;
+  --accent-glow: rgba(138, 107, 0, 0.22);
+  --focus-ring: 0 0 0 3px var(--accent-glow);
+  --grad: linear-gradient(135deg, #8a6b00 0%, #9e7b00 100%);
   --on-accent: #ffffff;
 }
 [data-mode="light"][data-accent="indigo"] {
