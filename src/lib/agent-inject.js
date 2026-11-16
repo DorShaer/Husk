@@ -20,7 +20,7 @@
 // planInjection is PURE: it returns a plan. The caller applies it.
 
 const { agentKey } = require('./mcp/common');
-const { buildHuskPrompt } = require('./pai-state');
+const { buildHuskPrompt } = require('./husk-prompt');
 
 const HUSK_SESSION_START = '<!-- HUSK-SESSION:START -->';
 const HUSK_SESSION_END = '<!-- HUSK-SESSION:END -->';
@@ -138,14 +138,14 @@ function mergeSessionBlock(existingText, body) {
 //   { method: 'instructions-file', filePath, body, refresh }        (copilot, codex, gemini)
 //   { method: 'read-file', filePath, body, args, refresh }          (aider)
 //   { method: 'none', refresh }                                     (everything else)
-function planInjection({ agentCommand, agentName, paiEnabled, recap } = {}) {
+function planInjection({ agentCommand, agentName, recap } = {}) {
   const key = agentKey(agentCommand);
   const channel = AGENT_CHANNELS[key];
   const body = buildGenericDirectives({ agentName, recap });
   const refresh = { filePaths: instructionFilePaths(), body };
   if (!channel) return { method: 'none', refresh };
   if (channel.method === 'system-prompt-arg') {
-    const prompt = buildHuskPrompt({ agentName, paiEnabled: paiEnabled !== false, recap });
+    const prompt = buildHuskPrompt({ agentName, recap });
     // Silence the agent's own inline statusline inside Husk; Husk's right-side
     // STATUS panel is the visual statusline. Delivered as an inline --settings
     // JSON string, which claude merges over the user's settings.json so every

@@ -21,7 +21,6 @@ function makeHome() {
   fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
   fs.writeFileSync(path.join(cfgDir, 'config.json'), JSON.stringify({
     agentCommand: `node ${FIXTURE}`,
-    paiEnabled: false,
     voice: { enabled: false },
     skipWelcome: true,
     firstRunDone: true,

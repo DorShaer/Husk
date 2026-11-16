@@ -30,7 +30,6 @@ function launchWithProject(projectDir) {
     firstRunDone: true,
     skipWelcome: true,
     lastSeenVersion: pkgVersion,
-    paiEnabled: false,
     voice: { enabled: false, name: 'en_US-amy-medium', rate: 1.0 },
     agentCommand: `node ${FIXTURE}`,
     projects: [{ id: 'p1', name: 'e2e-proj', path: projectDir }],

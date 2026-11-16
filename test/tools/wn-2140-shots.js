@@ -22,7 +22,7 @@ const CODEX_FIXTURE = path.join(ROOT, 'test', 'e2e', 'fixtures', 'fake-codex-app
 function configure(env) {
   const configPath = path.join(env.homeDir, '.config', 'husk', 'config.json');
   const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-  Object.assign(config, { agentCommand: 'codex', theme: 'light', accent: 'indigo', railExpanded: true, statusCollapsed: false, statusPane: 'work', paiEnabled: false });
+  Object.assign(config, { agentCommand: 'codex', theme: 'light', accent: 'indigo', railExpanded: true, statusCollapsed: false, statusPane: 'work' });
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
   const shim = path.join(env.bin, 'codex');
   fs.writeFileSync(shim, `#!/bin/sh

@@ -27,7 +27,7 @@ function boot(agentCommand = 'claude') {
   fs.mkdirSync(promptsDir, { recursive: true });
   fs.mkdirSync(skillsDir, { recursive: true });
   fs.writeFileSync(path.join(cfgDir, 'config.json'), JSON.stringify({
-    firstRunDone: true, skipWelcome: true, agentCommand, paiEnabled: false,
+    firstRunDone: true, skipWelcome: true, agentCommand,
   }));
   // Backdated well past the recency window: this stands for a library that has
   // been there a while, so only what a test installs itself counts as new.

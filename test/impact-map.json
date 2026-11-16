@@ -339,7 +339,7 @@
         "src/lib/model-catalog.js",
         "src/lib/model-routing.js",
         "src/lib/ui-zoom.js",
-        "src/lib/pai-state.js",
+        "src/lib/husk-prompt.js",
         "src/lib/task-routing.js"
       ]
     },

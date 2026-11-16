@@ -5,7 +5,6 @@ const { app, BrowserWindow, ipcMain, shell, dialog, Menu, nativeTheme, protocol 
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const http = require('http');
 const crypto = require('crypto');
 const { spawn, execFile } = require('child_process');
 let pty;
@@ -370,11 +369,6 @@ const DEFAULT_CONFIG = {
   voice: { enabled: false, name: 'en_US-amy-medium', rate: 1.0 },
   skipWelcome: false,
   recap: true,
-  // LifeOS is the bundled Claude-Code-only assistant framework Husk drops into
-  // ~/.claude/. Enabled by default; switching it off skips the bootstrap, stops
-  // the statusline tick, and drops the framework reference from the Husk
-  // identity prompt. The key name is part of the stored config contract.
-  paiEnabled: true,
   profiles: DEFAULT_PROFILES,
   activeProfileId: null,
   // Map of encoded-cwd -> the last claude session id Husk bound there. On a
@@ -463,10 +457,7 @@ function registerInstallHandler(channel, handler, reviewed = true) {
 }
 
 
-// ─── Framework bootstrap (packaged binaries) ─────────────────────────────────
-// A packaged binary has no install.sh, so libs/lifeos is copied into ~/.claude/
-// here on first launch. In dev mode the bundle path does not exist and
-// install.sh handles it.
+// ─── Prompts and statusline ──────────────────────────────────────────────────
 // ~/.config/husk/prompts/ is seeded from the bundled curated set on first
 // launch. A file that already exists in the destination is left alone.
 // The statusline script runs periodically so the caches it writes
@@ -475,9 +466,8 @@ function registerInstallHandler(channel, handler, reviewed = true) {
 // limits itself. See refreshAnthropicUsageCache below.
 let statuslineTimer = null;
 
-// Runs the framework's statusline script, pinned by path and content.
+// Runs the user's own statusline script, pinned by path and content.
 const STATUSLINE_CANDIDATES = () => [
-  path.join(CLAUDE_DIR, 'LIFEOS', 'LIFEOS_StatusLine.sh'),
   path.join(CLAUDE_DIR, 'PAI', 'statusline-command.sh'),
   path.join(CLAUDE_DIR, 'statusline-command.sh'),
 ];
@@ -541,9 +531,6 @@ function refreshStatuslineCacheOnce() {
 }
 function startStatuslineRefresh() {
   if (statuslineTimer) return;
-  // The statusline script is the framework's status feeder. Skip the tick
-  // entirely when the user has disabled it: no script, no caches, no need.
-  if (config.paiEnabled === false) return;
   // Kick off once on startup, then every 30s.
   refreshStatuslineCacheOnce();
   statuslineTimer = setInterval(refreshStatuslineCacheOnce, 30000);
@@ -663,150 +650,6 @@ function bootstrapHuskPromptsIfNeeded() {
     }
   } catch (err) {
     console.error('[husk] prompt bootstrap failed:', err && err.message);
-  }
-}
-
-// Park or restore ~/.claude/CLAUDE.md based on the current paiEnabled state.
-// Implementation lives in src/lib/pai-state.js so it can be unit-tested
-// without spinning up Electron.
-const PaiState = require('./lib/pai-state');
-
-// Digests of every CLAUDE.md template Husk has shipped, so the toggle parks the
-// live file only while it still matches Husk's own untouched scaffold. Older
-// entries stay listed for installs that never upgraded theirs.
-const SHIPPED_CLAUDE_MD_DIGESTS = [
-  // LifeOS 7.1.1, the template in the current bundle. Read at call time rather
-  // than hard-coded so it cannot drift from the file we actually ship.
-];
-function shippedClaudeMdDigests() {
-  const digests = [...SHIPPED_CLAUDE_MD_DIGESTS];
-  try {
-    const bundle = findBundledFramework();
-    if (bundle) {
-      const tpl = path.join(bundle, 'CLAUDE.template.md');
-      if (fs.existsSync(tpl)) digests.push(PaiState.digestOf(fs.readFileSync(tpl, 'utf8')));
-    }
-  } catch (_) {}
-  return digests;
-}
-function applyPaiState(active) {
-  PaiState.applyPaiState(path.join(HOME, '.claude'), active, {
-    templateDigests: shippedClaudeMdDigests(),
-  });
-}
-
-// Per-install state the runtime writes into but the bundle never ships. The
-// directories have to exist before the first run or the framework has nowhere
-// to put its own output.
-const LIFEOS_MEMORY_SUBDIRS = ['WORK', 'KNOWLEDGE', 'LEARNING', 'STATE', 'OBSERVABILITY', 'SKILLS'];
-
-// The vendored bundle carries no bun lockfiles, by rule. The per-skill tools are
-// optional and a user who opts in resolves current versions. The package.json
-// files stay, since they are what makes that resolve possible.
-
-// Locate the bundled framework.
-// Packaged: app.isPackaged && process.resourcesPath/lifeos/ exists.
-// Dev:      <repo>/libs/lifeos/ relative to __dirname (which is <repo>/src/).
-function findBundledFramework() {
-  const candidates = [];
-  if (app.isPackaged && process.resourcesPath) {
-    candidates.push(path.join(process.resourcesPath, 'lifeos'));
-  }
-  candidates.push(path.join(__dirname, '..', 'libs', 'lifeos'));
-  for (const c of candidates) {
-    if (fs.existsSync(c) && fs.existsSync(path.join(c, 'CLAUDE.template.md'))) return c;
-  }
-  return null;
-}
-
-function bootstrapPaiIfNeeded() {
-  // Hard opt-out: with the framework disabled in Preferences, ~/.claude/ is
-  // left untouched on launch. Pre-existing files stay where they are, and the
-  // user can clean ~/.claude/{LIFEOS,agents,skills,hooks}/ themselves.
-  if (config.paiEnabled === false) return;
-  try {
-    const claudeDir = path.join(HOME, '.claude');
-
-    // A framework already laid out under ~/.claude/PAI/ owns its own CLAUDE.md
-    // imports, so that install is left alone entirely.
-    if (fs.existsSync(path.join(claudeDir, 'PAI'))) return;
-
-    const bundle = findBundledFramework();
-    if (!bundle) return;
-
-    fs.mkdirSync(claudeDir, { recursive: true });
-
-    // CLAUDE.md: only copy when the user does NOT already have one. This
-    // protects user customizations across upgrades.
-    const claudemdDst = path.join(claudeDir, 'CLAUDE.md');
-    if (!fs.existsSync(claudemdDst)) {
-      const tpl = path.join(bundle, 'CLAUDE.template.md');
-      if (fs.existsSync(tpl)) fs.copyFileSync(tpl, claudemdDst);
-    }
-
-    // Framework subdirs: merge missing children into existing dirs (cp -Rn
-    // semantics), checked independently of CLAUDE.md, so an install that
-    // already has ~/.claude/CLAUDE.md still receives the bundled skills, agents
-    // and hooks. LIFEOS is spelled in caps to match the @LIFEOS/... imports
-    // CLAUDE.md carries, since any other spelling dangles on a case-sensitive
-    // filesystem.
-    for (const sub of ['LIFEOS', 'agents', 'commands', 'hooks', 'skills']) {
-      const src = path.join(bundle, sub);
-      const dst = path.join(claudeDir, sub);
-      if (!fs.existsSync(src)) continue;
-      if (!fs.existsSync(dst)) copyDirRecursiveSync(src, dst);
-      else copyMissingChildrenSync(src, dst);
-    }
-
-    // The identity scaffold lands inside the runtime tree so the @LIFEOS/USER/...
-    // imports resolve without a symlink. Every shipped file is a blank template.
-    const userSrc = path.join(bundle, 'USER');
-    const userDst = path.join(claudeDir, 'LIFEOS', 'USER');
-    if (fs.existsSync(userSrc)) {
-      if (!fs.existsSync(userDst)) copyDirRecursiveSync(userSrc, userDst);
-      else copyMissingChildrenSync(userSrc, userDst);
-    }
-
-    for (const sub of LIFEOS_MEMORY_SUBDIRS) {
-      fs.mkdirSync(path.join(claudeDir, 'LIFEOS', 'MEMORY', sub), { recursive: true });
-    }
-  } catch (err) {
-    console.error('[husk] framework bootstrap failed:', err && err.message);
-  }
-}
-
-// Like cp -Rn at the immediate-children level: copy each top-level entry in src
-// to dst only when the destination entry does not exist. Never recurses into an
-// existing destination subtree.
-function copyMissingChildrenSync(src, dst) {
-  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
-    if (entry.isFile() && BUNDLE_INSTRUCTION_FILES.has(entry.name)) continue;
-    const s = path.join(src, entry.name);
-    const d = path.join(dst, entry.name);
-    if (fs.existsSync(d)) continue;
-    // A disabled skill is renamed to _disabled_<name>, and counts as already
-    // present so the original is not re-added beside it.
-    if (fs.existsSync(path.join(dst, DISABLED_PREFIX + entry.name))) continue;
-    if (entry.isDirectory()) copyDirRecursiveSync(s, d);
-    else if (entry.isFile()) fs.copyFileSync(s, d);
-    // ignore symlinks/devices
-  }
-}
-
-// Agent-instruction files the bundle carries for the upstream project's own
-// repo. They stay in the bundle and are never copied into a user's ~/.claude/,
-// where writing the instructions is the user's business.
-const BUNDLE_INSTRUCTION_FILES = new Set(['CLAUDE.md', 'AGENTS.md', 'GEMINI.md']);
-
-function copyDirRecursiveSync(src, dst) {
-  fs.mkdirSync(dst, { recursive: true });
-  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
-    if (entry.isFile() && BUNDLE_INSTRUCTION_FILES.has(entry.name)) continue;
-    const s = path.join(src, entry.name);
-    const d = path.join(dst, entry.name);
-    if (entry.isDirectory()) copyDirRecursiveSync(s, d);
-    else if (entry.isFile()) fs.copyFileSync(s, d);
-    // ignore symlinks/devices
   }
 }
 
@@ -1061,10 +904,8 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
     TERM: 'xterm-256color',
     COLORTERM: 'truecolor',
     CLAUDE_DIR,
-    // Marker so PAI hooks/statusline can suppress duplicate chrome
-    // (status dashboard, neofetch banner, inline statusline) that Husk's
-    // right panel already surfaces. PAI side checks $HUSK_HOST and
-    // early-exits.
+    // Marker so user hooks and statuslines can skip chrome (dashboards,
+    // banners, inline statusline) that Husk's right panel already shows.
     HUSK_HOST: '1',
   });
   // A Husk started from inside a claude session must not pass the nesting
@@ -1119,7 +960,6 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
     const planned = AgentInject.planInjection({
       agentCommand: rawCmd,
       agentName: config.agentName,
-      paiEnabled: config.paiEnabled !== false,
       recap: config.recap,
     });
     // Prompt-based persona injection uses quoting that cmd.exe and node-pty
@@ -1342,7 +1182,7 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
 // Read the most-recent claude session JSONL for the active PTY cwd and return a
 // coarse usage estimate: turn count plus a chars/4 token estimate. The agent
 // process owns the real token counter and writes it to usage-cache.json only
-// when the framework statusline is wired up.
+// when a statusline script that writes it is wired up.
 let _claudeJsonCache = { mtime: 0, data: null };
 function readClaudeJson() {
   try {
@@ -1799,7 +1639,7 @@ ipcMain.handle('feedback:open', (_e, { kind } = {}) => ({ ok: true, url: openFee
 // src/lib/chat-runtime.js; this block only supplies process plumbing.
 
 // chatEnv mirrors spawnPty's env: the same PATH recovery for GUI launches and
-// the HUSK_HOST marker so PAI hooks skip their terminal chrome. CLAUDECODE is
+// the HUSK_HOST marker so user hooks skip their terminal chrome. CLAUDECODE is
 // dropped so a claude child never believes it is nested inside another one.
 function chatEnv(command) {
   const env = Object.assign({}, process.env, { CLAUDE_DIR, HUSK_HOST: '1', HUSK_CHAT: '1' });
@@ -5238,19 +5078,9 @@ ipcMain.handle('config:set', (_e, partial) => {
   for (const key of Object.keys(partial || {})) {
     if (!CONFIG_KEYS_MAIN_OWNS.has(key)) incoming[key] = partial[key];
   }
-  const paiChanged = Object.prototype.hasOwnProperty.call(incoming, 'paiEnabled')
-    && incoming.paiEnabled !== config.paiEnabled;
   config = { ...config, ...incoming };
   saveConfig(config);
   if (Object.prototype.hasOwnProperty.call(incoming, 'theme')) syncNativeTheme();
-  if (paiChanged) {
-    // Park or restore ~/.claude/CLAUDE.md so the next agent restart sees the
-    // selected PAI instruction state. The statusline tick follows the same
-    // setting; bootstrap files on disk are left intact.
-    applyPaiState(config.paiEnabled !== false);
-    if (config.paiEnabled !== false) startStatuslineRefresh();
-    else stopStatuslineRefresh();
-  }
   return { ...config };
 });
 
@@ -6309,7 +6139,7 @@ const WF_FINISHED_RUNS_MAX = 5;
 ipcMain.handle('workflows:list', () => loadWorkflows().map(migrateWorkflow));
 
 // Environment for spawned one-shot CLI agents (workflow steps, prompt
-// generation). Mirrors the PTY env so PAI hooks resolve: ~/.bun/bin must be
+// generation). Mirrors the PTY env so user hooks resolve: ~/.bun/bin must be
 // on PATH or every bun-based SessionEnd hook fails with 'bun: not found'.
 function buildAgentEnv(command) {
   const env = Object.assign({}, process.env, { CLAUDE_DIR, HUSK_HOST: '1' });
@@ -13145,41 +12975,6 @@ ipcMain.handle('voice:uninstall', async () => {
   }
 });
 
-// Listen on the loopback voice-notification ports with a silent sink so the
-// bundled PAI's TTS POSTs do not produce sound while Husk is running; Husk
-// drives its own Piper/say voice instead. 8888 is the legacy port; 31337 is
-// the port PAI v5 posts to. Ports already held by another process are skipped.
-// Released cleanly on quit.
-const VOICE_SINK_PORTS = [8888, 31337];
-let nullVoiceServers = [];
-function startNullVoiceServer() {
-  const openSink = (port) => new Promise((resolve) => {
-    const server = http.createServer((req, res) => {
-      if (req.method === 'POST') {
-        req.resume();
-        req.on('end', () => {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end('{"status":"ok","silent":true}');
-        });
-      } else {
-        res.writeHead(200, { 'Content-Type': 'text/plain' });
-        res.end('husk-null-voice');
-      }
-    });
-    server.on('error', () => resolve());
-    server.listen(port, '127.0.0.1', () => {
-      nullVoiceServers.push(server);
-      resolve();
-    });
-  });
-  return Promise.all(VOICE_SINK_PORTS.map(openSink));
-}
-function stopNullVoiceServer() {
-  for (const server of nullVoiceServers) { try { server.close(); } catch (_) {} }
-  nullVoiceServers = [];
-}
-
-
 // ─── Auto-update (electron-updater + GitHub Releases) ──────────────────────────
 //
 // Flow per platform:
@@ -13440,8 +13235,6 @@ if (!gotLock) {
       else if (ConfigSecrets.needsSeal(config, configKeychain)) saveConfig(config);
     }
     protocol.handle(bgImage.SCHEME, serveBackground);
-    applyPaiState(config.paiEnabled !== false);
-    bootstrapPaiIfNeeded();
     prepareSharedSkills();
     bootstrapHuskPromptsIfNeeded();
     // Make existing Husk agents available to every installed CLI (writes any
@@ -13450,7 +13243,6 @@ if (!gotLock) {
     startStatuslineRefresh();
     startUsageRefresh();
     startScheduler();
-    await startNullVoiceServer();
     // Recover or prune worktrees left behind by a crash before any new run
     // can create one. Guarded so it never blocks the window from opening.
     try { reconcileOrphanWorktrees(); } catch (_) {}
@@ -13459,17 +13251,17 @@ if (!gotLock) {
     setupAutoUpdater();
   });
   app.on('window-all-closed', () => {
-    killPtyTree(); stopNullVoiceServer(); stopStatuslineRefresh(); stopUsageRefresh(); stopScheduler(); stopAutoUpdater();
+    killPtyTree(); stopStatuslineRefresh(); stopUsageRefresh(); stopScheduler(); stopAutoUpdater();
     // Exit hard. app.quit()'s graceful teardown waits for the GPU and renderer
     // processes to exit, which on a real compositor can hang and leave the main
     // process alive with no window. app.exit() terminates immediately.
     app.exit(0);
   });
-  app.on('before-quit', () => { killPtyTree(); stopNullVoiceServer(); stopStatuslineRefresh(); stopUsageRefresh(); stopAutoUpdater(); });
-  app.on('will-quit', () => { killPtyTree(); stopNullVoiceServer(); });
+  app.on('before-quit', () => { killPtyTree(); stopStatuslineRefresh(); stopUsageRefresh(); stopAutoUpdater(); });
+  app.on('will-quit', () => { killPtyTree(); });
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
-  process.on('SIGINT',  () => { killPtyTree(); stopNullVoiceServer(); app.quit(); });
-  process.on('SIGTERM', () => { killPtyTree(); stopNullVoiceServer(); app.quit(); });
-  process.on('SIGHUP',  () => { killPtyTree(); stopNullVoiceServer(); app.quit(); });
-  process.on('exit',    () => { killPtyTree(); stopNullVoiceServer(); });
+  process.on('SIGINT',  () => { killPtyTree(); app.quit(); });
+  process.on('SIGTERM', () => { killPtyTree(); app.quit(); });
+  process.on('SIGHUP',  () => { killPtyTree(); app.quit(); });
+  process.on('exit',    () => { killPtyTree(); });
 }

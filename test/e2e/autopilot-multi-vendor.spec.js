@@ -41,8 +41,7 @@ setInterval(() => {
   for (const vendor of ['claude', 'codex']) fs.writeFileSync(path.join(bin, vendor), fixture, { mode: 0o755 });
   const routing = { cheap: { vendor: 'codex', model: 'simple-pin' }, smart: { vendor: 'claude', model: 'complex-pin' }, planner: { vendor: 'claude', model: 'planner-pin' }, integrator: { vendor: 'codex', model: 'integrator-pin' } };
   fs.writeFileSync(path.join(home, '.config/husk/config.json'), JSON.stringify({
-    firstRunDone: true, skipWelcome: true, lastSeenVersion: require('../../package.json').version,
-    paiEnabled: false, voice: { enabled: false }, agentCommand: 'codex', chatAppearance: 'native',
+    firstRunDone: true, skipWelcome: true, lastSeenVersion: require('../../package.json').version, voice: { enabled: false }, agentCommand: 'codex', chatAppearance: 'native',
     agentVendor: 'openai', agentBaseUrl: 'http://127.0.0.1:1/v1', agentApiKey: 'fixture-openai-key',
     projects: [{ id: 'p', name: 'fixture', path: project }], activeProjectId: 'p',
     taskRouting: routing, autopilotMaxConcurrent: 2,

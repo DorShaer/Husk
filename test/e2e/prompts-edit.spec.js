@@ -19,7 +19,7 @@ function makeEnv(prompts) {
   fs.mkdirSync(dir, { recursive: true });
   fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
   fs.writeFileSync(path.join(home, '.config', 'husk', 'config.json'), JSON.stringify({
-    firstRunDone: true, skipWelcome: true, paiEnabled: false, voice: { enabled: false }, agentCommand: 'claude',
+    firstRunDone: true, skipWelcome: true, voice: { enabled: false }, agentCommand: 'claude',
   }));
   for (const [file, body] of Object.entries(prompts)) fs.writeFileSync(path.join(dir, file), body);
   return { root, home, dir };

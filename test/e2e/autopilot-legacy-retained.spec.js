@@ -21,7 +21,7 @@ function launch(projectDir) {
   fs.mkdirSync(path.join(homeDir, '.claude'), { recursive: true });
   const pkgVersion = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8')).version;
   fs.writeFileSync(path.join(cfgDir, 'config.json'), JSON.stringify({
-    firstRunDone: true, skipWelcome: true, lastSeenVersion: pkgVersion, paiEnabled: false,
+    firstRunDone: true, skipWelcome: true, lastSeenVersion: pkgVersion,
     projects: [{ id: 'p1', name: 'legacy-proj', path: projectDir }],
     activeProjectId: 'p1',
   }, null, 2));

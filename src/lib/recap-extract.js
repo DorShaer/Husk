@@ -10,7 +10,7 @@
 // contaminated by surrounding chrome.
 //
 // Patterns read:
-//   🗣️ <Name>: <one-line summary>     (PAI NATIVE/MINIMAL trailing line)
+//   🗣️ <Name>: <one-line summary>     (agent name summary line)
 //   * recap: <one-line summary>        (Claude Code recap)
 //
 // rows: array of { text, wrapped } in top-to-bottom order. `wrapped` marks a

@@ -130,7 +130,7 @@ test('workflows hub renders its hero, illustration and pattern gallery', async (
 });
 
 test('job model picker separates vendors, preserves pins, keeps half-set routing honest and fits the window', async () => {
-  const app = await launch({ firstRunDone: true, skipWelcome: true, agentCommand: 'true', paiEnabled: false });
+  const app = await launch({ firstRunDone: true, skipWelcome: true, agentCommand: 'true' });
   const win = await ready(app);
   await win.waitForFunction(() => !!cfg);
   const info = await win.evaluate(() => {
@@ -193,7 +193,7 @@ test('job model picker separates vendors, preserves pins, keeps half-set routing
 });
 
 test('vendor model responses cannot replace another vendor selection', async () => {
-  const app = await launch({ firstRunDone: true, skipWelcome: true, agentCommand: 'true', paiEnabled: false });
+  const app = await launch({ firstRunDone: true, skipWelcome: true, agentCommand: 'true' });
   const win = await ready(app);
   await win.waitForFunction(() => !!cfg);
   await app.evaluate(({ ipcMain }) => {
@@ -221,7 +221,7 @@ test('vendor model responses cannot replace another vendor selection', async () 
 });
 
 test('a CLI with no saved models shows Not routed with zero tier controls, and routing is set up from its own catalog', async () => {
-  const app = await launch({ firstRunDone: true, skipWelcome: true, agentCommand: 'true', paiEnabled: false,
+  const app = await launch({ firstRunDone: true, skipWelcome: true, agentCommand: 'true',
     taskRouting: { cheap: { vendor: 'codex', model: '' }, smart: { vendor: 'claude', model: '' }, planner: { vendor: 'auto', model: '' }, integrator: { vendor: 'auto', model: '' } } });
   const win = await ready(app);
   await win.waitForFunction(() => !!cfg);
@@ -278,7 +278,7 @@ test('a CLI with no saved models shows Not routed with zero tier controls, and r
 });
 
 test('Autopilot launch passes a job vendor override without changing new-chat defaults', async () => {
-  const app = await launch({ firstRunDone: true, skipWelcome: true, agentCommand: 'true', paiEnabled: false });
+  const app = await launch({ firstRunDone: true, skipWelcome: true, agentCommand: 'true' });
   const win = await ready(app);
   await win.waitForFunction(() => !!cfg);
   await app.evaluate(({ ipcMain }) => {
@@ -474,7 +474,7 @@ test('adding a context file types its path and nothing else', async () => {
   const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-context-source-'));
   const sourcePath = path.join(sourceDir, 'cert.der');
   fs.writeFileSync(sourcePath, 'demo certificate');
-  const app = await launch({ firstRunDone: true, agentCommand: 'bash --noprofile --norc', paiEnabled: false });
+  const app = await launch({ firstRunDone: true, agentCommand: 'bash --noprofile --norc' });
   const win = await ready(app);
   // A tab started before boot loads the config takes the default agent, not
   // this test's shell.

@@ -37,7 +37,6 @@ function makeHome() {
 
   fs.writeFileSync(path.join(cfgDir, 'config.json'), JSON.stringify({
     agentCommand: 'node -e "setInterval(function(){},1000)"',
-    paiEnabled: false,
     firstRunDone: true,
     skipWelcome: true,
     projects: [

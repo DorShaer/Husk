@@ -2847,13 +2847,7 @@
                     Voice
                   </button>
                 </div>
-                <div class="prefs-nav-group">
-                  <div class="section-label prefs-nav-group-head">System</div>
-                  <button class="prefs-nav-item" data-prefs-section="pai">
-                    <span class="pni-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><circle cx="12" cy="12" r="3"/></svg></span>
-                    LifeOS
-                  </button>
-                </div>
+                
                 <div class="prefs-nav-group is-standalone">
                   <button class="prefs-nav-item" data-prefs-section="foundation">
                     <span class="pni-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 10h18M7 15h4"/></svg></span>
@@ -2995,7 +2989,7 @@
                   <label class="pref-row">
                     <span class="pref-row-text">
                       <span class="pref-label">Show recap line after each response</span>
-                      <span class="pref-desc">Ends each substantive reply with a one-line spoken summary (<code>🗣️ &lt;name&gt;: …</code>, or <code>* recap:</code> with LifeOS); the voice reads it aloud when enabled. When off, the line is not requested at all. Restart the agent after changing.</span>
+                      <span class="pref-desc">Ends each substantive reply with a one-line spoken summary (<code>🗣️ &lt;name&gt;: …</code>, or <code>* recap:</code>); the voice reads it aloud when enabled. When off, the line is not requested at all. Restart the agent after changing.</span>
                     </span>
                     <input type="checkbox" id="pref-recap" />
                   </label>
@@ -3056,18 +3050,7 @@
                 </section>
               </div><!-- /pref-section usage -->
 
-              <div class="pref-section" data-prefs-section="pai">
-                <section class="pref-card">
-                  <div class="pref-card-title section-label">LifeOS</div>
-                  <label class="pref-row">
-                    <span class="pref-row-text">
-                      <span class="pref-label">Enable LifeOS</span>
-                      <span class="pref-desc">Bundles a skills library, agents, hooks, statusline, and the Algorithm flow into the agent's own config directory, for the agents that read one. Off skips the bootstrap and statusline tick and drops the framework nudge; existing files are left untouched. Restart the agent after changing.</span>
-                    </span>
-                    <input type="checkbox" id="pref-pai" />
-                  </label>
-                </section>
-              </div><!-- /pref-section pai -->
+              
 
               <div class="pref-section" data-prefs-section="appearance">
                 <section class="pref-card">

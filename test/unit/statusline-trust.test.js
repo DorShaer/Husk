@@ -7,10 +7,10 @@ const assert = require('node:assert/strict');
 
 const { decide, REFUSE_CHANGED, REFUSE_APPEARED, REFUSE_MALFORMED } = require('../../src/lib/statusline-trust');
 
-const LIFEOS = '/home/u/.claude/LIFEOS/LIFEOS_StatusLine.sh';
-const PAI = '/home/u/.claude/PAI/statusline-command.sh';
+const FIRST = '/home/u/.claude/first/statusline.sh';
+const NESTED = '/home/u/.claude/PAI/statusline-command.sh';
 const ROOT = '/home/u/.claude/statusline-command.sh';
-const CANDIDATES = [LIFEOS, PAI, ROOT];
+const CANDIDATES = [FIRST, NESTED, ROOT];
 
 // A disk, as a map of path to digest. Absent means not a regular file.
 function disk(map) {
@@ -33,8 +33,8 @@ test('a pinned script that has not changed keeps running, and re-pins nothing', 
 });
 
 test('the newest layout wins when more than one candidate exists', () => {
-  const v = decide(CANDIDATES, null, disk({ [LIFEOS]: 'aaa', [PAI]: 'bbb', [ROOT]: 'ccc' }));
-  assert.equal(v.run, LIFEOS);
+  const v = decide(CANDIDATES, null, disk({ [FIRST]: 'aaa', [NESTED]: 'bbb', [ROOT]: 'ccc' }));
+  assert.equal(v.run, FIRST);
 });
 
 // ─── what must not run ─────────────────────────────────────────────────────
@@ -61,16 +61,16 @@ test('rewriting a trusted script is refused', () => {
 
 test('shadowing the pinned script with a higher-priority path is refused', () => {
   // The pin names the root-level file, and a second script arrives at the
-  // LIFEOS path, which the candidate order prefers. Preference must not
+  // FIRST path, which the candidate order prefers. Preference must not
   // outrank identity.
-  const v = decide(CANDIDATES, { path: ROOT, sha256: 'good' }, disk({ [LIFEOS]: 'ccc', [ROOT]: 'good' }));
+  const v = decide(CANDIDATES, { path: ROOT, sha256: 'good' }, disk({ [FIRST]: 'ccc', [ROOT]: 'good' }));
   assert.equal(v.run, null, 'a higher-priority path outranked the pin');
   assert.equal(v.reason, REFUSE_CHANGED);
 });
 
 test('reusing the pinned digest at a different path is refused', () => {
   // Same bytes, different location: identity is path AND content, not either.
-  const v = decide(CANDIDATES, { path: ROOT, sha256: 'good' }, disk({ [PAI]: 'good' }));
+  const v = decide(CANDIDATES, { path: ROOT, sha256: 'good' }, disk({ [NESTED]: 'good' }));
   assert.equal(v.run, null, 'the digest alone was accepted as identity');
   assert.equal(v.reason, REFUSE_CHANGED);
 });

@@ -61,6 +61,9 @@ test('long session titles keep their row height in a dense scrollable roster', a
 
 test('the shared detail panel stays full width when the status panel is collapsed', async () => {
   const homeDir = makeIsolatedHome();
+  const skillDir = path.join(homeDir, '.claude', 'skills', 'demo');
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '---\nname: demo\ndescription: Demo skill\n---\n\nSteps.\n');
   const app = await electron.launch({
     args: [path.join(REPO_ROOT, 'src', 'main.js'), '--no-sandbox'],
     cwd: REPO_ROOT,
@@ -146,7 +149,7 @@ test('claude Sessions list hides SDK-driven transcripts but keeps typed chats', 
     JSON.stringify({ timestamp: now(), cwd: '/home/test/proj', type: 'user', message: { content: 'OLD chat from before origin tracking' } }),
     JSON.stringify({ timestamp: now(), type: 'assistant', message: { content: [{ type: 'text', text: 'ok' }] } }),
   ]);
-  // A real chat that OPENS with a prepended SDK context turn (a PAI hook fired
+  // A real chat that OPENS with a prepended SDK context turn (a hook fired
   // early) but continues with human-typed turns. Keying on the first turn alone
   // would wrongly hide it; one human turn anywhere must keep it.
   write('eeeeeeee-0000-0000-0000-000000000005', [

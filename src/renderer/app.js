@@ -14812,7 +14812,6 @@ function bindPrefs() {
   $('#pref-recap').checked = cfg.recap !== false;
   $('#pref-transcript-days').value = String(cfg.transcriptRetentionDays ?? 30);
   if (window.HuskUsageBell) window.HuskUsageBell.bindPrefs();
-  if ($('#pref-pai')) $('#pref-pai').checked = cfg.paiEnabled !== false;
   $('#pref-theme').value = cfg.theme || 'midnight';
   if ($('#pref-chat-view')) $('#pref-chat-view').value = cfg.chatView === 'terminal' ? 'terminal' : 'chat';
   $('#pref-rail').checked = !!cfg.railExpanded;
@@ -14938,7 +14937,7 @@ async function speak(text) {
 }
 
 // Read the agent's spoken-summary line and pipe it into local TTS:
-//   🗣️ <Name>: <one-line summary>     (PAI NATIVE/MINIMAL trailing line)
+//   🗣️ <Name>: <one-line summary>     (agent name summary line)
 //   * recap: <one-line summary>        (Claude Code recap)
 //
 // The text is read from xterm's rendered grid rather than the raw byte stream,
@@ -15488,13 +15487,6 @@ $('#pref-hidden').addEventListener('change', async (e) => {
 $('#pref-recap').addEventListener('change', async (e) => {
   cfg = await window.husk.config.set({ recap: e.target.checked });
   toastRestart(`Recap ${cfg.recap ? 'enabled' : 'disabled'}`);
-});
-$('#pref-pai') && $('#pref-pai').addEventListener('change', async (e) => {
-  cfg = await window.husk.config.set({ paiEnabled: e.target.checked });
-  const msg = cfg.paiEnabled
-    ? 'LifeOS enabled · restart Husk to bootstrap, restart agent to load it'
-    : 'LifeOS disabled · restart agent to drop the prompt; existing ~/.claude/ files left in place';
-  toast(msg, 'success');
 });
 
 // ─── Updates (Preferences > About) ──────────────────────────────────────────────
@@ -20684,16 +20676,6 @@ function inlineMd(s) {
     .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
 }
 
-// Drop framework persona ceremony that leaks into workflow step output. Both
-// banner vocabularies are matched, since an install may emit either.
-function stripPaiNoise(text) {
-  return String(text || '')
-    .split('\n')
-    .filter((ln) => !/^[═=]{3,}.*(PAI|LifeOS)/.test(ln.trim()))
-    .filter((ln) => !/Executing using PAI native mode/.test(ln))
-    .join('\n')
-    .trim();
-}
 function escapeAttr(s) { return escapeHtml(s); }
 
 // ─── First-run onboarding + boot ──────────────────────────────────────────────────────

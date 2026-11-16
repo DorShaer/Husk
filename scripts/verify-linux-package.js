@@ -16,7 +16,7 @@ async function main() {
   try {
     fs.mkdirSync(configDir, { recursive: true });
     fs.mkdirSync(bin);
-    fs.writeFileSync(path.join(configDir, 'config.json'), JSON.stringify({ firstRunDone: true, skipWelcome: true, lastSeenVersion: require('../package.json').version, paiEnabled: false, resumeLastOnLaunch: false, agentCommand: 'gemini', agentCwd: home, planUsageSource: 'cli' }));
+    fs.writeFileSync(path.join(configDir, 'config.json'), JSON.stringify({ firstRunDone: true, skipWelcome: true, lastSeenVersion: require('../package.json').version, resumeLastOnLaunch: false, agentCommand: 'gemini', agentCwd: home, planUsageSource: 'cli' }));
     const fixture = path.resolve(__dirname, '../test/e2e/fixtures/fake-acp-agent.js');
     fs.writeFileSync(path.join(bin, 'gemini'), `#!/bin/sh\nexec "${process.execPath}" "${fixture}" "$@"\n`, { mode: 0o755 });
     const env = { ...process.env, HOME: home, USERPROFILE: home, COPILOT_HOME: path.join(home, '.copilot'), CODEX_HOME: path.join(home, '.codex'), PATH: `${bin}${path.delimiter}${process.env.PATH}`, ELECTRON_DISABLE_SANDBOX: '1', HUSK_E2E: '1' };

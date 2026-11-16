@@ -32,7 +32,6 @@ function makeEnv() {
   fs.writeFileSync(path.join(home, '.config', 'husk', 'config.json'), JSON.stringify({
     firstRunDone: true,
     skipWelcome: true,
-    paiEnabled: false,
     voice: { enabled: false },
     agentCommand: 'claude',
     projects: [{ id: 'p1', name: 'proj', path: project }],
