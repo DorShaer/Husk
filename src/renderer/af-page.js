@@ -153,6 +153,11 @@
     ];
 
     if (row.agent) kids.push(field('Agent', el('code', {}, row.agent)));
+    const jobs = Array.isArray(row.jobs) ? row.jobs.filter((j) => j.model) : [];
+    if (jobs.length) {
+      kids.push(field('Models', ...jobs.map((j) => el('div', { class: 'af-job-model' },
+        el('span', {}, `${j.role}: `), el('code', {}, j.agent ? `${j.agent} · ${j.model}` : j.model)))));
+    } else if (row.model) kids.push(field('Model', el('code', {}, row.model)));
     if (row.workspace) kids.push(field('Folder', el('code', {}, row.workspace)));
     if (row.failedStep) kids.push(field('Failed at', el('span', { class: 'af-warn' }, row.failedStep)));
 

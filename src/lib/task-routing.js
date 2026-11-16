@@ -1,7 +1,7 @@
 'use strict';
 
 const { agentBaseName } = require('./agent-oneshot');
-const { modelArgsFor, isExplicitModelValueUsable, classifyTier } = require('./model-routing');
+const { resolveModel, isExplicitModelValueUsable, classifyTier } = require('./model-routing');
 const VENDORS = Object.freeze(['claude', 'codex', 'gemini', 'copilot', 'kiro-cli', 'aider']);
 const MODEL_FLAGS = Object.freeze({ claude: '--model', codex: '--model', copilot: '--model', gemini: '-m', 'kiro-cli': '--model', aider: '--model' });
 const ROLES = Object.freeze(['cheap', 'smart', 'planner', 'integrator']);
@@ -42,11 +42,12 @@ function commandWithModel(command, vendor, model) {
   return [...clean, MODEL_FLAGS[vendor], model].join(' ');
 }
 
-function resolveTaskRoute({ config = {}, role = 'smart', requested, available = [], index, agentCommand } = {}) {
+function resolveTaskRoute({ config = {}, role = 'smart', requested, available = [], index, agentCommand, catalogs } = {}) {
   const options = availableRoutes(available);
   if (agentCommand && String(agentCommand).trim()) {
     const command = String(agentCommand).trim(), vendor = agentBaseName(command);
-    return { ok: true, vendor, command, model: '', role, automatic: false, reason: 'This job has an explicit agent command.' };
+    const m = command.match(/(?:^|\s)(?:--model|-m)(?:=|\s+)(\S+)/);
+    return { ok: true, vendor, command, model: m ? m[1] : '', role, automatic: false, reason: 'This job has an explicit agent command.' };
   }
   if (!config.taskRouting && (!requested || !requested.vendor || requested.vendor === 'auto') && config.agentCommand && !VENDORS.includes(agentBaseName(config.agentCommand))) {
     return resolveTaskRoute({ role, available, agentCommand: config.agentCommand });
@@ -69,23 +70,27 @@ function resolveTaskRoute({ config = {}, role = 'smart', requested, available = 
     const slot = Number.isInteger(index) && index >= 0 ? index : (role === 'smart' || role === 'integrator' ? 1 : 0);
     selected = options[slot % options.length];
   }
-  let selectedModel = model;
-  if (!config.taskRouting && (!requested || requested.vendor === 'auto') && (role === 'cheap' || role === 'smart') && routes[role]) {
-    const args = modelArgsFor(selected.vendor, role, config.modelRouting || {});
-    selectedModel = args.length ? args.at(-1) : '';
+  // A legacy route carries only the vendor; its model comes from the CLI's routing.
+  let selectedModel = config.taskRouting || requested?.vendor === choice.vendor ? model : '';
+  let notice = '';
+  if (!selectedModel) {
+    const r = resolveModel(selected.vendor, role === 'cheap' ? 'cheap' : 'smart', config.modelRouting || {}, catalogs && catalogs[selected.vendor]);
+    selectedModel = r.model;
+    notice = r.notice;
   }
   return {
     ok: true, vendor: selected.vendor, command: commandWithModel(selected.command, selected.vendor, selectedModel),
-    model: selectedModel, role, automatic: vendor === 'auto' || !selectedModel,
-    reason: vendor === 'auto'
+    model: selectedModel, role, automatic: vendor === 'auto' || !selectedModel, notice,
+    reason: (vendor === 'auto'
       ? `Automatic selected ${selected.vendor} from ${options.length} installed vendor${options.length === 1 ? '' : 's'}${Number.isInteger(index) ? ' to distribute team jobs' : ''}.`
-      : `${selected.vendor} is assigned to ${role === 'cheap' ? 'simple' : role === 'smart' ? 'complex' : role} jobs.`,
+      : `${selected.vendor} is assigned to ${role === 'cheap' ? 'simple' : role === 'smart' ? 'complex' : role} jobs.`)
+      + (selectedModel ? '' : ` ${selected.vendor} uses its own default model.`),
   };
 }
 
-function resolveCollabRoutes({ config = {}, agents = [], requested, available = [], agentCommand } = {}) {
-  const planner = resolveTaskRoute({ config, role: 'planner', available });
-  const integrator = resolveTaskRoute({ config, role: 'integrator', available });
+function resolveCollabRoutes({ config = {}, agents = [], requested, available = [], agentCommand, catalogs } = {}) {
+  const planner = resolveTaskRoute({ config, role: 'planner', available, catalogs });
+  const integrator = resolveTaskRoute({ config, role: 'integrator', available, catalogs });
   if (!planner.ok) return planner;
   if (!integrator.ok) return integrator;
   const assignments = migrateTaskRouting(config);
@@ -95,7 +100,7 @@ function resolveCollabRoutes({ config = {}, agents = [], requested, available = 
     const fixedRole = assignments[a.tier] && assignments[a.tier].vendor !== 'auto';
     const choice = requested && requested.vendor !== 'auto'
       ? requested : (!fixedRole && a.vendor ? { vendor: a.vendor, model: '' } : undefined);
-    const route = resolveTaskRoute({ config, role: a.tier, requested: choice, available, index: i, agentCommand });
+    const route = resolveTaskRoute({ config, role: a.tier, requested: choice, available, index: i, agentCommand, catalogs });
     if (!route.ok) return { ok: false, error: `${a.role}: ${route.error}` };
     workers.push({ ...a, vendor: route.vendor, agentCommand: route.command, model: route.model || `${route.vendor} (default)`, autoSelected: route.automatic, reason: route.reason, route });
   }

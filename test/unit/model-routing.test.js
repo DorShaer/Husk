@@ -84,3 +84,37 @@ test('normalizeTier is safe', () => {
   assert.equal(normalizeTier('garbage'), 'smart');
   assert.equal(normalizeTier(undefined), 'smart');
 });
+
+const { resolveModel, isRouted } = require('../../src/lib/model-routing');
+const FLAGS = { claude: '--model', copilot: '--model', gemini: '-m', codex: '--model', aider: '--model', 'kiro-cli': '--model' };
+for (const [cli, flag] of Object.entries(FLAGS)) {
+  test(`${cli}: unrouted, routed and stale model resolution`, () => {
+    const off = cli === 'claude' ? { claude: null } : {};
+    assert.deepEqual(resolveModel(cli, 'cheap', off), { args: [], model: '', state: 'unrouted', notice: '' });
+    assert.equal(isRouted(cli, off), false);
+    const routing = { [cli]: { cheap: `${cli}-small`, smart: `${cli}-large`, seenAt: 1000 } };
+    assert.equal(isRouted(cli, routing), true);
+    const fresh = { live: [`${cli}-small`, `${cli}-large`] };
+    assert.deepEqual(resolveModel(cli, 'cheap', routing, fresh).args, [flag, `${cli}-small`]);
+    assert.deepEqual(resolveModel(cli, 'smart', routing, fresh).args, [flag, `${cli}-large`]);
+    const stale = resolveModel(cli, 'smart', routing, { live: [`${cli}-small`] });
+    assert.deepEqual(stale.args, []);
+    assert.equal(stale.state, 'stale');
+    assert.equal(stale.notice, `${cli}-large is no longer in ${cli}'s model list, so this job runs on ${cli}'s default model.`);
+    // An unreadable catalog proves nothing, so the pick stands.
+    assert.deepEqual(resolveModel(cli, 'smart', routing, { live: [] }).args, [flag, `${cli}-large`]);
+  });
+}
+
+test('a CLI with only one tier picked is Not routed for every job', () => {
+  const half = { codex: { cheap: 'gpt-5-mini' } };
+  assert.equal(isRouted('codex', half), false);
+  assert.deepEqual(resolveModel('codex', 'cheap', half).args, []);
+});
+
+test('claude shipped defaults are routed and never stale-checked', () => {
+  assert.equal(isRouted('claude'), true);
+  assert.deepEqual(resolveModel('claude', 'cheap', {}, { live: ['sonnet'] }).args, ['--model', 'haiku']);
+  // A typed id has no seenAt and is not dropped by a catalog that omits it.
+  assert.deepEqual(resolveModel('codex', 'cheap', { codex: { cheap: 'typed-id', smart: 'x' } }, { live: ['other'] }).args, ['--model', 'typed-id']);
+});

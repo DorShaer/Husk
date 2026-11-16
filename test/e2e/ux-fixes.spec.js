@@ -129,7 +129,7 @@ test('workflows hub renders its hero, illustration and pattern gallery', async (
   await app.close();
 });
 
-test('job model picker separates vendors, preserves pins and fits the window', async () => {
+test('job model picker separates vendors, preserves pins, keeps half-set routing honest and fits the window', async () => {
   const app = await launch({ firstRunDone: true, skipWelcome: true, agentCommand: 'true', paiEnabled: false });
   const win = await ready(app);
   await win.waitForFunction(() => !!cfg);
@@ -146,6 +146,8 @@ test('job model picker separates vendors, preserves pins and fits the window', a
       complexVendor: document.getElementById('aut-vendor-complex').value,
       status: document.getElementById('aut-model-status-complex').textContent,
       automaticAvailable: Array.from(document.getElementById('aut-mr-complex').options).some(o => o.value === ''),
+      complexModelHidden: document.getElementById('aut-mr-complex').hidden,
+      complexSetupShown: !document.getElementById('aut-setup-complex').hidden,
     };
     orchDraft.cheap = { vendor: 'codex', model: 'gpt-test' };
     orchCatalogs.set('codex', { loaded: true, models: [{ value: 'gpt-test', label: 'GPT test' }] });
@@ -165,11 +167,13 @@ test('job model picker separates vendors, preserves pins and fits the window', a
   });
   expect(info.loading.simpleVendor).toBe('auto');
   expect(info.loading.complexVendor).toBe('copilot');
-  expect(info.loading.status).toContain('Loading GitHub Copilot');
+  expect(info.loading.status).toContain('own default model for every task');
+  expect(info.loading.complexModelHidden).toBe(true);
+  expect(info.loading.complexSetupShown).toBe(true);
   expect(info.loading.automaticAvailable).toBe(true);
   expect(info.title).toBe('Configure job models');
   expect(info.simple).toBe('gpt-test');
-  expect(info.complex).toBe('claude-sonnet-5');
+  expect(info.complex).toBe('');
   expect(info.plannerDisabled).toBe(true);
   expect(info.defaultCommand).toBe('copilot');
   expect(info.overflow).toBe(false);
@@ -179,7 +183,7 @@ test('job model picker separates vendors, preserves pins and fits the window', a
   await expect(win.locator('#aut-orch-modal')).toBeHidden();
   const saved = await win.evaluate(() => cfg.taskRouting);
   expect(saved.cheap).toEqual({ vendor: 'codex', model: 'gpt-test' });
-  expect(saved.smart).toEqual({ vendor: 'copilot', model: 'claude-sonnet-5' });
+  expect(saved.smart).toEqual({ vendor: 'copilot', model: '' });
   expect(saved.planner).toEqual({ vendor: 'auto', model: '' });
   await app.close();
 });
@@ -209,6 +213,63 @@ test('vendor model responses cannot replace another vendor selection', async () 
   await win.locator('#aut-vendor-simple').selectOption('auto');
   await expect(win.locator('#aut-mr-simple')).toBeDisabled();
   expect(await win.evaluate(() => orchDraft.cheap)).toEqual({ vendor: 'auto', model: '' });
+  await app.close();
+});
+
+test('a CLI with no saved models shows Not routed with zero tier controls, and routing is set up from its own catalog', async () => {
+  const app = await launch({ firstRunDone: true, skipWelcome: true, agentCommand: 'true', paiEnabled: false,
+    taskRouting: { cheap: { vendor: 'codex', model: '' }, smart: { vendor: 'claude', model: '' }, planner: { vendor: 'auto', model: '' }, integrator: { vendor: 'auto', model: '' } } });
+  const win = await ready(app);
+  await win.waitForFunction(() => !!cfg);
+  await app.evaluate(({ ipcMain }) => {
+    ipcMain.removeHandler('agents:detect');
+    ipcMain.handle('agents:detect', () => ({ agents: [{ command: 'claude', label: 'Claude', available: true }, { command: 'codex', label: 'Codex', available: true }] }));
+    global.liveCatalog = true;
+    ipcMain.removeHandler('models:list');
+    ipcMain.handle('models:list', (_e, opts) => (global.liveCatalog && opts.refresh
+      ? { models: [{ value: 'm-small', label: 'Small' }, { value: 'm-large', label: 'Large' }], live: ['m-small', 'm-large'], readAt: 4242 }
+      : { models: [], live: [], error: 'Codex did not list its models.' }));
+  });
+  await win.evaluate(() => openOrchestratorModal());
+  const codexRow = win.locator('#aut-cli-routing .aut-cli-row[data-vendor="codex"]');
+  await expect(codexRow).toHaveAttribute('data-state', 'unrouted');
+  await expect(codexRow).toContainText('This CLI uses its own default model for every task.');
+  await expect(codexRow.locator('select, input')).toHaveCount(0);
+  await expect(codexRow.locator('button')).toHaveText(['Set up routing']);
+  await expect(win.locator('#aut-cli-routing .aut-cli-row[data-vendor="claude"]')).toContainText('Simple jobs run on haiku, complex jobs on opus');
+  // The Simple row runs on codex, so it draws no model control either.
+  await expect(win.locator('#aut-mr-simple')).toBeHidden();
+  await expect(win.locator('#aut-model-status-simple')).toHaveText('This CLI uses its own default model for every task.');
+  await expect(win.locator('#aut-setup-simple')).toBeVisible();
+  await expect(win.locator('#aut-mr-complex')).toBeVisible();
+
+  await win.locator('#aut-setup-simple').click();
+  await expect(win.locator('#aut-cli-pick-cheap option')).toHaveCount(3);
+  await win.locator('#aut-cli-pick-cheap').selectOption('m-small');
+  await win.locator('#aut-cli-pick-smart').selectOption('m-large');
+  await win.locator('#aut-cli-pick-use').click();
+  await expect(codexRow).toHaveAttribute('data-state', 'routed');
+  await expect(win.locator('#aut-mr-simple')).toBeVisible();
+  await win.locator('#aut-mr-save').click();
+  await expect(win.locator('#aut-orch-modal')).toBeHidden();
+  expect(await win.evaluate(() => cfg.modelRouting.codex)).toEqual({ cheap: 'm-small', smart: 'm-large', seenAt: 4242 });
+
+  // A catalog that cannot be read still allows a typed id, stored without a catalog time.
+  await app.evaluate(() => { global.liveCatalog = false; });
+  await win.evaluate(() => openOrchestratorModal());
+  await codexRow.locator('button', { hasText: 'Change' }).click();
+  await expect(win.locator('.aut-cli-picker .aut-routing-status')).toContainText('enter a model id instead');
+  await win.locator('#aut-cli-pick-mode').click();
+  await win.locator('#aut-cli-pick-cheap').fill('typed small');
+  await win.locator('#aut-cli-pick-smart').fill('typed-large');
+  await win.locator('#aut-cli-pick-use').click();
+  await expect(codexRow).toHaveAttribute('data-state', 'routed');
+  await expect(codexRow).toContainText('m-small');
+  await win.locator('#aut-cli-pick-cheap').fill('typed-small');
+  await win.locator('#aut-cli-pick-smart').fill('typed-large');
+  await win.locator('#aut-cli-pick-use').click();
+  await win.locator('#aut-mr-save').click();
+  expect(await win.evaluate(() => cfg.modelRouting.codex)).toEqual({ cheap: 'typed-small', smart: 'typed-large', seenAt: null });
   await app.close();
 });
 

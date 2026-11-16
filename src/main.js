@@ -3560,11 +3560,27 @@ function installedTaskVendors() {
   return availableRoutes(KNOWN_AGENTS.map((a) => ({ command: a.command, available: isOnPath(a.command) })));
 }
 
+// Fresh catalogs for every installed CLI holding a user-picked model, so a run
+// can drop an id the CLI no longer lists. Unreadable catalogs are left out.
+async function routingCatalogs(available = installedTaskVendors()) {
+  const table = config.modelRouting && typeof config.modelRouting === 'object' ? config.modelRouting : {};
+  const vendors = available.map((a) => a.vendor).filter((v) => table[v] && table[v].seenAt);
+  const out = {};
+  await Promise.all(vendors.map(async (vendor) => {
+    try {
+      const cat = await discoverModelCatalog({ command: vendor });
+      if (cat && Array.isArray(cat.live) && cat.live.length) out[vendor] = { live: cat.live };
+    } catch (_) {}
+  }));
+  return out;
+}
+
 function jobRoute(role, payload = {}, options = {}) {
   return resolveTaskRoute({
     config: options.config || taskRoutingSnapshot(), role,
     requested: payload.routing, agentCommand: payload.agentCommand,
     available: options.available || installedTaskVendors(), index: options.index,
+    catalogs: options.catalogs,
   });
 }
 
@@ -3582,7 +3598,7 @@ ipcMain.handle('autopilot:start', async (_e, payload = {}) => {
   }
   const runId = 'ap-' + Date.now().toString(36) + '-' + crypto.randomBytes(4).toString('hex');
   const tier = classifyTier(payload.goal || '');
-  const route = jobRoute(tier, payload);
+  const route = jobRoute(tier, payload, { catalogs: payload.agentCommand ? {} : await routingCatalogs() });
   if (!route.ok) return route;
   payload = { ...payload, agentCommand: route.command, route };
   if (mainWindow) mainWindow.webContents.send('autopilot:orchestrator', {
@@ -3643,8 +3659,9 @@ async function startCollabTeam(payload = {}) {
   }
   const routingConfig = taskRoutingSnapshot();
   const available = installedTaskVendors();
-  const plannerRoute = resolveTaskRoute({ config: routingConfig, role: 'planner', available });
-  const integratorRoute = resolveTaskRoute({ config: routingConfig, role: 'integrator', available });
+  const catalogs = await routingCatalogs(available);
+  const plannerRoute = resolveTaskRoute({ config: routingConfig, role: 'planner', available, catalogs });
+  const integratorRoute = resolveTaskRoute({ config: routingConfig, role: 'integrator', available, catalogs });
   if (!plannerRoute.ok) return plannerRoute;
   if (!integratorRoute.ok) return integratorRoute;
   // The planner runs as a detached child with no entry in `runs`, so track it
@@ -3665,7 +3682,7 @@ async function startCollabTeam(payload = {}) {
   if (planCancelled) return { ok: false, error: 'planning cancelled' };
   if (!plan.ok) return { ok: false, error: `orchestrator: ${plan.error}` };
   const groupId = 'collab-' + Date.now().toString(36) + '-' + crypto.randomBytes(3).toString('hex');
-  const teamRoutes = resolveCollabRoutes({ config: routingConfig, agents: plan.agents, requested: payload.routing, available, agentCommand: payload.agentCommand });
+  const teamRoutes = resolveCollabRoutes({ config: routingConfig, agents: plan.agents, requested: payload.routing, available, agentCommand: payload.agentCommand, catalogs });
   if (!teamRoutes.ok) return teamRoutes;
   plan.agents = teamRoutes.workers;
   if (mainWindow) {
@@ -3874,6 +3891,10 @@ async function doStartRun(runId, payload, workspaceRoot) {
     preApplyResult,
     preApplyWorkers: Array.isArray(payload.preApplyWorkers) ? payload.preApplyWorkers : [],
     agent: agentName,
+    // The model this job runs on, as passed to the CLI, or the CLI's own default.
+    model: (payload.route && payload.route.model)
+      || (payload.agentCommand.match(/(?:^|\s)(?:--model|-m)(?:=|\s+)(\S+)/) || [])[1]
+      || `${agentName} (default)`,
     agentCommandOverride: (typeof payload.agentCommand === 'string' && payload.agentCommand.trim()) ? payload.agentCommand.trim() : null,
   };
   runs.set(runId, runState);
@@ -3893,6 +3914,8 @@ async function doStartRun(runId, payload, workspaceRoot) {
         originalGoal: runState.originalGoal,
         fleetStartedAt: runState.fleetStartedAt || null,
         agent: runState.agent,
+        model: runState.model,
+        modelNotice: (payload.route && payload.route.notice) || null,
       },
     });
   } catch (_) {}
@@ -3977,7 +4000,11 @@ async function doStartRun(runId, payload, workspaceRoot) {
     originalGoal: runState.originalGoal || goal,
     fleetStartedAt: runState.fleetStartedAt || null,
     raceId: runState.raceId, groupId: runState.groupId, role: runState.role,
+    model: runState.model,
   });
+  if (mainWindow && payload.route && payload.route.notice) {
+    mainWindow.webContents.send('autopilot:activity', { runId, lines: [payload.route.notice], at: Date.now() });
+  }
   if (goal) {
     // Collab runs record the readable sub-goal but inject a richer team
     // directive (shared goal + own lane); other runs inject the goal itself.
@@ -4529,6 +4556,7 @@ ipcMain.handle('autopilot:history', async (_e, payload = {}) => {
       let isIntegrator = false;
       let runId = null;
       let agent = null;
+      let model = null;
       const retained = retainedBySession.get(sid) || null;
       if (retained) {
         groupId = retained.groupId || null;
@@ -4554,6 +4582,7 @@ ipcMain.handle('autopilot:history', async (_e, payload = {}) => {
               isIntegrator = !!row.payload.isIntegrator || isIntegrator;
               runId = row.payload.runId || runId;
               agent = row.payload.agent || agent;
+              model = (typeof row.payload.model === 'string' && row.payload.model) || model;
               if (row.payload.originalGoal && !goal) goal = row.payload.originalGoal;
             }
             if (row.kind === 'start_run' && row.payload) {
@@ -4593,6 +4622,7 @@ ipcMain.handle('autopilot:history', async (_e, payload = {}) => {
         isIntegrator,
         runId,
         agent,
+        model,
       });
     } catch (_) {}
   }
@@ -5153,6 +5183,7 @@ async function discoverModelCatalog({ refresh = false, command = null, fast = fa
       if (available.length === 1) break; // Chat also augments single-entry catalogs.
       return Object.assign({}, base, {
         models: available.map((m) => ({ value: m.id, label: m.name || m.id })),
+        live: available.map((m) => m.id), readAt: Date.now(),
         source: 'chat-protocol', sourceLabel: `Listed by ${providerLabel(vendor)}`,
       });
     }
@@ -5194,6 +5225,9 @@ async function discoverModelCatalog({ refresh = false, command = null, fast = fa
   const models = uniqueModels([...liveModels, ...fallbackModels, ...savedModels]);
   const value = Object.assign(base, {
     models,
+    // Only ids the CLI listed just now; routing picks and stale checks read these.
+    live: liveModels.map((m) => m.value),
+    readAt: Date.now(),
     source: liveModels.length ? (vendor === 'codex' ? 'app-server' : vendor === 'aider' || vendor === 'kiro-cli' ? 'list-models' : 'slash-model') : (fallbackModels.length ? 'fallback' : (savedModels.length ? 'saved' : 'none')),
     sourceLabel: liveModels.length
       ? (vendor === 'codex' ? 'Listed by OpenAI Codex' : vendor === 'aider' ? 'Read from aider --list-models' : (vendor === 'kiro-cli' ? 'Read from kiro-cli chat --list-models' : 'Read from /model'))

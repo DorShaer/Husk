@@ -129,6 +129,8 @@ function workflowRow(raw) {
     tokens: runTokens(steps),
     dollars: null,
     agent: env ? str(env.agentResolved, 40) : '',
+    model: '',
+    jobs: [],
     workspace: '',
     failedStep: str(raw.failedStep, 200),
     // Only the newest runs keep their scrollback; the rest are a summary, and
@@ -158,6 +160,13 @@ function autopilotRow(raw) {
     tokens: figure(raw.tokens),
     dollars: figure(raw.dollars),
     agent: str(raw.agent, 40),
+    model: str(raw.model, 90),
+    // One entry per team job, so each job's model stays auditable.
+    jobs: Array.isArray(raw.members) && raw.members.length > 1
+      ? raw.members.filter((m) => m && typeof m === 'object').map((m) => ({
+        role: str(m.role, 40) || (m.isIntegrator ? 'integrator' : 'job'), agent: str(m.agent, 40), model: str(m.model, 90),
+      }))
+      : [],
     workspace: str(raw.workspaceRoot, 400),
     failedStep: '',
     hasLog: false,
