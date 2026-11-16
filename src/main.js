@@ -3568,16 +3568,20 @@ function installedTaskVendors() {
 }
 
 // Fresh catalogs for every installed CLI holding a user-picked model, so a run
-// can drop an id the CLI no longer lists. Unreadable catalogs are left out.
-async function routingCatalogs(available = installedTaskVendors()) {
+// can drop an id the CLI no longer lists. Unreadable or slow catalogs are left
+// out, which keeps the pick; a slow read finishes in the background for the next run.
+const ROUTING_CATALOG_WAIT_MS = 2000;
+async function routingCatalogs(available = installedTaskVendors(), waitMs = ROUTING_CATALOG_WAIT_MS) {
   const table = config.modelRouting && typeof config.modelRouting === 'object' ? config.modelRouting : {};
   const vendors = available.map((a) => a.vendor).filter((v) => table[v] && table[v].seenAt);
   const out = {};
   await Promise.all(vendors.map(async (vendor) => {
+    let timer = null;
+    const late = new Promise((resolve) => { timer = setTimeout(() => resolve(null), waitMs); });
     try {
-      const cat = await discoverModelCatalog({ command: vendor });
+      const cat = await Promise.race([discoverModelCatalog({ command: vendor }).catch(() => null), late]);
       if (cat && Array.isArray(cat.live) && cat.live.length) out[vendor] = { live: cat.live };
-    } catch (_) {}
+    } finally { clearTimeout(timer); }
   }));
   return out;
 }
