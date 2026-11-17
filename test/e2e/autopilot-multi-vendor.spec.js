@@ -41,7 +41,7 @@ setInterval(() => {
   for (const vendor of ['claude', 'codex']) fs.writeFileSync(path.join(bin, vendor), fixture, { mode: 0o755 });
   const routing = { cheap: { vendor: 'codex', model: 'simple-pin' }, smart: { vendor: 'claude', model: 'complex-pin' }, planner: { vendor: 'claude', model: 'planner-pin' }, integrator: { vendor: 'codex', model: 'integrator-pin' } };
   fs.writeFileSync(path.join(home, '.config/husk/config.json'), JSON.stringify({
-    firstRunDone: true, skipWelcome: true, lastSeenVersion: require('../../package.json').version, voice: { enabled: false }, agentCommand: 'codex', chatAppearance: 'native',
+    firstRunDone: true, skipWelcome: true, lastSeenVersion: require('../../package.json').version, welcomeVersion: 2, voice: { enabled: false }, agentCommand: 'codex', chatAppearance: 'native',
     agentVendor: 'openai', agentBaseUrl: 'http://127.0.0.1:1/v1', agentApiKey: 'fixture-openai-key',
     projects: [{ id: 'p', name: 'fixture', path: project }], activeProjectId: 'p',
     taskRouting: routing, autopilotMaxConcurrent: 2,
@@ -101,4 +101,66 @@ setInterval(() => {
     if (app) await app.close();
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('detected vendors remain selectable and Auto by Husk persists and launches its selected vendor', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-auto-vendor-'));
+  const home = path.join(dir, 'home'), project = path.join(dir, 'project'), bin = path.join(home, 'bin');
+  const log = path.join(dir, 'calls.jsonl');
+  for (const d of [bin, project, path.join(home, '.config/husk')]) fs.mkdirSync(d, { recursive: true });
+  for (const args of [['init', '-q'], ['config', 'user.email', 'e2e@husk.test'], ['config', 'user.name', 'husk-e2e']]) execFileSync('git', args, { cwd: project });
+  fs.writeFileSync(path.join(project, 'README.md'), 'fixture\n');
+  execFileSync('git', ['add', 'README.md'], { cwd: project });
+  execFileSync('git', ['commit', '-qm', 'init'], { cwd: project });
+  const fixture = `#!/usr/bin/env node
+const fs = require('node:fs'), path = require('node:path');
+const args = process.argv.slice(2);
+if (args.includes('--version') || args.includes('--help')) { console.log('fixture 1.0'); process.exit(0); }
+if (!process.stdin.isTTY) process.exit(0);
+fs.appendFileSync(process.env.HUSK_ROUTING_LOG, JSON.stringify({ vendor: path.basename(process.argv[1]), args })+'\\n');
+process.stdin.resume();
+setInterval(() => console.log('fixture running'), 200);
+`;
+  for (const vendor of ['claude', 'codex']) fs.writeFileSync(path.join(bin, vendor), fixture, { mode: 0o755 });
+  fs.writeFileSync(path.join(home, '.config/husk/config.json'), JSON.stringify({ firstRunDone: true, skipWelcome: true, welcomeVersion: 99, tourVersion: 99, lastSeenVersion: require('../../package.json').version, agentCommand: 'claude', connectedClis: ['claude'], theme: 'light', projects: [{ id: 'p', name: 'demo-app', path: project }], activeProjectId: 'p', taskRouting: {}, modelRouting: { claude: null, codex: { cheap: 'mini-fixture', smart: 'large-fixture' } } }));
+  const app = await electron.launch({ args: [path.join(ROOT, 'src/main.js'), '--no-sandbox'], cwd: ROOT, env: { ...process.env, HOME: home, USERPROFILE: home, PATH: `${bin}:${process.env.PATH}`, HUSK_E2E: '1', ELECTRON_DISABLE_SANDBOX: '1', HUSK_ROUTING_LOG: log } });
+  try {
+    const win = await app.firstWindow();
+    await win.waitForFunction(() => typeof cfg !== 'undefined' && cfg);
+    await win.evaluate(() => { document.querySelectorAll('.modal').forEach(m => { m.hidden = true; }); setPage('autopilot'); openOrchestratorModal(); });
+    const vendor = win.locator('#aut-vendor-simple');
+    await expect(vendor.locator('option[value="codex"]')).toHaveCount(1);
+    await expect(vendor.locator('option[value="auto"]')).toHaveText('Auto by Husk');
+    await expect(vendor).toBeEnabled();
+    await expect(win.locator('#aut-cli-advanced')).not.toHaveAttribute('open', '');
+    await vendor.selectOption('codex');
+    await expect(vendor).toHaveValue('codex');
+    for (const role of ['simple', 'complex', 'planner', 'integrator']) await win.locator('#aut-vendor-' + role).selectOption('auto');
+    await expect(win.locator('#aut-model-status-simple')).toContainText('Husk chooses an installed vendor');
+    await expect(win.locator('#aut-mr-simple')).toBeHidden();
+    await win.waitForTimeout(200);
+    fs.mkdirSync('/tmp/husk-auto-vendor', { recursive: true });
+    const png = await app.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0].capturePage()).toPNG().toString('base64'));
+    fs.writeFileSync('/tmp/husk-auto-vendor/configuration.png', Buffer.from(png, 'base64'));
+    await win.locator('#aut-mr-save').click();
+    const saved = await win.evaluate(() => window.husk.config.get());
+    expect(saved.taskRouting.cheap).toEqual({ vendor: 'auto', model: '' });
+    await win.evaluate(() => openOrchestratorModal());
+    await expect(vendor).toHaveValue('auto');
+    await win.locator('#aut-orch-cancel').click();
+    const run = await win.evaluate(() => window.husk.autopilot.start({ goal: 'format README.md', snapshot: false, caps: { minutes: 1, tokens: 0, dollars: 0 } }));
+    expect(run.ok, JSON.stringify(run)).toBe(true);
+    await expect.poll(() => fs.existsSync(log) && fs.readFileSync(log, 'utf8')).toContain('mini-fixture');
+    const call = fs.readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse).find(c => c.args.includes('mini-fixture'));
+    expect(call.vendor).toBe('codex');
+    // One detected vendor is used without asking the user to choose it again.
+    await app.evaluate(({ ipcMain }) => {
+      ipcMain.removeHandler('agents:detect');
+      ipcMain.handle('agents:detect', () => ({ agents: [{ command: 'codex', label: 'OpenAI Codex CLI', available: true }] }));
+    });
+    await win.evaluate(() => { cfg = { ...cfg, taskRouting: {} }; openOrchestratorModal(); });
+    await expect(vendor).toHaveValue('codex');
+    await expect(vendor).toBeDisabled();
+    await expect(win.locator('#aut-model-status')).toContainText('One vendor detected');
+  } finally { await app.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });

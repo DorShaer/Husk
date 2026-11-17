@@ -29,7 +29,7 @@ function launchWithProject(projectDir) {
   fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify({
     firstRunDone: true,
     skipWelcome: true,
-    lastSeenVersion: pkgVersion,
+    lastSeenVersion: pkgVersion, welcomeVersion: 2,
     voice: { enabled: false, name: 'en_US-amy-medium', rate: 1.0 },
     agentCommand: `node ${FIXTURE}`,
     projects: [{ id: 'p1', name: 'e2e-proj', path: projectDir }],
