@@ -20619,7 +20619,7 @@ async function runOnboarding({ replay = false } = {}) {
   }
   function paintProjects() {
     const p = projects.find((x) => x.id === projectId);
-    $('.cine-folder-path', root).textContent = p ? shortPath(homeRelativePath(p.path)) : 'No folder yet. Chats start in your home folder.';
+    root.querySelector('.cine-folder-path').textContent = p ? shortPath(homeRelativePath(p.path)) : 'No folder yet. Chats start in your home folder.';
     const stamp = (x) => String(x.lastUsedAt || x.addedAt || '');
     const recent = [...projects].sort((x, y) => stamp(y).localeCompare(stamp(x))).slice(0, 6);
     const choose = csEl('button', 'ghost-btn', 'Choose a folder…');
