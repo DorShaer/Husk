@@ -24,15 +24,14 @@ const PULLS = [{
   ],
 }];
 
-function makeHome() {
+function makeHome({ nonGit = false } = {}) {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-e2e-canvas-'));
   const repo = path.join(homeDir, 'work');
   fs.mkdirSync(repo);
   const git = (...args) => execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { stdio: 'ignore' });
-  git('init', '-q', '-b', 'main');
+  if (!nonGit) git('init', '-q', '-b', 'main');
   fs.writeFileSync(path.join(repo, 'retry.js'), 'function retry() {\n  return wait(500);\n}\n');
-  git('add', '.');
-  git('commit', '-q', '-m', 'init');
+  if (!nonGit) { git('add', '.'); git('commit', '-q', '-m', 'init'); }
 
   fs.mkdirSync(path.join(homeDir, '.config', 'husk'), { recursive: true });
   fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify({
@@ -49,7 +48,8 @@ function makeHome() {
 
 async function launch(homeDir, bin) {
   const app = await electron.launch({
-    args: [path.join(REPO_ROOT, 'src', 'main.js'), '--no-sandbox'],
+    // HUSK_SHOT_SCALE renders at a fixed device scale for release captures.
+    args: [path.join(REPO_ROOT, 'src', 'main.js'), '--no-sandbox', ...(process.env.HUSK_SHOT_SCALE ? [`--force-device-scale-factor=${process.env.HUSK_SHOT_SCALE}`] : [])],
     cwd: REPO_ROOT,
     env: {
       ...process.env,
@@ -296,4 +296,179 @@ test('the canvas widens from its left edge, keeps the chat floor, and double-cli
     await app.close();
     fs.rmSync(homeDir, { recursive: true, force: true });
   }
+});
+
+
+test('non-Git folders show turn changes and diffs, and initialize Git only after confirmation', async () => {
+  const { homeDir, bin, repo } = makeHome({ nonGit: true });
+  fs.writeFileSync(path.join(repo, 'delete.txt'), 'remove me\n');
+  fs.writeFileSync(path.join(repo, '.env'), 'private fixture\n');
+  const { app, win } = await launch(homeDir, bin);
+  // HUSK_SHOT_DIR: release captures want the thread and the canvas side by side.
+  const shotDir = process.env.HUSK_SHOT_DIR;
+  if (shotDir) await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setBounds({ x: 0, y: 0, width: 1760, height: 960 }));
+  try {
+    const pane = win.locator('.chat-pane.show');
+    const canvas = win.locator('#chat-canvas');
+    await pane.locator('.chat-input').fill('update the plain folder');
+    await pane.locator('.chat-input').press('Enter');
+    const permission = pane.locator('.chat-perm');
+    await expect(permission).toBeVisible();
+    fs.writeFileSync(path.join(repo, 'retry.js'), 'function retry(n) {\n  return wait(n * 500);\n}\n');
+    fs.unlinkSync(path.join(repo, 'delete.txt'));
+    fs.writeFileSync(path.join(repo, 'added.txt'), 'new content\n');
+    fs.writeFileSync(path.join(repo, '.env'), 'changed private fixture\n');
+    await permission.locator('.chat-perm-btn', { hasText: /^Allow$/ }).click();
+    const card = pane.locator('.chat-changes');
+    await expect(card.locator('.chat-changes-title')).toHaveText('3 files changed during this turn');
+    await expect(card).not.toContainText('.env');
+    await card.locator('.chat-changes-row', { hasText: 'retry.js' }).click();
+    await expect(canvas.locator('.cc-diff .sc-dl.is-add', { hasText: 'n * 500' })).toHaveCount(1);
+    await expect(canvas.getByRole('button', { name: 'Explain', exact: true })).toBeVisible();
+    if (shotDir) {
+      fs.mkdirSync(shotDir, { recursive: true });
+      await win.waitForTimeout(400);
+      const shot = await app.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0].capturePage()).toPNG().toString('base64'));
+      fs.writeFileSync(path.join(shotDir, 'changes-full.png'), Buffer.from(shot, 'base64'));
+    }
+    await canvas.locator('.cc-file', { hasText: 'delete.txt' }).click();
+    await expect(canvas.locator('.cc-diff .sc-dl.is-del', { hasText: 'remove me' })).toHaveCount(1);
+    const init = canvas.getByRole('button', { name: 'Initialize Git', exact: true });
+    await init.click();
+    await expect(win.locator('#confirm-body')).toContainText(repo);
+    await win.locator('#confirm-cancel').click();
+    expect(fs.existsSync(path.join(repo, '.git'))).toBe(false);
+    const refused = await win.evaluate(root => window.husk.git.init(root, false), repo);
+    expect(refused.ok).toBe(false);
+    const outside = await win.evaluate(() => window.husk.folderChanges.begin('/tmp'));
+    expect(outside.ok).toBe(false);
+    fs.mkdirSync('/tmp/husk-non-git-changes', { recursive: true });
+    await win.waitForTimeout(200);
+    const png = await app.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0].capturePage()).toPNG().toString('base64'));
+    fs.writeFileSync('/tmp/husk-non-git-changes/changes.png', Buffer.from(png, 'base64'));
+    await init.click();
+    await win.locator('#confirm-ok').click();
+    await expect.poll(() => fs.existsSync(path.join(repo, '.git'))).toBe(true);
+    expect(execFileSync('git', ['-C', repo, 'branch', '--show-current'], { encoding: 'utf8' }).trim()).toBe('main');
+    expect(execFileSync('git', ['-C', repo, 'remote'], { encoding: 'utf8' }).trim()).toBe('');
+    let commits = ''; try { commits = execFileSync('git', ['-C', repo, 'rev-list', '--all'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch (_) {}
+    expect(commits).toBe('');
+    await expect(canvas.getByRole('button', { name: 'Review and commit' })).toBeVisible();
+  } finally { await app.close(); fs.rmSync(homeDir, { recursive: true, force: true }); }
+});
+
+test('without Git on PATH, local diffs work and Git setup can be discovered without restarting Husk', async () => {
+  const { homeDir, bin, repo } = makeHome({ nonGit: true });
+  const { app, win } = await launch(homeDir, bin);
+  try {
+    // Remove Git from the actual Electron main process's lookup path. The
+    // already-running fixture agent keeps its own environment and needs no Git.
+    await app.evaluate((_electron, bin) => { global.savedGitPath = process.env.PATH; process.env.PATH = bin; }, bin);
+    const missing = await win.evaluate(() => window.husk.git.available(true));
+    expect(missing.available).toBe(false);
+    expect(missing.error).toMatch(/not installed|PATH/);
+    await win.evaluate(async () => { await refreshStats(); await refreshStatusline(); });
+    const init = await win.evaluate(root => window.husk.git.init(root, true), repo);
+    expect(init.code).toBe('git-missing');
+    expect(fs.existsSync(path.join(repo, '.git'))).toBe(false);
+    const pane = win.locator('.chat-pane.show');
+    await pane.locator('.chat-input').fill('edit without git');
+    await pane.locator('.chat-input').press('Enter');
+    const permission = pane.locator('.chat-perm');
+    await expect(permission).toBeVisible();
+    fs.writeFileSync(path.join(repo, 'retry.js'), 'function retry() {\n  return wait(1000);\n}\n');
+    await permission.locator('.chat-perm-btn', { hasText: /^Allow$/ }).click();
+    await expect(pane.locator('.chat-changes-title')).toHaveText('1 file changed during this turn');
+    await pane.locator('.chat-changes-row').click();
+    const canvas = win.locator('#chat-canvas');
+    await expect(canvas.locator('.cc-diff .sc-dl.is-add', { hasText: '1000' })).toHaveCount(1);
+    await expect(canvas.getByRole('button', { name: 'Initialize Git', exact: true })).toHaveCount(0);
+    await expect(canvas.getByRole('button', { name: 'Get Git', exact: true })).toBeVisible();
+    await expect(canvas).toContainText('File changes are still tracked locally');
+    await app.evaluate(({ shell }) => { global.openedGitUrl = ''; shell.openExternal = async url => { global.openedGitUrl = url; }; });
+    await canvas.getByRole('button', { name: 'Get Git', exact: true }).click();
+    expect(await app.evaluate(() => global.openedGitUrl)).toBe('https://git-scm.com/install/');
+    await app.evaluate(({ shell }) => { shell.openExternal = async () => { throw new Error('No browser handler'); }; });
+    await canvas.getByRole('button', { name: 'Get Git', exact: true }).click();
+    await expect(canvas).toContainText('Could not open your browser');
+    await canvas.getByRole('button', { name: 'Try again', exact: true }).click();
+    await expect(canvas.getByRole('button', { name: 'Get Git', exact: true })).toBeVisible();
+    await canvas.locator('.cc-tab', { hasText: 'Pull request' }).click();
+    await expect(canvas).toContainText('Git is not available');
+    await win.evaluate(() => setPage('source'));
+    await expect(win.locator('#sc-list').getByRole('button', { name: 'Get Git', exact: true })).toBeVisible();
+    fs.mkdirSync('/tmp/husk-git-qa', { recursive: true });
+    await win.evaluate(() => setPage('chat'));
+    await win.evaluate(() => window.ChatCanvas.open({ tab: 'changes' }));
+    await expect(canvas.getByRole('button', { name: 'Check again', exact: true })).toBeVisible();
+    await win.waitForTimeout(150);
+    const png = await app.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0].capturePage()).toPNG().toString('base64'));
+    fs.writeFileSync('/tmp/husk-git-qa/missing-git.png', Buffer.from(png, 'base64'));
+    await app.evaluate(() => { process.env.PATH = global.savedGitPath; });
+    await canvas.getByRole('button', { name: 'Check again', exact: true }).click();
+    await expect(canvas.getByRole('button', { name: 'Initialize Git', exact: true })).toBeVisible();
+    expect(fs.existsSync(path.join(repo, '.git'))).toBe(false);
+  } finally { await app.close(); fs.rmSync(homeDir, { recursive: true, force: true }); }
+});
+
+test('damaged repository metadata is reported without offering to reinitialize it', async () => {
+  const { homeDir, bin, repo } = makeHome({ nonGit: true });
+  fs.writeFileSync(path.join(repo, '.git'), 'gitdir: missing-metadata\n');
+  const { app, win } = await launch(homeDir, bin);
+  try {
+    const status = await win.evaluate(root => window.husk.git.status(root), repo);
+    expect(status.ok).toBe(false);
+    expect(status.code).toBe('git-repository-error');
+    const init = await win.evaluate(root => window.husk.git.init(root, true), repo);
+    expect(init.code).toBe('already-repository');
+    expect(fs.readFileSync(path.join(repo, '.git'), 'utf8')).toBe('gitdir: missing-metadata\n');
+    await win.evaluate(() => window.ChatCanvas.open({ tab: 'changes' }));
+    const canvas = win.locator('#chat-canvas');
+    await expect(canvas).toContainText('Could not read changes');
+    await expect(canvas.getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
+    await expect(canvas.getByRole('button', { name: 'Initialize Git', exact: true })).toHaveCount(0);
+  } finally { await app.close(); fs.rmSync(homeDir, { recursive: true, force: true }); }
+});
+
+test('read-only and replaced working folders cannot be initialized', async () => {
+  test.skip(process.platform === 'win32' || (process.getuid && process.getuid() === 0), 'POSIX permission check');
+  const { homeDir, bin, repo } = makeHome({ nonGit: true });
+  const { app, win } = await launch(homeDir, bin);
+  try {
+    fs.chmodSync(repo, 0o500);
+    await win.evaluate(() => window.ChatCanvas.open({ tab: 'changes' }));
+    const canvas = win.locator('#chat-canvas');
+    await expect(canvas).toContainText('Choose a writable folder');
+    await expect(canvas.getByRole('button', { name: 'Initialize Git', exact: true })).toHaveCount(0);
+    const refused = await win.evaluate(root => window.husk.git.init(root, true), repo);
+    expect(refused.code).toBe('folder-readonly');
+    expect(fs.existsSync(path.join(repo, '.git'))).toBe(false);
+    fs.chmodSync(repo, 0o700);
+    fs.renameSync(repo, repo + '-saved');
+    fs.writeFileSync(repo, 'The working folder was replaced by a file.');
+    const replaced = await win.evaluate(root => window.husk.git.init(root, true), repo);
+    expect(replaced.ok).toBe(false);
+    expect(replaced.error).toMatch(/directory|folder/);
+    expect(fs.readFileSync(repo, 'utf8')).toBe('The working folder was replaced by a file.');
+  } finally { if (fs.existsSync(repo) && fs.statSync(repo).isDirectory()) fs.chmodSync(repo, 0o700); await app.close(); fs.rmSync(homeDir, { recursive: true, force: true }); }
+});
+
+test('losing Git during a turn reports an unavailable comparison instead of a false file receipt', async () => {
+  const { homeDir, bin, repo } = makeHome();
+  const { app, win } = await launch(homeDir, bin);
+  try {
+    const pane = win.locator('.chat-pane.show');
+    await pane.locator('.chat-input').fill('edit while git becomes unavailable');
+    await pane.locator('.chat-input').press('Enter');
+    const permission = pane.locator('.chat-perm');
+    await expect(permission).toBeVisible();
+    await app.evaluate((_electron, bin) => { process.env.PATH = bin; }, bin);
+    await win.evaluate(() => window.husk.git.available(true));
+    fs.writeFileSync(path.join(repo, 'retry.js'), 'function retry() {\n  return wait(900);\n}\n');
+    await permission.locator('.chat-perm-btn', { hasText: /^Allow$/ }).click();
+    await expect(pane).toContainText('Git became unavailable');
+    await expect(pane.locator('.chat-changes')).toHaveCount(0);
+    expect(fs.readFileSync(path.join(repo, 'retry.js'), 'utf8')).toContain('900');
+    expect(fs.existsSync(path.join(repo, '.git'))).toBe(true);
+  } finally { await app.close(); fs.rmSync(homeDir, { recursive: true, force: true }); }
 });
