@@ -729,11 +729,28 @@
     const scrollTop = list.scrollTop;
     list.replaceChildren();
 
-    if (state.tab === 'history') { paintHistoryList(list); list.scrollTop = scrollTop; return; }
 
     const repo = state.repo;
     if (!state.root) {
       list.appendChild(Dom.emptyEl('branch', 'No folder is open.', null, { compact: true }));
+      return;
+    }
+    if (repo && repo.gitAvailable === false) {
+      list.appendChild(Dom.emptyEl('branch', [repo.gitMessage || 'Git is not available.', 'Chat file-change comparisons still work. Install Git to use source control.'], [
+        { label: 'Get Git', primary: true, onClick: async () => {
+          try { const result = await window.husk.urls.openExternal('https://git-scm.com/install/'); if (!result.ok) throw new Error(result.error); }
+          catch (_) { say('Could not open your browser. Visit https://git-scm.com/install/.', 'error'); }
+        } },
+        { label: 'Check again', onClick: async () => { await git().available(true); readAll(); } },
+      ], { note: 'If Git is already installed, restart Husk after updating PATH.' }));
+      return;
+    }
+    if (state.tab === 'history') { paintHistoryList(list); list.scrollTop = scrollTop; return; }
+    if (repo && repo.isRepo !== true && repo.canInit === false) {
+      list.appendChild(Dom.emptyEl('branch', 'This folder is read-only. Choose a writable folder to initialize Git.', [
+        { label: 'Open another folder', onClick: () => goPage('files') },
+        { label: 'Check again', onClick: readAll },
+      ]));
       return;
     }
     if (repo && repo.isRepo !== true) {
