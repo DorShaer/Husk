@@ -18,7 +18,12 @@ const { execFileSync } = require('node:child_process');
 // Keyed by GHSA id. Each entry needs a reason and a review date. Reaching the
 // review date does not fail the build; it prints a warning so the entry is
 // revisited instead of living here forever.
-const ALLOWED = {};
+const ALLOWED = {
+  'GHSA-fc5q-39xc-vjpf': {
+    reason: 'Build tooling only (node-gyp under electron-builder); not packaged into the app. No fixed release upstream yet.',
+    review: '2026-12-18',
+  },
+};
 
 function auditJson() {
   let out;
