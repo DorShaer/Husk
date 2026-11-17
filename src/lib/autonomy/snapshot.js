@@ -55,6 +55,16 @@ function hasSnapshot(storageRoot, sessionId) {
   } catch (_) { return false; }
 }
 
+// The manifest's entries for a session, or null when it has none.
+function readManifestEntries(storageRoot, sessionId) {
+  if (!isSafeSessionId(sessionId)) return null;
+  try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- manifestPath rooted in storageRoot
+    const m = JSON.parse(fs.readFileSync(manifestPath(storageRoot, sessionId), 'utf8'));
+    return m && m.entries && typeof m.entries === 'object' ? m.entries : null;
+  } catch (_) { return null; }
+}
+
 function sha256OfBuffer(buf) {
   return crypto.createHash('sha256').update(buf).digest('hex');
 }
@@ -128,6 +138,8 @@ function captureSnapshot(workspaceRoot, storageRoot, sessionId, opts = {}) {
   const scoped = Array.isArray(opts.paths);
   if (scoped) {
     captureScoped(workspaceRoot, opts.paths, entries, warnings, opts, bdir, seen);
+    // keepEarlier: a path already in this session's manifest keeps its first recorded state.
+    if (opts.keepEarlier) Object.assign(entries, readManifestEntries(storageRoot, sessionId) || {});
   } else {
     walk(workspaceRoot, '', ignores, entries, warnings, opts, bdir, seen);
   }
@@ -794,6 +806,7 @@ module.exports = {
   diffWorkspace,
   diffWorkspaceAsync,
   hasSnapshot,
+  readManifestEntries,
   // exported for unit tests; not part of the public API.
   _internal: { sha256OfBuffer, isSafeSessionId, shouldIgnore, joinSafely, validateAncestorChain },
 };

@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { applyWorktreeChanges, isSafeRelPath } = require('../../src/lib/autopilot-apply');
+const { applyWorktreeChanges, findApplyConflicts, isSafeRelPath } = require('../../src/lib/autopilot-apply');
 
 let tmp;
 let wt;
@@ -133,4 +133,48 @@ test('skips the Autopilot status file when applying changes', () => {
   assert.equal(r.ok, true);
   assert.equal(r.applied.length, 0);
   assert.equal(fs.existsSync(path.join(ws, '.husk-autopilot-status.json')), false);
+});
+
+function fileEntry(text) {
+  return { type: 'file', sha: require('crypto').createHash('sha256').update(text).digest('hex') };
+}
+
+test('conflicts compare binary bytes to the starting snapshot and accept the run result on repeat', () => {
+  const base = Buffer.from([0, 1, 2]);
+  const mine = Buffer.from([0, 4, 5]);
+  const theirs = Buffer.from([0, 7, 8]);
+  fs.writeFileSync(path.join(ws, 'a.bin'), base);
+  fs.writeFileSync(path.join(wt, 'a.bin'), theirs);
+  const changes = [{ path: 'a.bin', status: 'modified' }];
+  const entries = { 'a.bin': fileEntry(base) };
+  assert.deepEqual(findApplyConflicts(wt, ws, changes, entries), []);
+  fs.writeFileSync(path.join(ws, 'a.bin'), mine);
+  assert.deepEqual(findApplyConflicts(wt, ws, changes, entries), [{ path: 'a.bin', kind: 'edited', runStatus: 'modified' }]);
+  applyWorktreeChanges(wt, ws, changes);
+  assert.deepEqual(findApplyConflicts(wt, ws, changes, entries), []);
+});
+
+test('conflicts protect a local deletion, an edited run deletion, and a colliding new file', () => {
+  fs.writeFileSync(path.join(wt, 'local-deletion'), 'run');
+  fs.writeFileSync(path.join(ws, 'run-deletion'), 'my edit');
+  fs.writeFileSync(path.join(wt, 'new-file'), 'run');
+  fs.writeFileSync(path.join(ws, 'new-file'), 'mine');
+  const changes = [
+    { path: 'local-deletion', status: 'modified' },
+    { path: 'run-deletion', status: 'deleted' },
+    { path: 'new-file', status: 'added' },
+  ];
+  assert.deepEqual(findApplyConflicts(wt, ws, changes, {
+    'local-deletion': fileEntry('base'), 'run-deletion': fileEntry('base'),
+  }), [
+    { path: 'local-deletion', kind: 'deleted', runStatus: 'modified' },
+    { path: 'run-deletion', kind: 'edited', runStatus: 'deleted' },
+    { path: 'new-file', kind: 'created', runStatus: 'added' },
+  ]);
+});
+
+test('conflicts ignore files both you and the run deleted and unsafe paths', () => {
+  assert.deepEqual(findApplyConflicts(wt, ws, [
+    { path: 'gone', status: 'deleted' }, { path: '../outside', status: 'modified' },
+  ], { gone: fileEntry('base') }), []);
 });
