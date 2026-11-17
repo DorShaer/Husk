@@ -23,6 +23,7 @@ function registerFoundation({ ipcMain, dialog, window, getConfig, setConfig, ins
     const picked = await dialog.showOpenDialog(window(), { title: 'Choose a local scanner executable', properties: ['openFile'] });
     if (picked.canceled || !picked.filePaths.length) return { ok: true, canceled: true };
     const scannerPath = picked.filePaths[0];
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- the file picked in the dialog
     if (!fs.statSync(scannerPath).isFile()) return { ok: false, error: 'Choose an executable file' };
     setConfig({ scannerPath }); cache.clear(); library.refresh();
     return { ok: true, scannerPath };
@@ -137,6 +138,7 @@ function registerFoundation({ ipcMain, dialog, window, getConfig, setConfig, ins
     const root = kind === 'skill' ? skillsDir : kind === 'agent' ? agentDir : kind === 'prompt' ? promptsDir : null;
     if (!root) return [];
     let entries;
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- an app-managed folder
     try { entries = fs.readdirSync(root, { withFileTypes: true }); } catch (_) { return []; }
     const out = [];
     for (const entry of entries) {
@@ -163,6 +165,7 @@ function registerFoundation({ ipcMain, dialog, window, getConfig, setConfig, ins
         name = name.replace(/[^a-z0-9-]/g, '-');
       } else if (kind === 'skill') {
         const root = path.join(skillsDir, id);
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- containment check on app-managed folders
         if (!fs.realpathSync(root).startsWith(fs.realpathSync(skillsDir) + path.sep)) throw new Error('Choose a local skill');
         const collected = Bundle.collectDir(fs, root);
         if (!collected.ok) return collected;
@@ -170,6 +173,7 @@ function registerFoundation({ ipcMain, dialog, window, getConfig, setConfig, ins
       } else if (kind === 'agent' || kind === 'prompt') {
         const root = kind === 'agent' ? agentDir : promptsDir;
         const file = path.join(root, id + '.md');
+        // eslint-disable-next-line security/detect-non-literal-fs-filename -- containment check on app-managed folders
         if (!fs.realpathSync(file).startsWith(fs.realpathSync(root) + path.sep)) throw new Error('Choose a local item');
         files = [{ path: kind === 'agent' ? `agents/${id}.md` : `${id}.md`, content: readBoundedFile(file, Bundle.MAX_FILE_BYTES) }];
       } else return { ok: false, error: 'Choose an agent, skill, workflow or prompt' };
@@ -177,6 +181,7 @@ function registerFoundation({ ipcMain, dialog, window, getConfig, setConfig, ins
       if (!packed.ok) return packed;
       const picked = await dialog.showSaveDialog(window(), { title: 'Export a Husk bundle', defaultPath: `${name}.husk.json` });
       if (picked.canceled || !picked.filePath) return { ok: true, canceled: true };
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- the path chosen in the save dialog
       fs.writeFileSync(picked.filePath, packed.text, { mode: 0o600 });
       return { ok: true };
     } catch (err) { return { ok: false, error: err.message }; }
