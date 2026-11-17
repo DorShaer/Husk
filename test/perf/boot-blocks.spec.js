@@ -14,6 +14,8 @@ test('2500 transcripts: no main loop stall over 100ms in the first 15s, cold or 
   try {
     for (const label of ['cold', 'warm']) {
       const r = await run(home, 15, label);
+      // Include Electron window creation when checking for multi-second freezes.
+      expect(r.maxBlockMs, `${label} startup stall`).toBeLessThan(2000);
       expect(r.maxAfterWindowMs, `${label} stall`).toBeLessThan(100);
       expect(r.claudeAll, `${label} listing`).toBe(2500);
       expect(r.sessions).toBe(500);

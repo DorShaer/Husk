@@ -10,12 +10,15 @@ const ENC_SUFFIX = 'Enc';
 // The object to write to disk.
 function sealConfig(cfg, keychain) {
   const out = { ...cfg };
-  const ready = !!(keychain && keychain.ready());
   for (const field of SECRET_FIELDS) {
     const encKey = field + ENC_SUFFIX;
     const value = typeof out[field] === 'string' ? out[field] : '';
-    if (!value) { delete out[field]; if (ready) delete out[encKey]; continue; }
-    if (!ready) continue;
+    if (!value) {
+      delete out[field];
+      if (encKey in out && keychain && keychain.ready()) delete out[encKey];
+      continue;
+    }
+    if (!keychain || !keychain.ready()) continue;
     try {
       out[encKey] = keychain.encrypt(value).toString('base64');
       delete out[field];
@@ -29,11 +32,10 @@ function sealConfig(cfg, keychain) {
 function unsealConfig(cfg, keychain) {
   const out = { ...cfg };
   const failed = [];
-  const ready = !!(keychain && keychain.ready());
   for (const field of SECRET_FIELDS) {
     const encKey = field + ENC_SUFFIX;
     if (typeof out[encKey] !== 'string' || !out[encKey]) continue;
-    if (!ready) continue;
+    if (!keychain || !keychain.ready()) continue;
     try {
       out[field] = keychain.decrypt(Buffer.from(out[encKey], 'base64'));
       delete out[encKey];
@@ -44,8 +46,7 @@ function unsealConfig(cfg, keychain) {
 
 // True when a plain secret should be re-written sealed.
 function needsSeal(cfg, keychain) {
-  if (!keychain || !keychain.ready()) return false;
-  return SECRET_FIELDS.some((f) => typeof cfg[f] === 'string' && cfg[f]);
+  return SECRET_FIELDS.some((f) => typeof cfg[f] === 'string' && cfg[f]) && !!(keychain && keychain.ready());
 }
 
 module.exports = { SECRET_FIELDS, sealConfig, unsealConfig, needsSeal };

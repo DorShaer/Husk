@@ -51,3 +51,11 @@ test('a plain key on disk is flagged for sealing only when the keychain is ready
   assert.equal(needsSeal({ agentApiKey: 'sk' }, fakeKeychain(false)), false);
   assert.equal(needsSeal({}, fakeKeychain()), false);
 });
+
+test('starting and saving without credentials never opens the OS keychain', () => {
+  const keychain = { ready: () => assert.fail('unnecessary keychain probe') };
+  const cfg = { theme: 'light', agentApiKey: '' };
+  assert.deepEqual(unsealConfig(cfg, keychain).config, cfg);
+  assert.equal(needsSeal(cfg, keychain), false);
+  assert.deepEqual(sealConfig(cfg, keychain), { theme: 'light' });
+});

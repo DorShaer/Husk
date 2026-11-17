@@ -7,6 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
 const { spawn, execFile } = require('child_process');
+const execFileAsync = require('node:util').promisify(execFile);
 let pty;
 try {
   pty = require('node-pty');
@@ -571,13 +572,11 @@ function stopStatuslineRefresh() {
 // result into USAGE_CACHE_PATH, which the stats:get path
 // reads from. The statusline makes the same request each render but persists
 // nothing, so Husk owns the cache write.
-function readClaudeOauthToken() {
+async function readClaudeOauthToken() {
   try {
     if (process.platform === 'darwin') {
-      const out = require('child_process').execSync(
-        'security find-generic-password -s "Claude Code-credentials" -w',
-        { timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }
-      ).toString().trim();
+      const { stdout: out } = await execFileAsync('security',
+        ['find-generic-password', '-s', 'Claude Code-credentials', '-w'], { timeout: 3000 });
       const cj = JSON.parse(out);
       return (cj.claudeAiOauth && cj.claudeAiOauth.accessToken) || '';
     }
@@ -596,9 +595,9 @@ function readClaudeOauthToken() {
 const USAGE_CACHE_PATH = path.join(CONFIG_DIR, 'usage-cache.json');
 function planEndpointEnabled() { return config.planUsageSource !== 'cli'; }
 
-function refreshAnthropicUsageCache() {
+async function refreshAnthropicUsageCache() {
   if (!planEndpointEnabled()) return;
-  const token = readClaudeOauthToken();
+  const token = await readClaudeOauthToken();
   if (!token) return;
   const https = require('https');
   const req = https.request({
@@ -5598,7 +5597,7 @@ function readJSON(p, fb) { try { return JSON.parse(fs.readFileSync(p, 'utf8')); 
 // agent spawn env so the command resolves against the user's real PATH. Every
 // result (including empty) is cached, so each CLI is probed at most once per app
 // session rather than on every stats poll.
-const _agentVersionCache = {};
+const _agentVersionCache = new Map();
 // Under the test harness only a fixture CLI inside the test home is run: a real
 // CLI's first run can unpack hundreds of megabytes into that fresh home.
 function skipVersionProbe(cmd) {
@@ -5606,44 +5605,32 @@ function skipVersionProbe(cmd) {
   const at = resolveOnPath(cmd);
   return !at || !isInside(HOME, at);
 }
-function getAgentVersion(cmd) {
-  if (cmd in _agentVersionCache) return _agentVersionCache[cmd];
-  if (skipVersionProbe(cmd)) { _agentVersionCache[cmd] = ''; return ''; }
-  let v = '';
-  try {
-    const out = require('child_process').execFileSync(cmd, ['--version'], { timeout: 4000, encoding: 'utf8', env: buildAgentEnv() });
-    const m = String(out).match(/\d+\.\d+(?:\.\d+)?/);
-    v = m ? m[0] : String(out).trim().split('\n')[0].slice(0, 40);
-  } catch (_) { v = ''; }
-  _agentVersionCache[cmd] = v;
-  return v;
-}
-// The same probe off the main thread, sharing the cache.
 function agentVersionAsync(cmd) {
-  if (cmd in _agentVersionCache) return Promise.resolve(_agentVersionCache[cmd]);
-  if (skipVersionProbe(cmd)) { _agentVersionCache[cmd] = ''; return Promise.resolve(''); }
-  return new Promise((resolve) => {
+  if (_agentVersionCache.has(cmd)) return _agentVersionCache.get(cmd);
+  if (skipVersionProbe(cmd)) return Promise.resolve('');
+  const probe = new Promise((resolve) => {
     const child = require('child_process').execFile(cmd, ['--version'], { timeout: 4000, encoding: 'utf8', env: buildAgentEnv() }, (err, out) => {
       const m = !err && String(out).match(/\d+\.\d+(?:\.\d+)?/);
       const v = err ? '' : (m ? m[0] : String(out).trim().split('\n')[0].slice(0, 40));
-      _agentVersionCache[cmd] = v;
       resolve(v);
     });
     try { child.stdin.end(); } catch (_) {}
   });
+  _agentVersionCache.set(cmd, probe);
+  return probe;
 }
 
 // Compact git summary for the status panel: branch, ahead/behind, and the
 // count of dirty (staged, unstaged, or untracked) paths. Vendor-neutral and
 // fast; bounded by a short timeout so a slow repo never stalls the panel.
-function gitSummary(cwd) {
+async function gitSummary(cwd) {
   const dir = cwd || HOME;
   try {
-    execFileSync('git', ['-C', dir, 'rev-parse', '--git-dir'], { stdio: 'ignore', timeout: 1500 });
+    await execFileAsync('git', ['-C', dir, 'rev-parse', '--git-dir'], { timeout: 1500 });
   } catch (err) { return { isRepo: false, ...(['ENOENT', 'EACCES'].includes(err.code) ? { gitAvailable: false } : {}) }; }
   try {
-    const out = execFileSync('git', ['-C', dir, 'status', '--porcelain=v1', '--branch'],
-      { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'], timeout: 2500 });
+    const { stdout: out } = await execFileAsync('git', ['-C', dir, 'status', '--porcelain=v1', '--branch'],
+      { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, timeout: 2500 });
     const lines = out.split('\n');
     let branch = '';
     let ahead = 0;
@@ -5809,7 +5796,7 @@ function mcpSummary() {
   } catch (_) { return { count: 0, enabled: 0, supported: false }; }
 }
 
-ipcMain.handle('stats:get', () => {
+ipcMain.handle('stats:get', async () => {
   // The focused tab's own agent, so a codex tab beside a claude tab reads as
   // codex. The configured default stands in until a tab has started one.
   const agentLine = activeAgentCommand();
@@ -5847,14 +5834,15 @@ ipcMain.handle('stats:get', () => {
   const activeProject = (Array.isArray(config.projects) && config.activeProjectId)
     ? config.projects.find((p) => p && p.id === config.activeProjectId) : null;
   const cwd = activePtyCwd || (activeProject && activeProject.path) || HOME;
+  const [agentVersion, git] = await Promise.all([agentVersionAsync(agentCmd), gitSummary(cwd)]);
   return {
     skills, workflows, hooks, hooksApplicable,
-    agent: agentCmd, agentIsClaude, agentVersion: getAgentVersion(agentCmd),
+    agent: agentCmd, agentIsClaude, agentVersion,
     huskVer: PKG.version,
     workspace: {
       name: (activeProject && activeProject.name) || path.basename(cwd) || '',
       cwd,
-      git: gitSummary(cwd),
+      git,
     },
     mcp: mcpSummary(),
     claudeDir: CLAUDE_DIR, skillsDir, hooksDir,

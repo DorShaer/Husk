@@ -1,6 +1,6 @@
 'use strict';
 
-// Loaded with Electron's -r flag. Records every main event loop stall over
+// Benchmark entry point for Electron. Records every main event loop stall over
 // 20ms into globalThis.__huskLoopBlocks as { at, ms } since process start.
 // With HUSK_BOOT_PROFILE set to a file path, also writes a CPU profile there
 // when globalThis.__huskStopProfile() is called.
@@ -33,3 +33,17 @@ if (out) {
     });
   });
 }
+
+// Capture the window milestone on the same clock as the event-loop samples.
+require('electron').app.once('browser-window-created', (_event, win) => {
+  win.webContents.once('dom-ready', () => {
+    const mark = performance.now();
+    setTimeout(async () => {
+      if (globalThis.__huskStopProfile) await globalThis.__huskStopProfile();
+      const fs = require('node:fs');
+      const file = process.env.HUSK_BOOT_RESULT;
+      fs.writeFileSync(file + '.tmp', JSON.stringify({ mark, blocks }));
+      fs.renameSync(file + '.tmp', file);
+    }, Number(process.env.HUSK_BOOT_SECONDS) * 1000);
+  });
+});
