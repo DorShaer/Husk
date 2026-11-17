@@ -22,7 +22,7 @@ Codex uses the [app-server question protocol](https://developers.openai.com/code
 
 Native chat events are recorded under the Husk config directory in `transcripts/`. The files contain conversation data and should be treated as private. Each file is bounded to 2 MiB; older content is replaced by a truncation notice as needed. Tool output is shortened and thoughts are not retained by this store.
 
-**Preferences > Appearance > Transcript retention** controls startup pruning, with a default of 30 days. Zero disables age-based pruning. Private large-handoff files use the same retention period. This setting does not delete the underlying CLI's own history.
+**Preferences > Workspace > Transcript retention** controls startup pruning, with a default of 30 days. Zero disables age-based pruning. Private large-handoff files use the same retention period. This setting does not delete the underlying CLI's own history.
 
 ## Brain rules
 
@@ -36,7 +36,7 @@ Captured conversations and imported files cannot silently become rules.
 
 ## Usage bell and budgets
 
-The bell lists available plan, context-window and local daily-budget readings. Missing readings mean unknown usage, not unlimited usage. Warnings default to 75 percent and critical warnings to 90 percent; both thresholds are configurable in Preferences > Usage.
+The bell lists available plan, context-window and local daily-budget readings. Missing readings mean unknown usage, not unlimited usage. Warnings default to 75 percent and critical warnings to 90 percent; both thresholds are configurable in Preferences > Usage & limits.
 
 The badge counts unread alerts. Opening the bell clears the badge while keeping the usage readings visible. Alert state is stored locally, so Ctrl+R and app restarts do not repeat the same toast or restore a viewed badge. A new source, a higher warning level or a new usage window can raise a new alert. A changed reset estimate is not a new window; the previous window must end first. Temporary healthy readings do not rearm an existing plan alert. Records expire after 30 days and storage keeps the latest 200 sources.
 
@@ -46,4 +46,18 @@ Daily budgets count usage observed in Husk's native chats. They exclude other ap
 
 Optional budget confirmation holds a message before sending. Cancel keeps a typed draft or restores an automatically dequeued message to the queue. Budgets reset at local midnight. A budget is a local reminder, not an account-wide provider limit or an authoritative spending control.
 
-When a CLI reports a reached limit, the affected chat offers continuation with another installed CLI. An error-text match is labeled as a possible limit because it is inferred.
+Recovery actions depend on the resource. Context warnings offer native compaction when supported, a new conversation with the same vendor, and dismissal. Codex uses its native thread compaction API; older versions that reject it show an error and keep the existing conversation. Compaction requested during a reply runs before queued messages. Drafts and the current thread are preserved. Husk only updates the context meter from reported usage.
+
+Provider limits offer usage details and switching only when another installed CLI is detected and has no known reached limit. With one vendor, no switch is suggested. Local budgets link to Usage settings. An error-text match is labeled as a possible limit because it is inferred.
+
+## Files changed during a turn
+
+A completed turn that changes files adds a receipt to the conversation. Select a file or View to open its diff in Changes; Explain sends a question about that file to the active chat. Changes made by other applications during the same turn can also appear.
+
+This works in folders without Git. Husk compares local files before and after the turn without creating tracking files. Non-Git diffs remain available until the next turn or app restart. Common dependency and build folders, environment files, private-key files and symbolic links are skipped. Comparisons are bounded to 2,000 files, 4 MiB of file content and a two-second scan; files over 256 KiB and binary files have no line diff. The Changes view identifies incomplete comparisons.
+
+Select **Initialize Git** in Changes to create a repository in the working folder. Review the folder in the confirmation. This runs Git initialization only: no commit or remote is created. Pull requests and checks continue to require a Git repository and a configured remote.
+
+Git does not need to be installed for local turn comparisons. When Git is missing or cannot start, Changes and Source offer **Get Git** and **Check again**. After installing Git in a location on Husk's PATH, Check again enables the repository actions without restarting Husk. If it was installed into a new location that Husk cannot see, restart Husk after updating PATH.
+
+Git setup refuses existing repositories, nested repository folders and worktree markers. Read-only or missing folders, initialization failures and timeouts show an explanation. Canceling the folder confirmation leaves it unchanged. If Git becomes unavailable during a Git-tracked turn, Husk reports that it could not compare that turn; local comparison starts on the next turn. Partial scans are labeled rather than reported as a clean folder.

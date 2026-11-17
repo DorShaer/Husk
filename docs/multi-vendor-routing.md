@@ -12,12 +12,20 @@ Assign a vendor independently to:
 - **Planner**, which splits team work.
 - **Integrator**, which combines team results.
 
+When more than one supported CLI is detected, each job type offers its installed vendors and **Auto by Husk**. Detection is independent of the CLIs connected for new chats. With one installed vendor, Husk uses that vendor for unassigned job types.
+
+**Auto by Husk** chooses an installed CLI at the start of a job, preferring one with a usable model configured for the job's simple or complex tier. Ties use a stable vendor order: Claude, Codex, Gemini, Copilot, Kiro, Aider. If none has a tier model, the first installed vendor in that order uses its own default model. This does not compare subscription balances or infer whether a CLI is signed in. The chosen vendor and model appear in the job receipt and remain fixed after queueing.
+
+### Model defaults by vendor
+
+Expand **Model defaults by vendor** below the job choices to configure per-CLI models.
+
 ### Routed and Not routed
 
-Each installed CLI is in one of two states, shown at the top of the Models panel:
+Each installed CLI is in one of two states, shown in Model defaults by vendor:
 
 - **Routed**: you picked a model for simple jobs and a model for complex jobs. Simple jobs run on the first, complex jobs, planning and integration on the second.
-- **Not routed**: "This CLI uses its own default model for every task." No model controls are drawn for it; **Set up routing** opens the picker.
+- **Not routed**: "This CLI uses its own default model for every task." Every job still has a Model picker. Choose a model for that job, or keep **Use vendor default**. **Set up routing** inside Model defaults by vendor configures reusable defaults.
 
 Claude ships Routed with `haiku` for simple jobs and `opus` for complex jobs. **Stop routing** returns any CLI to its own default model.
 
@@ -25,19 +33,19 @@ The picker reads a fresh model list from the CLI itself and offers only the ids 
 
 A picked id is stored with the time the CLI listed it. When a job starts, Husk reads the CLI's list again (cached for five minutes). If the id is gone, the job runs on the CLI's default model and the run log says so in one line; a stale id never fails a run. Typed ids, and ids checked while the list cannot be read, are passed through unchanged.
 
-A role row whose CLI is Routed also offers a model pin for that role alone. A pin always wins over the CLI's routing. Model dropdowns load the same live lists and display names as chat, reusing an open chat's catalog when available.
+Every role row with a selected vendor offers a model pin for that role alone. A pin always wins over the CLI's routing. Model menus throughout chat, Autopilot, workflow steps and vendor defaults use the same catalog and show the model name, exact ID and provider description when available. Opening a model field reads the same catalog as chat, reusing an open chat's list when available. Custom IDs remain available for models a CLI does not list.
 
 ### What each job ran on
 
 Every job records the vendor and model it ran on, or `<cli> (default)` when no model flag was passed. Artifacts shows it on each Autopilot run, one line per job for a team.
 
-Husk never picks a CLI on your behalf. Each job type (Simple, Complex, Planner, Integrator) runs on the CLI you choose in **Configure models**. A job type with no CLI chosen does not run: the run stops before it starts and names the job type to set up. Team workers run on the CLI chosen for their job type; the planner's own suggestions never decide where a worker runs.
+Each job type (Simple, Complex, Planner, Integrator) runs on the CLI you choose in **Configure models**, or on the vendor chosen by **Auto by Husk**. With multiple installed vendors, an unassigned job type asks for setup before running. Team workers run on the CLI chosen for their job type; the planner's own suggestions never decide where a worker runs.
 
-The run form's **Job vendor** and model override solo jobs and team workers. Planner and Integrator retain their own settings. Explicit workflow step vendors/models are preserved; unassigned steps use the task routing settings. Assignments are captured before queueing so changing defaults later does not change queued workers, workflow steps, or integration.
+The run form's **Job vendor** and model override solo jobs and team workers. **Use job settings** follows the saved assignments; **Auto by Husk** chooses an installed vendor for the workers in that run. Planner and Integrator retain their own settings. Explicit workflow step vendors/models are preserved; unassigned steps use the task routing settings. Assignments are captured before queueing so changing defaults later does not change queued workers, workflow steps, or integration.
 
 ## Usage alerts
 
-A context warning appears once per discussion when it reaches the configured threshold (75% by default). It offers **Change vendor**, **Continue with another model**, and **Dismiss**. Increasing usage, temporary lower readings, or reloading the renderer do not repeat the same warning. A new conversation or a real new usage window can warn again. The bell retains usage details and clears its unread count when opened.
+A context warning appears once per discussion when it reaches the configured threshold (75% by default). It offers **Compact conversation** when the current CLI supports it, **New conversation** with the same vendor, and **Dismiss**. During a reply, **Compact after reply** waits before compacting and then releases queued messages. Context capacity is separate from subscription quota; a context warning does not suggest switching vendors. Increasing usage, temporary lower readings, or reloading the renderer do not repeat the same warning. A new conversation, confirmed compaction with a fresh healthy context reading, or a real new usage window can warn again. The bell retains usage details and clears its unread count when opened.
 
 Codex questions use the same selectable question card as Claude, including suggested choices and free text. Pending questions survive renderer reloads and disappear when the agent withdraws them. Permission auto-approval does not answer questions for you.
 

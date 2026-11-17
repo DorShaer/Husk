@@ -189,16 +189,16 @@ a cleanup path such as `~/.local/share/husk`, the uninstaller skips that path.
 ## Usage
 
 1. Launch Husk from your applications menu, or run `husk` from a terminal after installing.
-2. On first run, Husk asks for the agent's name (default: Husk) and the agent command (default: `claude`). Both are saved to `~/.config/husk/config.json` and can be edited later in Preferences.
+2. On first run, connect your CLIs and choose your workspace and appearance. Preferences > Workspace contains the default chat CLI and startup options. Voice & recaps contains the assistant name.
 3. Start chatting. Agents with a machine protocol (Claude over stream-json; Copilot, Gemini and Kiro over the Agent Client Protocol; Codex over its app-server) open as a **native chat**. Aider opens in the agent's own terminal, a real PTY where slash commands, stdin and ctrl-c all work. You can pin every agent to the terminal view in Preferences (Chat view).
    - **The thread.** Replies stream as markdown. A thought folds under `Thinking`. Each tool call is one line you can open into its input, output and diff (Formatted or Raw). A permission request becomes a card with the agent's own choices. A live row at the foot of the thread says when the agent is thinking or running a tool. When a turn changes files, open the Changes canvas to inspect the working-tree diff, pull request and checks beside the conversation.
-   - **Sessions.** The column beside the thread lists every past session, grouped by folder, project and day, with its live state. Click one to reopen it with its history. A cold start reopens your newest session (set `resumeLastOnLaunch: false` in config to start empty instead). Chat tabs survive a reload.
+   - **Sessions.** The column beside the thread lists every past session, grouped by folder, project and day, with its live state. Click one to reopen it with its history. A cold start reopens your newest session. Change this in Preferences > Workspace > Reopen the most recent conversation. Chat tabs survive a reload.
    - **The composer.** `/` lists every command the agent offers; scroll, or keep typing to narrow. `@` completes a file path. Up and Down recall earlier prompts. Alt+Backspace and Alt+Delete remove a word. Paste or drop an image and it goes with your next message.
    - **While it works.** Enter queues your next message and sends it when the agent is free. Up on an empty field takes the last queued message back, to edit or to delete. **Edit and resend** under a reply rewrites that prompt and replaces everything after it.
    - **Models.** The model chip in the composer, or `/model`, lists the models your CLI itself offers and switches in place, without restarting the session. Type any other id the CLI accepts.
-   - **Help.** The help button at the top right and the Help menu open a prefilled GitHub issue to report a bug or request a feature.
-4. Drag files onto the window to share them with the agent, or use **Attach** in the composer and **Add context** in the page head.
-5. Switch pages with the rail or `Alt+1..6`. Open the command palette with `Cmd/Ctrl+K`.
+   - **Help.** The help button and native Help menu open the bundled documentation, keyboard shortcuts and troubleshooting guide, even offline. They also link to the repository and prefilled bug reports or feature requests.
+4. Drag files onto the window to share them with the agent, or use **Attach** in the composer.
+5. Switch pages with the rail or `Alt+1..7`. Open the command palette with `Cmd/Ctrl+Shift+K`. Outside terminals, `Cmd/Ctrl+K` also works.
 6. If a chat starts agents that keep working on their own, the topbar says how many are running and how many are waiting on you. Click it or press `Alt+A` to pick one and continue its conversation.
 
 ### Pages
@@ -222,7 +222,7 @@ a cleanup path such as `~/.local/share/husk`, the uninstaller skips that path.
 - **GitHub**: the open pull requests and issues for the current project, with their checks, labels and review state, filtered as you type.
 - **Sessions**: resume any prior agent session from its JSONL log. Group the roster into folders you name. Agents a chat started are grouped under that chat rather than listed beside it.
 
-A command palette (`Cmd/Ctrl+K`) searches chats, projects, workflows, agents, prompts and skills from anywhere. Preferences is its own page (agent command, name, chat view, theme, accent, voice, recap, sidebar defaults, and an About entry that reports the version and checks for updates), opened from the rail.
+A command palette (`Cmd/Ctrl+Shift+K`, or `Cmd/Ctrl+K` outside terminals) searches chats, projects, workflows, agents, prompts and skills from anywhere. Preferences is its own page, opened from the rail, grouping settings into Workspace, Appearance, Voice & recaps, Usage & limits, Connections, and About & help (the About group reports the version and checks for updates).
 
 ## Architecture
 
@@ -313,7 +313,7 @@ A failing gate restores the working tree, so a bad run leaves nothing behind.
 ### Testing
 
 ```bash
-npm test         # node:test unit suite (500+ tests), well under a second
+npm test         # node:test unit suite
 npm run test:e2e # Playwright smoke that boots real Electron
 npm run test:all # both
 ```
@@ -329,17 +329,16 @@ CI runs both jobs on every push to `main`, `development`, and `dev/**`, and on e
 
 ## Configuration
 
-All settings live in `~/.config/husk/config.json` and are editable from the Preferences page:
+Preferences groups settings into Workspace, Appearance, Voice & recaps, Usage & limits, Connections, and About & help. Search finds individual settings. Most preferences are stored in `~/.config/husk/config.json`; supported API keys use the operating system keychain.
 
-- **Agent command** (`claude`, `copilot`, `codex`, `aider`, `gemini`, `kiro`, or any binary on `$PATH`) and **agent name**
+- **Default chat CLI** in Workspace chooses the starting CLI. The New chat menu still lets you choose a different installed CLI for each discussion. **Agent name** lives in Voice & recaps.
 - **Active agent profiles**: one or more agent personas applied to the next session
 - **Chat view** (`chatView`: `chat` or `terminal`): how a new chat opens, native chat or the agent's own terminal. Chat is the default for CLIs with a protocol
 - **Active project**: drives the agent's working directory so per-folder trust prompts work
-- **Theme and accent color**: the existing palettes plus Solarized Light and Dark, One Dark, Monokai, Everforest, Kanagawa, and high contrast light and dark. Pick a built-in accent or a custom color.
+- **Theme and accent color**: 21 themes, 5 of them light. The dark set is Dark, Midnight, Tokyo Night, Catppuccin, Rose Pine, Gruvbox, Nord, Dracula, Ember, Solarized Dark, One Dark, Monokai, Everforest, Kanagawa, Eclipse, and High contrast dark. The light set is Light, Sepia, Solarized Light, High contrast light, and Glass (clear glass plates, frosted and transparent panes with lit edges, on a cool silver field). Pick a built-in accent or a custom color.
 - **Background image**: open Preferences → Appearance and use the first card to choose a local PNG, JPEG or WebP. Husk checks its byte and pixel limits, re-encodes it in a sandboxed helper, and stores a private copy without the source path. The image appears behind the interface, with a preview and adjustable dim and blur.
 - **Usage**: a bell shows context, plan and daily budget readings when available. Warnings have configurable thresholds. An optional daily-budget confirmation asks before sending.
 - **Transcript retention**: keep local chat history for continuation between CLIs, with a default retention of 30 days.
-- **Sharing**: bundle import/export and an optional local scanner. Imported bundles, agent packs, workflow artifacts and pasted MCP sets require an installation review.
 - **Voice** (enable, voice model, speaking rate)
 - **Show recap line** (when off, suppresses end-of-response summaries)
 - **Reopen the last session on launch** (`resumeLastOnLaunch`, on by default)
@@ -358,4 +357,4 @@ Husk is source-available under the [Elastic License 2.0](LICENSE). You can use i
 The terminal embedding uses [`xterm.js`](https://github.com/xtermjs/xterm.js) plus [`node-pty`](https://github.com/microsoft/node-pty). On Linux the PTY is established through `script(1)` so `claude --resume` gets its controlling terminal. Voice is via [Piper TTS](https://github.com/rhasspy/piper). The workflow editor uses [Drawflow](https://github.com/jerosoler/Drawflow).
 
 
-More detail: [chat continuation, Brain rules and usage](docs/chat-continuation.md) and [local sharing](docs/local-sharing.md).
+More detail: [chat continuation, Brain rules and usage](docs/chat-continuation.md) and [installation and updates](docs/installation.md).
