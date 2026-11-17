@@ -1,6 +1,6 @@
 {
   "name": "husk",
-  "version": "2.14.0",
+  "version": "2.15.0",
   "description": "A desktop home for your CLI agents. Adds chat and session history for Claude Code, Copilot CLI, Codex, Gemini CLI and Kiro, with a real terminal for Aider and other CLIs.",
   "main": "src/main.js",
   "license": "Elastic-2.0",
@@ -66,7 +66,14 @@
       "!src/renderer/assets/wn-2100-*.png",
       "!src/renderer/assets/wn-2110-*.png",
       "!src/renderer/assets/wn-2120-*.png",
-      "!src/renderer/assets/whatsnew-*.png"
+      "!src/renderer/assets/whatsnew-*.png",
+      "!src/renderer/assets/wn-2140-*.png",
+      "!**/node_modules/officeparser/dist/officeparser.browser*",
+      "!**/node_modules/tesseract.js/**",
+      "!**/node_modules/tesseract.js-core/**",
+      "!**/node_modules/pdfjs-dist/web/**",
+      "!**/node_modules/@napi-rs/**",
+      "!**/node_modules/pdfjs-dist/build/**"
     ],
     "extraResources": [
       {
