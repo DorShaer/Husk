@@ -96,7 +96,8 @@ function inspectImage(buf) {
 }
 
 // The bytes of a regular file, read from one handle that does not follow a link.
-function readRegularFile(file, maxBytes = MAX_BYTES) {
+// `check` sees the open handle's stat and throws to refuse the file.
+function readRegularFile(file, maxBytes = MAX_BYTES, check = null) {
   const flags = fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0) | (fs.constants.O_NOFOLLOW || 0);
   let before;
   try { before = fs.lstatSync(file); } catch (_) { throw new Error('Choose the image file itself.'); }
@@ -106,8 +107,9 @@ function readRegularFile(file, maxBytes = MAX_BYTES) {
   try {
     const st = fs.fstatSync(fd);
     if (!st.isFile() || st.dev !== before.dev || st.ino !== before.ino) throw new Error('Choose the image file itself.');
+    if (check) check(st);
     if (st.size > maxBytes) throw new Error('That image is larger than 15 MB.');
-    const buf = Buffer.alloc(maxBytes + 1);
+    const buf = Buffer.alloc(Math.min(st.size, maxBytes) + 1);
     let total = 0;
     while (total < buf.length) {
       const n = fs.readSync(fd, buf, total, buf.length - total, total);

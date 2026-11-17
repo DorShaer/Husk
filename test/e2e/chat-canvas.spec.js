@@ -472,3 +472,69 @@ test('losing Git during a turn reports an unavailable comparison instead of a fa
     expect(fs.existsSync(path.join(repo, '.git'))).toBe(true);
   } finally { await app.close(); fs.rmSync(homeDir, { recursive: true, force: true }); }
 });
+
+const PNG_BEFORE = 'iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEUlEQVR42mM4YWODFTEMLQkAZZlQAS/gME0AAAAASUVORK5CYII=';
+const PNG_AFTER = 'iVBORw0KGgoAAAANSUhEUgAAAPAAAAB4CAIAAABD1OhwAAAA+0lEQVR42u3SAQkAAAgEsQ9mMMMaxhoigyU4LtUDb0QCDA2GBkODoTE0GBoMDYYGQ2NoMDQYGgwNhsbQYGgwNBgaDI2hwdBgaDA0GBpDg6HB0GBoMDSGBkODocHQYGgMDYYGQ4OhMTQYGgwNhgZDY2gwNBgaDA2GxtBgaDA0GBoMjaHB0GBoMDQYGkODocHQYGgwNIYGQ4OhwdBgaAwNhgZDg6HB0BgaDA2GBkNjaDA0GBoMDYbG0GBoMDQYGgyNocHQYGgwNBgaQ4OhwdBgaDA0hgZDg6HB0GBoDA2GBkODocHQGBoMDYYGQ2NoFTA0GBoMDYbG0GBouGUBwCjSQkLMRQcAAAAASUVORK5CYII=';
+
+test('a changed image file is shown as a picture, and only when its bytes are an image', async () => {
+  const { homeDir, bin, repo } = makeHome();
+  const git = (...args) => execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { stdio: 'ignore' });
+  fs.writeFileSync(path.join(repo, 'shot.png'), Buffer.from(PNG_BEFORE, 'base64'));
+  fs.writeFileSync(path.join(repo, 'gone.png'), Buffer.from(PNG_BEFORE, 'base64'));
+  git('add', '.'); git('commit', '-q', '-m', 'images');
+  fs.writeFileSync(path.join(repo, 'shot.png'), Buffer.from(PNG_AFTER, 'base64'));
+  fs.rmSync(path.join(repo, 'gone.png'));
+  fs.writeFileSync(path.join(repo, 'page.png'), Buffer.concat([Buffer.alloc(8), Buffer.from('<!doctype html><p>text</p>')]));
+  fs.mkdirSync(path.join(homeDir, 'elsewhere'));
+  fs.writeFileSync(path.join(homeDir, 'elsewhere', 'in.png'), Buffer.from(PNG_AFTER, 'base64'));
+  fs.symlinkSync(path.join(homeDir, 'elsewhere'), path.join(repo, 'linked'));
+  fs.writeFileSync(path.join(homeDir, 'elsewhere.png'), Buffer.from(PNG_AFTER, 'base64'));
+  fs.symlinkSync(path.join(homeDir, 'elsewhere.png'), path.join(repo, 'link.png'));
+  const { app, win } = await launch(homeDir, bin);
+  try {
+    const canvas = win.locator('#chat-canvas');
+    await win.locator('#btn-canvas').click();
+    await expect(canvas).toBeVisible();
+    const open = async (name) => {
+      await canvas.locator('.cc-file', { hasText: name }).click();
+      await expect(canvas.locator('.cc-dpath')).toHaveText(name);
+      await expect(canvas.locator('.cc-diff .cc-note', { hasText: 'Reading the diff' })).toHaveCount(0);
+    };
+    await open('shot.png');
+    const img = canvas.locator('.cc-diff .cc-image canvas');
+    await expect(img).toBeVisible();
+    await expect(canvas.locator('.cc-image-meta')).toContainText('240 × 120');
+    // Painted from pixels: the right size and colour, and no image element in the panel.
+    expect(await img.evaluate((el) => [el.width, el.height, ...el.getContext('2d').getImageData(5, 5, 1, 1).data])).toEqual([240, 120, 60, 120, 220, 255]);
+    await expect(canvas.locator('img')).toHaveCount(0);
+    const box = await win.evaluate(() => {
+      const i = document.querySelector('.cc-image canvas').getBoundingClientRect();
+      const d = document.querySelector('.cc-diff').getBoundingClientRect();
+      return { inside: i.left >= d.left && i.right <= d.right };
+    });
+    expect(box.inside).toBe(true);
+    if (process.env.HUSK_IMAGE_SHOT) await win.screenshot({ path: process.env.HUSK_IMAGE_SHOT });
+    // Another file's picture is gone the moment the selection moves.
+    await canvas.locator('.cc-file', { hasText: 'gone.png' }).click();
+    expect(await canvas.locator('.cc-diff canvas').count()).toBe(0);
+    for (const name of ['page.png', 'link.png', 'gone.png']) {
+      await open(name);
+      await expect(canvas.locator('.cc-diff canvas')).toHaveCount(0);
+    }
+    await open('shot.png');
+    await expect(img).toBeVisible();
+    const asked = await win.evaluate(async (root) => {
+      const out = [];
+      for (const rel of ['page.png', 'link.png', 'linked/in.png', 'gone.png', 'linked']) out.push((await window.husk.git.image(root, rel)).ok);
+      out.push((await window.husk.git.image(root + '/..', 'elsewhere.png')).ok);
+      const burst = await Promise.all(Array.from({ length: 6 }, () => window.husk.git.image(root, 'shot.png')));
+      return { refused: out, burst: burst.map((r) => r.ok) };
+    }, repo);
+    expect(asked.refused).toEqual([false, false, false, false, false, false]);
+    expect(asked.burst).toEqual([true, false, false, false, false, true]);
+    expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
+  } finally {
+    await app.close();
+    fs.rmSync(homeDir, { recursive: true, force: true });
+  }
+});

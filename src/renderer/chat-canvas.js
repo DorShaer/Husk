@@ -30,6 +30,7 @@ const st = {
   folderNote: '',
   folderPartial: false,
   diff: null,
+  image: null,
   diffError: '',
   pr: null,
   prState: 'idle',
@@ -67,6 +68,11 @@ function stat(adds, dels) {
   if (adds > 0) box.appendChild(h('span', 'is-add', '+' + adds));
   if (dels > 0) box.appendChild(h('span', 'is-del', '-' + dels));
   return box;
+}
+const IMAGE_NAME = /\.(png|jpe?g|gif|webp)$/i;
+function pixelsOk(p) {
+  return !!p && Number.isInteger(p.width) && Number.isInteger(p.height) && p.width >= 1 && p.height >= 1 && p.width <= 1600 && p.height <= 1600
+    && p.data instanceof Uint8Array && p.data.length === p.width * p.height * 4;
 }
 const LETTER = { modified: 'M', added: 'A', deleted: 'D', renamed: 'R', copied: 'C', untracked: 'A', conflicted: 'U' };
 
@@ -107,15 +113,22 @@ async function loadChanges() {
       st.entries = parsed.slice().sort((a, b) => (st.turnPaths.has(b.path) ? 1 : 0) - (st.turnPaths.has(a.path) ? 1 : 0));
     }
   }
-  if (!st.entries.some((e) => e.path === st.path)) st.path = st.entries[0] ? st.entries[0].path : '';
+  if (!st.entries.some((e) => e.path === st.path)) pick(st.entries[0] ? st.entries[0].path : '');
   paint();
   loadDiff();
+}
+
+// Selecting another file drops what was read for the last one.
+function pick(path) {
+  if (path === st.path) return;
+  st.path = path; st.diff = null; st.image = null; st.diffError = '';
 }
 
 async function loadDiff() {
   const seq = ++st.diffSeq;
   const entry = st.entries.find((e) => e.path === st.path);
   st.diff = null;
+  st.image = null;
   st.diffError = '';
   if (!entry) { paintBody(); return; }
   const side = entry.status === 'untracked' ? 'untracked' : entry.unstaged ? 'worktree' : 'index';
@@ -126,7 +139,15 @@ async function loadDiff() {
     st.diffError = res && res.error === 'diff too large' ? 'This diff is too large to show here.' : res && res.error || 'Could not read this diff.';
   } else {
     const parsed = res.file ? null : window.husk.text.parseDiff(res.diff || '');
-    st.diff = res.file || (parsed && Array.isArray(parsed.files) && parsed.files[0] ? parsed.files[0] : { hunks: [] });
+    const diff = res.file || (parsed && Array.isArray(parsed.files) && parsed.files[0] ? parsed.files[0] : { hunks: [] });
+    if (!diff.hunks.length && entry.status !== 'deleted' && IMAGE_NAME.test(entry.path)) {
+      let img = null;
+      try { img = await window.husk.git.image(st.root, entry.path); } catch (_) { img = null; }
+      if (seq !== st.diffSeq) return;
+      if (img && img.ok && pixelsOk(img.pixels)) st.image = img;
+      else if (img && img.note) diff.note = String(img.note);
+    }
+    st.diff = diff;
   }
   if (st.tab === 'changes') paintBody();
 }
@@ -277,7 +298,7 @@ function paintChanges(body, foot) {
   const list = h('div', 'cc-files');
   for (const e of st.entries) {
     const r = st.rows[e.path] || { adds: 0, dels: 0 };
-    const row = button('cc-file' + (e.path === st.path ? ' is-on' : ''), null, () => { st.path = e.path; paintBody(); loadDiff(); });
+    const row = button('cc-file' + (e.path === st.path ? ' is-on' : ''), null, () => { pick(e.path); paintBody(); loadDiff(); });
     row.title = e.path;
     const letter = h('span', 'cc-letter', LETTER[e.status] || 'M');
     letter.dataset.status = e.status;
@@ -298,6 +319,15 @@ function paintChanges(body, foot) {
     const box = h('div', 'cc-diff');
     if (st.diffError) box.appendChild(h('div', 'cc-note', st.diffError));
     else if (!st.diff) box.appendChild(h('div', 'cc-note', 'Reading the diff'));
+    else if (st.image) {
+      // The picture is painted from plain pixels; this window decodes no image file.
+      const { width, height, data } = st.image.pixels;
+      const pic = h('canvas'); pic.width = width; pic.height = height;
+      pic.setAttribute('role', 'img'); pic.setAttribute('aria-label', entry.path);
+      pic.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(data.buffer, data.byteOffset, data.length), width, height), 0, 0);
+      const size = st.image.bytes < 1048576 ? Math.max(1, Math.round(st.image.bytes / 1024)) + ' KB' : (st.image.bytes / 1048576).toFixed(1) + ' MB';
+      box.appendChild(h('div', 'cc-image', null, pic, h('span', 'cc-image-meta', `${st.image.width} × ${st.image.height} · ${size}`)));
+    }
     else if (!st.diff.hunks.length) box.appendChild(h('div', 'cc-note', st.diff.note || (st.diff.binary ? 'Binary file.' : 'No line changes to show.')));
     else {
       let n = 0;
@@ -429,7 +459,7 @@ function refresh() {
   if (root !== st.root) {
     // Paths noted before the first read belong to the folder about to be read.
     if (st.root) { st.turnPaths = new Set(); st.path = ''; }
-    st.root = root; st.entries = []; st.rows = {}; st.diff = null;
+    st.root = root; st.entries = []; st.rows = {}; st.diff = null; st.image = null; st.diffSeq++;
     st.pr = null; st.prState = 'idle';
   }
   if (st.tab === 'changes') loadChanges(); else loadPr();
@@ -440,7 +470,7 @@ function open(req) {
   const was = st.open;
   st.open = true;
   if (r.tab && TABS.some((t) => t[0] === r.tab)) st.tab = r.tab;
-  if (r.path) st.path = String(r.path);
+  if (r.path) pick(String(r.path));
   paint();
   refresh();
   schedule();

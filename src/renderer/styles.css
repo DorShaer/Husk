@@ -18188,6 +18188,9 @@ body[data-mode="light"] .br-stage {
 .cc-hunk { padding: 3px 10px; border-top: 1px solid var(--line); background: var(--bg-1); color: var(--text-3); font-size: var(--fs-label); white-space: pre; }
 .cc-hunk:first-child { border-top: 0; }
 .cc-note { padding: 14px; color: var(--text-3); font-family: var(--font-body); font-size: var(--fs-label); }
+.cc-image { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 14px; }
+.cc-image canvas { max-width: 100%; height: auto; border: 1px solid var(--line-2); border-radius: 6px; }
+.cc-image-meta { color: var(--text-3); font-family: var(--font-body); font-size: var(--fs-label); }
 .cc-empty { margin: auto; max-width: 320px; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; }
 .cc-empty-title { font-size: 14px; font-weight: 600; color: var(--text); }
 .cc-empty-msg { font-size: var(--fs-label); line-height: 1.5; color: var(--text-3); }

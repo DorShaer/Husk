@@ -300,6 +300,7 @@ contextBridge.exposeInMainWorld('husk', {
     repo: (root) => ipcRenderer.invoke('git:repo', { root }),
     status: (root) => ipcRenderer.invoke('git:status', { root }),
     diff: (root, opts) => ipcRenderer.invoke('git:diff', Object.assign({ root }, opts || {})),
+    image: (root, rel) => ipcRenderer.invoke('git:image', { root, rel }),
     stage: (root, paths) => ipcRenderer.invoke('git:stage', { root, paths }),
     unstage: (root, paths) => ipcRenderer.invoke('git:unstage', { root, paths }),
     hunk: (root, opts) => ipcRenderer.invoke('git:hunk', Object.assign({ root }, opts || {})),

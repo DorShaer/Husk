@@ -48,6 +48,7 @@ const { issueUrl } = require('./lib/feedback-url');
 const { sanitizeZoom } = require('./lib/ui-zoom');
 const themes = require('./lib/themes');
 const bgImage = require('./lib/background-image');
+const imagePreview = require('./lib/image-preview');
 const { isOfficeDoc, extractDocText } = require('./lib/doc-extract');
 const Subagents = require('./lib/subagents');
 const StatuslineTrust = require('./lib/statusline-trust');
@@ -2101,7 +2102,8 @@ function readSessionHistory({ agent, sessionId, cwd, tailBytes = HISTORY_TAIL_BY
 // The picked file is read and checked here, re-encoded in a sandboxed helper
 // window, and only the re-encoded copy is stored and served.
 
-function reencodeBackground(bytes, mime) {
+// Runs one call in a fresh helper window and settles with what it returns.
+function imageHelper(call) {
   return new Promise((resolve, reject) => {
     const helper = new BrowserWindow({
       show: false,
@@ -2120,11 +2122,19 @@ function reencodeBackground(bytes, mime) {
     helper.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     helper.webContents.on('will-navigate', (e) => e.preventDefault());
     helper.webContents.on('render-process-gone', fail);
-    const call = `encodeBackground(${JSON.stringify(bytes.toString('base64'))}, ${JSON.stringify(mime)}, ${bgImage.MAX_SIDE})`;
     helper.loadFile(path.join(__dirname, 'renderer', 'bg-encode.html'))
       .then(() => helper.webContents.executeJavaScript(call))
-      .then((encoded) => finish(resolve, Buffer.from(String(encoded), 'base64')), fail);
+      .then((result) => finish(resolve, result), fail);
   });
+}
+
+function helperArgs(bytes, mime, maxSide) {
+  return `${JSON.stringify(bytes.toString('base64'))}, ${JSON.stringify(mime)}, ${Number(maxSide)}`;
+}
+
+function reencodeBackground(bytes, mime) {
+  return imageHelper(`encodeBackground(${helperArgs(bytes, mime, bgImage.MAX_SIDE)})`)
+    .then((encoded) => Buffer.from(String(encoded), 'base64'));
 }
 
 function setBackground(next) {
@@ -12166,6 +12176,40 @@ ipcMain.handle('git:diff', async (_e, { root, rel, side, sha, context, ignoreWs 
     if (out === null) return { ok: false, error: 'could not read the diff' };
     return { ok: true, diff: out, context: ctx, lines: out ? out.split('\n').length : 0, truncated: false };
   } catch (_) { return { ok: false, error: 'could not read the diff' }; }
+});
+
+// A changed image file as a picture. The file is read and checked here and
+// decoded in the helper window; only plain pixels of a checked size are returned.
+// One request runs at a time, and a request that a newer one overtook is dropped.
+let imageSeq = 0;
+let imageTail = Promise.resolve();
+ipcMain.handle('git:image', (_e, { root, rel } = {}) => {
+  const mine = ++imageSeq;
+  const run = imageTail.then(async () => {
+    if (mine !== imageSeq) return { ok: false, error: 'superseded' };
+    let gate = chatFolderGate(root);
+    if (!gate.ok) gate = gitMutateGate(root);
+    if (!gate.ok) return gate;
+    const r = scRel(gate.root, rel);
+    if (!r.ok) return { ok: false, error: r.error };
+    try {
+      const abs = confinedAbs(gate.root, r.value);
+      if (!realPathInside(abs, gate.root)) return { ok: false, error: 'path outside root' };
+      const source = bgImage.readRegularFile(abs, bgImage.MAX_BYTES, (opened) => {
+        const real = fs.realpathSync(abs);
+        const now = fs.statSync(real);
+        if (!isInside(fs.realpathSync(gate.root), real) || now.dev !== opened.dev || now.ino !== opened.ino) throw new Error('Choose the image file itself.');
+      });
+      const { mime, width, height } = imagePreview.inspect(source);
+      const shown = imagePreview.pixels(await imageHelper(`decodePixels(${helperArgs(source, mime, imagePreview.MAX_SIDE)})`));
+      return { ok: true, pixels: shown, width, height, bytes: source.length };
+    } catch (err) {
+      const limit = /15 MB|megapixels/.test(String(err && err.message));
+      return { ok: false, error: 'could not read the image', note: limit ? `${err.message} It is not shown here.` : undefined };
+    }
+  });
+  imageTail = run.catch(() => {});
+  return run;
 });
 
 // Stage whole files. No -A and no synthesized directory pathspec: the call
