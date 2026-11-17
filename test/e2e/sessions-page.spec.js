@@ -287,6 +287,8 @@ test('copilot sessions use the first prompt when workspace name is null', async 
 
 test('copilot resume rejection closes the transient chat tab', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-e2e-copilot-reject-'));
+  const workDir = path.join(homeDir, 'project');
+  fs.mkdirSync(workDir, { recursive: true });
   const copilotHome = path.join(homeDir, '.custom-copilot');
   const resumeMarker = path.join(homeDir, 'resume-called.txt');
   fs.mkdirSync(path.join(homeDir, '.config', 'husk'), { recursive: true });
@@ -294,6 +296,9 @@ test('copilot resume rejection closes the transient chat tab', async () => {
     firstRunDone: true,
     skipWelcome: true,
     agentCommand: 'copilot',
+    chatView: 'terminal',
+    resumeLastOnLaunch: false,
+    agentCwd: workDir,
   }));
 
   const rejectedId = '99999999-aaaa-bbbb-cccc-dddddddddddd';
@@ -303,7 +308,7 @@ test('copilot resume rejection closes the transient chat tab', async () => {
   fs.writeFileSync(path.join(sessionDir, 'workspace.yaml'), [
     `id: ${rejectedId}`,
     'name: null',
-    'cwd: /tmp/copilot-project',
+    `cwd: ${workDir}`,
     `created_at: ${now}`,
     `updated_at: ${now}`,
     '',
