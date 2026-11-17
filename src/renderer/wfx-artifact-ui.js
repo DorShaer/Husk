@@ -573,7 +573,7 @@
     if (record.precision === 'range' && record.durationRange) {
       const [minHead, minUnit] = durationParts(record.durationRange.min);
       const [maxHead, maxUnit] = durationParts(record.durationRange.max);
-      const value = [minHead, unit(minUnit), ' – ', maxHead, unit(maxUnit)];
+      const value = [minHead, unit(minUnit), ' to ', maxHead, unit(maxUnit)];
       if (!inline) value.push(qualifier(sampleNote(record.runs)));
       return figure({
         isThin: true,
