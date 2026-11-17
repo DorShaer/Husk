@@ -174,8 +174,12 @@ function inScope(node, scope) {
 // A prompt as its author typed it. What went to the agent may carry rules and
 // recalled notes ahead of it; a prompt read back from an agent's own log is
 // shown and titled without them.
+// One leading context block; withoutContext strips them one at a time.
+const CONTEXT_BLOCK = /^\s*(?:\[Husk Brain(?: rules)?:[^\n]*\n[\s\S]*?\n\[End of Husk Brain (?:notes|rules)\]|\[Husk handoff:[^\n]*\n[\s\S]*?\n\[End of Husk handoff\])\s*/;
 function withoutContext(text) {
-  return str(text).replace(/^\s*(?:(?:\[Husk Brain(?: rules)?:[^\n]*\n[\s\S]*?\n\[End of Husk Brain (?:notes|rules)\]|\[Husk handoff:[^\n]*\n[\s\S]*?\n\[End of Husk handoff\])\s*)+/, '');
+  let s = str(text);
+  for (let next = s.replace(CONTEXT_BLOCK, ''); next !== s; next = s.replace(CONTEXT_BLOCK, '')) s = next;
+  return s;
 }
 
 function createBrain({ file, fs, now, saveDelayMs, canonPath } = {}) {
