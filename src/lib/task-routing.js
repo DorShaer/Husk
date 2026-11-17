@@ -19,6 +19,17 @@ function migrateTaskRouting(config = {}) {
   return routes;
 }
 
+function seedTaskRouting(config = {}, available = []) {
+  if (config.firstRunDone === false) return config;
+  if (config.taskRouting && typeof config.taskRouting === 'object') return config;
+  const vendor = agentBaseName(config.agentCommand || '');
+  const connected = Array.isArray(config.connectedClis) ? config.connectedClis : [vendor];
+  if (!connected.includes(vendor) || !availableRoutes(available).some((a) => a.vendor === vendor)) return config;
+  const routes = migrateTaskRouting(config);
+  for (const role of ROLES) if (!routes[role]) routes[role] = { vendor, model: '' };
+  return { ...config, taskRouting: routes };
+}
+
 function availableRoutes(available) {
   const out = [], seen = new Set();
   for (const a of Array.isArray(available) ? available : []) {
@@ -54,11 +65,23 @@ function resolveTaskRoute({ config = {}, role = 'smart', requested, available = 
     return resolveTaskRoute({ role, available, agentCommand: config.agentCommand });
   }
   const routes = migrateTaskRouting(config);
-  if (requested?.vendor === 'auto' && requested?.model) return { ok: false, error: 'Choose a vendor before choosing a specific model.' };
-  const choice = requested && requested.vendor && requested.vendor !== 'auto' ? requested : routes[role];
-  // Jobs run only on a CLI the user chose for them; nothing is picked on their behalf.
-  if (!choice || typeof choice.vendor !== 'string' || !choice.vendor || choice.vendor === 'auto') {
-    return { ok: false, needsSetup: true, role, error: `No CLI is set for ${ROLE_LABELS[role] || role} jobs. Choose one in Autopilot, Configure models.` };
+  if ((requested?.vendor === 'auto' || requested?.vendor === 'husk-auto') && requested?.model) return { ok: false, error: 'Choose a vendor before choosing a specific model.' };
+  let choice = requested?.vendor === 'husk-auto' ? { vendor: 'auto', model: '' }
+    : requested && requested.vendor && requested.vendor !== 'auto' ? requested : routes[role];
+  const automatic = choice?.vendor === 'auto';
+  if (automatic) {
+    if (choice.model) return { ok: false, error: 'Choose a vendor before choosing a specific model.' };
+    const tier = role === 'cheap' ? 'cheap' : 'smart';
+    // Prefer an installed CLI with a usable model for this tier. Stable vendor
+    // ordering breaks ties; chat defaults never affect automatic job choices.
+    const selected = options.find((a) => resolveModel(a.vendor, tier, config.modelRouting || {}, catalogs && catalogs[a.vendor]).model) || options[0];
+    if (!selected) return { ok: false, needsSetup: true, role, error: 'No supported CLI is installed. Install a CLI before running jobs.' };
+    choice = { vendor: selected.vendor, model: '' };
+  } else if ((!choice || !choice.vendor) && options.length === 1) {
+    choice = { vendor: options[0].vendor, model: '' };
+  }
+  if (!choice || typeof choice.vendor !== 'string' || !choice.vendor) {
+    return { ok: false, needsSetup: true, role, error: `No CLI is set for ${ROLE_LABELS[role] || role} jobs. Choose a vendor or Auto by Husk in Autopilot, Configure models.` };
   }
   const vendor = choice.vendor;
   const model = typeof choice.model === 'string' ? choice.model.trim() : '';
@@ -76,8 +99,8 @@ function resolveTaskRoute({ config = {}, role = 'smart', requested, available = 
   }
   return {
     ok: true, vendor: selected.vendor, command: commandWithModel(selected.command, selected.vendor, selectedModel),
-    model: selectedModel, role, automatic: false, notice,
-    reason: `${selected.vendor} is assigned to ${ROLE_LABELS[role] || role} jobs.`
+    model: selectedModel, role, automatic, notice,
+    reason: automatic ? `Auto by Husk selected ${selected.vendor} for ${ROLE_LABELS[role] || role} jobs.` + (selectedModel ? ` Model: ${selectedModel}.` : ` Using the CLI's default model.`) : `${selected.vendor} is assigned to ${ROLE_LABELS[role] || role} jobs.`
       + (selectedModel ? '' : ` ${selected.vendor} uses its own default model.`),
   };
 }
@@ -113,4 +136,4 @@ function resolveWorkflowRoutes({ config = {}, nodes = [], available = [] } = {})
   return { ok: true, routes };
 }
 
-module.exports = { VENDORS, MODEL_FLAGS, ROLES, migrateTaskRouting, availableRoutes, commandWithModel, resolveTaskRoute, resolveCollabRoutes, resolveWorkflowRoutes };
+module.exports = { VENDORS, MODEL_FLAGS, ROLES, migrateTaskRouting, seedTaskRouting, availableRoutes, commandWithModel, resolveTaskRoute, resolveCollabRoutes, resolveWorkflowRoutes };

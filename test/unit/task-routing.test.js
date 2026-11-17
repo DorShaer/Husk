@@ -24,7 +24,6 @@ test('a job type with no CLI chosen does not run, whatever is installed or open 
     assert.equal(simple.needsSetup, true);
     assert.match(simple.error, /No CLI is set for simple jobs/);
     assert.match(resolveTaskRoute({ config: { agentCommand }, role: 'smart', available }).error, /No CLI is set for complex jobs/);
-    assert.match(resolveTaskRoute({ config: { agentCommand, taskRouting: { smart: { vendor: 'auto', model: '' } } }, role: 'smart', available }).error, /No CLI is set/);
   }
   assert.deepEqual(availableRoutes([{}, { command: 'gemini', available: false }, 'codex', 'claude', 'codex']).map((a) => a.vendor), ['claude', 'codex']);
 });
@@ -125,4 +124,60 @@ test('an explicit command reports the model it pins', () => {
   assert.equal(resolveTaskRoute({ available, agentCommand: 'codex --model gpt-x' }).model, 'gpt-x');
   assert.equal(resolveTaskRoute({ available, agentCommand: 'gemini -m=flash' }).model, 'flash');
   assert.equal(resolveTaskRoute({ available, agentCommand: 'codex' }).model, '');
+});
+
+test('initial routing uses the connected default and preserves explicit routing', () => {
+  const { seedTaskRouting } = require('../../src/lib/task-routing');
+  const initial = { agentCommand: 'codex', connectedClis: ['claude', 'codex'] };
+  const welcome = { ...initial, firstRunDone: false };
+  assert.equal(seedTaskRouting(welcome, available), welcome);
+  const seeded = seedTaskRouting(initial, available);
+  for (const role of ['cheap', 'smart', 'planner', 'integrator']) assert.equal(seeded.taskRouting[role].vendor, 'codex');
+  assert.equal(seedTaskRouting(seeded, available), seeded);
+  assert.equal(seedTaskRouting({ ...initial, taskRouting: {} }, available).taskRouting.smart, undefined);
+  assert.equal(seedTaskRouting(initial, []), initial);
+  const disconnected = { agentCommand: 'codex', connectedClis: ['claude'] };
+  assert.equal(seedTaskRouting(disconnected, available), disconnected);
+});
+
+
+test('Auto by Husk uses installed vendors and prefers a usable configured tier', () => {
+  const automatic = { taskRouting: { cheap: { vendor: 'auto', model: '' }, smart: { vendor: 'auto', model: '' } }, modelRouting: { claude: null, codex: { cheap: 'mini', smart: 'large' } } };
+  const simple = resolveTaskRoute({ config: automatic, role: 'cheap', available });
+  assert.equal(simple.command, 'codex --model mini');
+  assert.equal(simple.automatic, true);
+  assert.match(simple.reason, /Auto by Husk selected codex/);
+  assert.equal(resolveTaskRoute({ config: automatic, role: 'smart', available }).model, 'large');
+  const removed = resolveTaskRoute({ config: automatic, available: ['claude'] });
+  assert.equal(removed.vendor, 'claude');
+  assert.equal(removed.automatic, true);
+  assert.equal(resolveTaskRoute({ config: automatic, available: [] }).ok, false);
+  assert.equal(resolveTaskRoute({ config: { taskRouting: { smart: { vendor: 'auto', model: 'pin' } } }, available }).ok, false);
+});
+
+test('one installed vendor runs unassigned jobs and explicit missing vendors still fail', () => {
+  const sole = resolveTaskRoute({ available: ['codex'], config: { taskRouting: {} } });
+  assert.equal(sole.vendor, 'codex');
+  assert.equal(sole.command, 'codex');
+  assert.equal(resolveTaskRoute({ available: ['codex'], requested: { vendor: 'claude' } }).ok, false);
+});
+
+test('a run can opt into Auto by Husk without changing saved explicit assignments', () => {
+  const route = resolveTaskRoute({ config, available, role: 'cheap', requested: { vendor: 'husk-auto', model: '' } });
+  assert.equal(route.automatic, true);
+  assert.equal(route.vendor, 'claude');
+  assert.equal(config.taskRouting.cheap.vendor, 'codex');
+  assert.equal(resolveTaskRoute({ config, available, role: 'cheap', requested: { vendor: 'auto', model: '' } }).vendor, 'codex');
+});
+
+test('automatic team routing is resolved before queueing and retains the chosen command', () => {
+  const automatic = { taskRouting: Object.fromEntries(['cheap', 'smart', 'planner', 'integrator'].map(role => [role, { vendor: 'auto', model: '' }])) };
+  const team = resolveCollabRoutes({ config: automatic, agents, available });
+  assert.equal(team.ok, true);
+  assert.ok(team.workers.every(a => a.autoSelected && a.route.automatic));
+  assert.equal(team.planner.automatic, true);
+  assert.equal(team.integrator.automatic, true);
+  const saved = team.workers[0].agentCommand;
+  automatic.taskRouting.cheap = { vendor: 'codex', model: '' };
+  assert.equal(team.workers[0].agentCommand, saved);
 });
