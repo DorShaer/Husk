@@ -11066,8 +11066,13 @@ async function bgAgentRows({ cwd = '', all = false, allProjects = false, timeout
   // surfaces ask for all of them; anything scoped passes its own directory.
   if (cwd && !allProjects) args.push('--cwd', cwd);
   if (all) args.push('--all');
+  let exe = resolveOnPath('claude');
+  if (!exe) {
+    await loginShellPathReady;
+    exe = resolveOnPath('claude');
+    if (!exe) return { ok: false, rows: [], error: 'Claude CLI was not found on PATH' };
+  }
   const env = buildAgentEnv();
-  const exe = resolveAgentExe('claude', env.PATH);
   let raw = '';
   try {
     raw = await new Promise((resolve, reject) => {
