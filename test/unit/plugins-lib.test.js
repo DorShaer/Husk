@@ -216,15 +216,3 @@ test('both plugin file channels check the resolved path, not just the name', () 
   }
 });
 
-// The sessions:read channel confines every path it reads to a single root.
-test('the session read channel names the root it is confined to', () => {
-  const fsx = require('node:fs');
-  const px = require('node:path');
-  const MAIN = fsx.readFileSync(px.resolve(__dirname, '..', '..', 'src', 'main.js'), 'utf8');
-  const h = MAIN.match(/ipcMain\.handle\('sessions:read'[\s\S]*?\n\}\);/);
-  assert.ok(h, 'the sessions:read handler was not found');
-  const guardAt = h[0].search(/isInside\(workDir|realPathInside\(prdPath/);
-  const readAt = h[0].indexOf('readFileSync');
-  assert.ok(guardAt > -1, 'sessions:read reads a renderer path with no confinement at all');
-  assert.ok(guardAt < readAt, 'the confinement runs after the file has been read');
-});

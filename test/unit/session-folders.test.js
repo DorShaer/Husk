@@ -29,9 +29,6 @@ function mk(id, ago, extra = {}) {
     sizeBytes: 1024,
     named: false,
     firstMessage: '',
-    prdSlug: '',
-    prdPath: '',
-    prdPhase: '',
     ...extra,
   };
 }

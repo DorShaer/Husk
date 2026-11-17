@@ -157,7 +157,7 @@ function signal(s, ctx) {
   const st = (a) => agentState(a.state, { started: !!a.hasTranscript });
 
   const blocked = kids.filter((a) => a.running && st(a) === 'blocked');
-  const running = kids.filter((a) => a.running && st(a) !== 'blocked');
+  const running = kids.filter((a) => a.running && st(a) === 'running');
   const failed = kids.filter((a) => st(a) === 'failed');
 
   if (self && self.running && st(self) === 'blocked') {
@@ -166,7 +166,7 @@ function signal(s, ctx) {
   if (blocked.length) {
     return { kind: 'blocked', tok: `${blocked.length} needs you`, cont: blocked[0].needs || blocked[0].detail || '' };
   }
-  if (self && self.running) {
+  if (self && self.running && st(self) === 'running') {
     return { kind: 'running', tok: 'working', cont: self.detail || self.intent || self.status || '' };
   }
   if (running.length) {
@@ -213,7 +213,6 @@ function filterSessions(list, ctx) {
   if (chips.project && c.currentCwd) out = out.filter((s) => inCurrentProject(s, c.currentCwd));
   if (chips.live) out = out.filter((s) => { const k = signalKind(s, c); return k === 'running' || k === 'blocked'; });
   if (chips.needs) out = out.filter((s) => signalKind(s, c) === 'blocked');
-  if (chips.work) out = out.filter((s) => !!(s.prdSlug || s.prdPath));
 
   const present = new Set(out.map((s) => s.id));
   out = out.filter((s) => {
@@ -242,7 +241,7 @@ function filterSessions(list, ctx) {
       hits.set(s.id, m.positions);
       return;
     }
-    const blob = [s.id, s.projectPath, s.prdPhase, s.prdSlug, s.firstMessage].join(' ').toLowerCase();
+    const blob = [s.id, s.projectPath, s.firstMessage].join(' ').toLowerCase();
     if (blob.includes(ql)) scored.push({ s, score: 0, i });
   });
   scored.sort((a, b) => b.score - a.score || b.s.mtime - a.s.mtime || a.i - b.i);
@@ -576,6 +575,7 @@ module.exports = {
   inCurrentProject,
   titleOf,
   disambiguateTitles,
+  agentLabel,
   signal,
   signalKind,
   scent,

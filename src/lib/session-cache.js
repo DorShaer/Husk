@@ -7,7 +7,7 @@
 const nodeFs = require('node:fs');
 const path = require('node:path');
 
-const VERSION = 1;
+const VERSION = 2;
 
 // carry: fields an entry keeps when its file only grew, for scans that resume.
 function createFileFactsCache({ file, max = 10000, carry = [], fs = nodeFs } = {}) {
