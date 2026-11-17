@@ -153,12 +153,14 @@ function normalizeCodexNotification(method, params) {
       return p.delta ? [{ type: 'thought', text: str(p.delta) }] : [];
     case 'item/started': {
       const item = p.item || {};
+      if (item.type === 'contextCompaction') return [{ type: 'compaction', phase: 'started' }];
       if (item.type === 'agentMessage' || item.type === 'reasoning') return [{ type: 'block_end' }];
       const tool = toolFromItem(item, false);
       return tool ? [tool] : [];
     }
     case 'item/completed': {
       const item = p.item || {};
+      if (item.type === 'contextCompaction') return [{ type: 'compaction', phase: 'completed' }, { type: 'status', text: 'Conversation compacted.' }];
       if (item.type === 'agentMessage') {
         return str(item.text).trim() ? [{ type: 'text_final', text: str(item.text) }, { type: 'block_end' }] : [{ type: 'block_end' }];
       }
@@ -187,6 +189,7 @@ function normalizeCodexNotification(method, params) {
         isError: failed,
         durationMs: typeof turn.durationMs === 'number' ? turn.durationMs : undefined,
         text: failed && turn.error && turn.error.message ? str(turn.error.message) : undefined,
+        ...(failed && turn.error?.codexErrorInfo === 'contextWindowExceeded' ? { limitKind: 'context' } : {}),
       }];
     }
     // A failure codex retries on its own is progress, not the end of the turn;

@@ -198,6 +198,31 @@ test('claude turns per-turn token usage into a context-window meter', async () =
   assert.equal(events.filter((e) => e.ev.type === 'usage').length, before, 'result does not emit a usage event');
 });
 
+test('claude subagent messages drive neither the meter, the model nor the thread', async () => {
+  const events = [];
+  const children = [];
+  const rt = createChatRuntime({
+    spawn: () => { const c = fakeChild(); children.push(c); return c; },
+    buildEnv: () => ({ PATH: '/bin' }),
+    resolveExe: (name) => '/abs/' + name,
+    emit: (tabId, ev) => events.push({ tabId, ev }),
+    emitExit: () => {},
+    appVersion: '2.12.0',
+    platform: 'win32',
+    contextWindow: (model) => /opus/.test(model) ? 1000000 : 200000,
+  });
+  await rt.start({ tabId: 't3', command: 'claude', cwd: '/w' });
+  const c = children[0];
+  const usage = (n) => ({ input_tokens: 2, cache_read_input_tokens: n - 2 });
+  c.feed({ type: 'assistant', parent_tool_use_id: null, message: { model: 'claude-opus-5-5', content: [{ type: 'text', text: 'main' }], usage: usage(380000) } });
+  c.feed({ type: 'assistant', parent_tool_use_id: 'toolu_1', message: { model: 'claude-haiku-5-5', content: [{ type: 'text', text: 'sub says hi' }], usage: usage(41000) } });
+  c.feed({ type: 'stream_event', parent_tool_use_id: 'toolu_1', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'sub delta' } } });
+  c.feed({ type: 'assistant', parent_tool_use_id: null, message: { model: 'claude-opus-5-5', content: [{ type: 'text', text: 'main again' }], usage: usage(381000) } });
+  assert.deepEqual(events.filter((e) => e.ev.type === 'usage').map((e) => e.ev.used), [380000, 381000]);
+  assert.deepEqual(events.filter((e) => e.ev.type === 'usage').map((e) => e.ev.size), [1000000, 1000000]);
+  assert.ok(!JSON.stringify(events).includes('sub says hi') && !JSON.stringify(events).includes('sub delta'));
+});
+
 test('claude permission round-trips the captured input and clears on result', async () => {
   const { rt, children, events } = harness();
   await rt.start({ tabId: 't2', command: 'claude', cwd: '/w' });
@@ -667,4 +692,14 @@ test('a chat stopped while its start waits to retry is not started again', async
   const r = await p;
   assert.equal(r.ok, false);
   assert.equal(spawned.length, 1);
+});
+
+test('compaction refuses missing, unsupported and busy sessions without sending a prompt', async () => {
+  const h = await startedAcp();
+  assert.equal((await h.rt.compact({ tabId: 'missing' })).code, 'not-ready');
+  const before = h.c.stdinLines.length;
+  assert.equal((await h.rt.compact({ tabId: 't1' })).code, 'unsupported');
+  assert.equal(h.c.stdinLines.length, before);
+  await h.rt.prompt({ tabId: 't1', text: 'work' });
+  assert.equal((await h.rt.compact({ tabId: 't1' })).code, 'busy');
 });

@@ -18,7 +18,7 @@
 // Output uses the vocabulary in chat-events.js and replays through its
 // reducer. Pure: no fs here, the caller reads the file.
 
-const { toolDetail, kindForTool } = require('./chat-events');
+const { toolDetail, kindForTool, modelValue } = require('./chat-events');
 
 const MAX_EVENTS = 4000;
 const MAX_TEXT = 400000;
@@ -151,7 +151,7 @@ function claudeTranscriptToEvents(raw) {
       continue;
     }
     // assistant
-    if (msg.model && msg.model !== model) { model = str(msg.model); events.push({ type: 'session', model }); }
+    if (modelValue(msg.model) && msg.model !== model) { model = modelValue(msg.model); events.push({ type: 'session', model }); }
     if (!Array.isArray(content)) continue;
     if (!turnOpen) { events.push({ type: 'turn_start' }); turnOpen = true; }
     for (const b of content) {

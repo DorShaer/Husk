@@ -32,6 +32,7 @@
 //   { type: 'turn_end', stopReason, isError?, durationMs?, costUsd?, usage? }
 //   { type: 'status', text }
 //   { type: 'truncate', key }                   drop the item with this key and everything after it
+//   { type: 'expire', text? }                   open approvals expire and running tools stop (the agent is gone)
 //   { type: 'error', text }
 //   { type: 'changes', files: [{ path, status, adds, dels }], adds, dels }   working-tree files that moved during the turn
 //   { type: 'pr', number, title, url, checks: { total, failed, pending, state } }   the branch's pull request
@@ -43,6 +44,10 @@
 const TOOL_STATUS = { pending: 'running', in_progress: 'running', completed: 'done', failed: 'error' };
 
 function str(v) { return v === null || v === undefined ? '' : String(v); }
+function modelValue(value) {
+  const model = typeof value === 'string' ? value.trim() : '';
+  return model && !/^<.*>$/.test(model) ? model : '';
+}
 
 // ─── ACP ─────────────────────────────────────────────────────────────────────
 
@@ -377,7 +382,7 @@ function reduceThread(state, event) {
     case 'session':
       return Object.assign({}, s, {
         sessionId: event.sessionId || s.sessionId,
-        model: event.model || s.model,
+        model: modelValue(event.model) || modelValue(s.model) || null,
         commands: Array.isArray(event.commands) ? event.commands : s.commands,
         modes: event.modes || s.modes,
         models: event.models || s.models,
@@ -480,6 +485,19 @@ function reduceThread(state, event) {
     // Edit and resend: the thread is cut from the edited prompt onward so the
     // new prompt takes its place. The agent's own memory of the old exchange
     // is not rewound; this is the view, and the reply that follows.
+    // The agent behind the thread is gone: open approval cards can never be
+    // answered and running tool calls never finish, so both settle.
+    case 'expire': {
+      const why = str(event.text) || 'Expired';
+      let touched = false;
+      const items = s.items.map((it) => {
+        if (it.kind === 'permission' && !it.decision && !it.expired) { touched = true; return Object.assign({}, it, { expired: why }); }
+        if (it.kind === 'tool' && it.status !== 'done' && it.status !== 'error' && it.status !== 'stopped') { touched = true; return Object.assign({}, it, { status: 'stopped' }); }
+        return it;
+      });
+      const closed = closeOpen(touched ? withItems(s, items) : s);
+      return Object.assign({}, closed, { turnOpen: false, pending: [] });
+    }
     case 'truncate': {
       const idx = s.items.findIndex((it) => it.key === event.key);
       if (idx === -1) return s;
@@ -488,7 +506,7 @@ function reduceThread(state, event) {
     case 'changes': {
       const files = Array.isArray(event.files) ? event.files : [];
       if (!files.length) return s;
-      return appendItem(s, { kind: 'changes', files, adds: event.adds || 0, dels: event.dels || 0 });
+      return appendItem(s, { kind: 'changes', files, adds: event.adds || 0, dels: event.dels || 0, ...(event.partial ? { partial: true } : {}) });
     }
     // One card per pull request: a later read of the same number updates the
     // card in place, so the thread carries its current state once.
@@ -525,6 +543,6 @@ function findLastIndex(arr, pred) {
 })({
   normalizeAcpUpdate, normalizeAcpPermission, normalizeAcpSession,
   normalizeClaudeEvent, parseRateLimitInfo, toolDetail, kindForTool,
-  emptyThread, reduceThread,
+  emptyThread, reduceThread, modelValue,
 });
 })();

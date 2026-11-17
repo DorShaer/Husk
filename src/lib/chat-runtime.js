@@ -162,6 +162,11 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, record
     child.on('error', (e) => {
       note(`chat child error: ${e && e.message}`);
       send(s.tabId, { type: 'error', text: `Could not start ${s.exe}: ${e && e.message}` });
+      // A child that never spawned emits no exit, so the tab is told here.
+      if (child.pid !== undefined || s.exited) return;
+      s.exited = true;
+      if (sessions.get(s.tabId) === s) sessions.delete(s.tabId);
+      if (!s.stopped && !s.handshaking && typeof emitExit === 'function') emitExit(s.tabId, -1);
     });
     child.on('exit', (code, signal) => {
       s.framer.flush();
@@ -246,6 +251,10 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, record
     const tokens = String(command || 'claude').trim().split(/\s+/).filter(Boolean);
     const exeName = tokens[0] || 'claude';
     const exe = typeof resolveExe === 'function' ? resolveExe(exeName, env.PATH) : exeName;
+    // The resolver hands a bare name back only when it found nothing to run.
+    if (typeof resolveExe === 'function' && exe === exeName && !/[\\/]/.test(exeName)) {
+      return { ok: false, missing: true, cli: exeName, error: `${exeName} was not found on this computer` };
+    }
     const flags = userFlags(command);
 
     const s = {
@@ -319,7 +328,7 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, record
             }
           }
           if (method === 'turn/started' && params.turn) codexTurn(s, params.turn.id);
-          if (method === 'turn/completed') { s.turnOpen = false; s.turnId = null; s.cancelWanted = false; }
+          if (method === 'turn/completed') { s.turnOpen = false; s.turnId = null; s.cancelWanted = false; s.compacting = false; }
           send(tabId, normalizeCodexNotification(method, params));
         },
         onRequest: (method, params, serverId) => {
@@ -407,6 +416,9 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, record
         if (waiter) { s.ctlWaiters.delete(rid); waiter(ev.response); }
         return;
       }
+      // A subagent's messages share this stream; its result reaches the thread
+      // through the parent's tool card, so its text, model and usage stay out.
+      if (ev && ev.parent_tool_use_id && !isPermissionRequest(ev)) return;
       if (isPermissionRequest(ev)) {
         const r = ev.request || {};
         // The card says "for this session", so every rule handed back is
@@ -555,6 +567,30 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, record
     }
     s.turnOpen = true;
     return { ok: writeLine(s, encodeUserMessage(wire, pics)) };
+  }
+
+  async function compact({ tabId } = {}) {
+    const s = sessions.get(tabId);
+    if (!s || s.exited) return { ok: false, code: 'not-ready', error: 'This chat is no longer running.' };
+    if (s.turnOpen || s.compacting) return { ok: false, code: 'busy', error: 'Wait for the current reply to finish before compacting.' };
+    if (s.transport === 'codex' && !s.compactUnsupported) {
+      if (!s.sessionId) return { ok: false, error: 'This conversation is not ready yet.' };
+      s.compacting = true; s.turnOpen = true;
+      send(tabId, [{ type: 'turn_start' }, { type: 'compaction', phase: 'started' }, { type: 'status', text: 'Compacting conversation...' }]);
+      try {
+        await s.acp.request('thread/compact/start', { threadId: s.sessionId });
+        return { ok: true };
+      } catch (err) {
+        s.compacting = false; s.turnOpen = false;
+        if (err && (err.code === -32601 || /unknown method|method not found/i.test(err.message || ''))) s.compactUnsupported = true;
+        const error = s.compactUnsupported ? 'This Codex version does not support compaction here. Update Codex or start a new conversation.' : (err && err.message) || 'Could not compact this conversation.';
+        send(tabId, [{ type: 'compaction', phase: 'failed' }, { type: 'status', text: error }, { type: 'turn_end', isError: true, text: error }]);
+        return { ok: false, code: s.compactUnsupported ? 'unsupported' : 'failed', error };
+      }
+    }
+    const commands = [...s.log].reverse().find(e => Array.isArray(e.commands))?.commands || [];
+    if (['claude', 'acp'].includes(s.transport) && commands.some(c => String(c.name || c).replace(/^\//, '') === 'compact')) return prompt({ tabId, text: '/compact' });
+    return { ok: false, code: 'unsupported', error: 'This CLI does not advertise compaction in this chat.' };
   }
 
   // A turn Husk answered itself (a slash command run through the CLI's own
@@ -738,7 +774,7 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, record
     return out;
   }
 
-  return { start, prompt, local, cancel, permission, allowAll, setModel, stop, stopAll, info, list, size: () => sessions.size };
+  return { start, prompt, compact, local, cancel, permission, allowAll, setModel, stop, stopAll, info, list, size: () => sessions.size };
 }
 
 module.exports = { createChatRuntime };

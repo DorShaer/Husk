@@ -292,3 +292,29 @@ test('acp session carries the model list, deduped, and the reducer keeps it', ()
   assert.equal(st.model, 'GPT 6');
   assert.equal(normalizeAcpSession({ sessionId: 'y' }).models, undefined);
 });
+
+test('expire settles open approvals and running tools, keeps answered ones', () => {
+  const st = fold([
+    { type: 'user', text: 'go' },
+    { type: 'tool', id: 't1', title: 'Read', status: 'done' },
+    { type: 'permission', requestId: 'r0', toolCallId: 't0', title: 'Edit' },
+    { type: 'permission_resolved', requestId: 'r0', optionId: 'allow' },
+    { type: 'permission', requestId: 'r1', toolCallId: 't2', title: 'Write' },
+    { type: 'expire', text: 'Expired: the agent restarted' },
+  ]);
+  assert.deepEqual(st.pending, []);
+  assert.equal(st.turnOpen, false);
+  const perms = st.items.filter((it) => it.kind === 'permission');
+  assert.equal(perms[0].expired, undefined);
+  assert.equal(perms[1].expired, 'Expired: the agent restarted');
+  const tools = Object.fromEntries(st.items.filter((it) => it.kind === 'tool').map((it) => [it.id, it.status]));
+  assert.deepEqual(tools, { t1: 'done', t0: 'stopped', t2: 'stopped' });
+});
+
+test('internal model markers never replace a reported model in replayed state', () => {
+  const { reduceThread, emptyThread } = require('../../src/lib/chat-events');
+  let state = reduceThread(emptyThread(), { type: 'session', model: 'claude-opus-4-6' });
+  state = reduceThread(state, { type: 'session', model: '<synthetic>' });
+  assert.equal(state.model, 'claude-opus-4-6');
+  assert.equal(reduceThread(emptyThread(), { type: 'session', model: '<synthetic>' }).model, null);
+});
