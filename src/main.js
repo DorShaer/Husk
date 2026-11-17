@@ -11390,15 +11390,20 @@ function bgContinuedFrom(sessionId, dir) {
   } catch (_) { return ''; }
   for (const name of names) {
     const file = path.join(dir, name);
+    let fd = null;
     try {
       // The marker is written as the session moves, so only files touched since then can hold it.
-      if (fs.statSync(file).mtimeMs < born - 5000) continue;
-      if (fs.readFileSync(file, 'utf8').includes(needle)) {
+      fd = fs.openSync(file, 'r');
+      if (fs.fstatSync(fd).mtimeMs < born - 5000) continue;
+      if (fs.readFileSync(fd, 'utf8').includes(needle)) {
         const from = name.slice(0, -'.jsonl'.length);
         bgContinuedCache.set(sessionId, { from, at: Date.now() });
         return from;
       }
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      if (fd !== null) { try { fs.closeSync(fd); } catch (_) {} }
+    }
   }
   if (bgContinuedCache.size > 400) bgContinuedCache.clear();
   bgContinuedCache.set(sessionId, { from: '', at: Date.now() });
