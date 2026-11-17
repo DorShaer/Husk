@@ -57,13 +57,15 @@ function cleanName(agentName) {
 // Vendor-neutral session directives for any agent that is not claude. Covers
 // identity naming and, when the recap preference is on, the speech-balloon
 // line Husk's voice reads. Recap off simply omits that directive.
-function buildGenericDirectives({ agentName, recap } = {}) {
+function buildGenericDirectives({ agentName, recap, contextDir } = {}) {
   const name = cleanName(agentName);
   const lines = [
     `Your name in this session is ${name}. When asked your name or identity, answer as ${name}.`,
     'Husk skills are shared across agents in ~/.agents/skills/. When a task matches a skill, read its SKILL.md and follow it; supporting files are beside that file.',
-    'When the user asks you to read an attached context file, look for that file by name in the session context directory at ~/.claude/MEMORY/CONTEXT/.',
   ];
+  if (contextDir) {
+    lines.push(`When the user asks you to read an attached context file, look for that file by name in the session context directory at ${contextDir}.`);
+  }
   if (recap !== false) {
     lines.push(
       `End substantive replies with one line of the form "\u{1F5E3}\u{FE0F} ${name}: <8 to 16 word summary>" so the Husk desktop app can read your reply aloud.`,
@@ -138,10 +140,10 @@ function mergeSessionBlock(existingText, body) {
 //   { method: 'instructions-file', filePath, body, refresh }        (copilot, codex, gemini)
 //   { method: 'read-file', filePath, body, args, refresh }          (aider)
 //   { method: 'none', refresh }                                     (everything else)
-function planInjection({ agentCommand, agentName, recap } = {}) {
+function planInjection({ agentCommand, agentName, recap, contextDir } = {}) {
   const key = agentKey(agentCommand);
   const channel = AGENT_CHANNELS[key];
-  const body = buildGenericDirectives({ agentName, recap });
+  const body = buildGenericDirectives({ agentName, recap, contextDir });
   const refresh = { filePaths: instructionFilePaths(), body };
   if (!channel) return { method: 'none', refresh };
   if (channel.method === 'system-prompt-arg') {
