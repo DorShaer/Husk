@@ -100,9 +100,11 @@ function inspectImage(buf) {
 function readRegularFile(file, maxBytes = MAX_BYTES, check = null) {
   const flags = fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0) | (fs.constants.O_NOFOLLOW || 0);
   let before;
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- the picked image, read without following links
   try { before = fs.lstatSync(file); } catch (_) { throw new Error('Choose the image file itself.'); }
   if (!before.isFile() || before.isSymbolicLink()) throw new Error('Choose the image file itself.');
   let fd;
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- the picked image, read without following links
   try { fd = fs.openSync(file, flags); } catch (_) { throw new Error('Choose the image file itself.'); }
   try {
     const st = fs.fstatSync(fd);
@@ -156,9 +158,11 @@ function storeImage(dir, bytes) {
   if (info.format === 'webp' || Math.max(info.width, info.height) > MAX_SIDE) throw new Error('That image could not be read.');
   const hash = crypto.createHash('sha256').update(bytes).digest('hex');
   const ext = info.format === 'png' ? 'png' : 'jpg';
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- the app's own image folder
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const file = storedPath(dir, `${hash}.${ext}`);
   fs.rmSync(file, { force: true });
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- a stored name resolved inside the image folder
   fs.writeFileSync(file, bytes, { mode: 0o600, flag: 'wx' });
   return { hash, ext };
 }
@@ -166,6 +170,7 @@ function storeImage(dir, bytes) {
 // Deletes every stored image except the one named.
 function pruneStored(dir, keepName = null) {
   let names = [];
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- the app's own image folder
   try { names = fs.readdirSync(dir); } catch (_) { return; }
   for (const name of names) {
     const file = name === keepName ? null : storedPath(dir, name);
