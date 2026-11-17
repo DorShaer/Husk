@@ -56,7 +56,7 @@ function validateManifest(m) {
   if (typeof m.id !== 'string' || !/^[a-z0-9][a-z0-9._-]{0,63}$/.test(m.id)) return fail('bad-manifest', 'the manifest id must be lowercase letters, digits, dots, dashes or underscores');
   if (typeof m.name !== 'string' || !m.name.trim() || m.name.length > 80) return fail('bad-manifest', 'the manifest needs a name of at most 80 characters');
   if (!KINDS.includes(m.kind)) return fail('bad-kind', `the kind must be one of ${KINDS.join(', ')}`);
-  if (typeof m.version !== 'string' || !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]{1,32})?$/.test(m.version)) return fail('bad-manifest', 'the version must look like 1.2.3');
+  if (typeof m.version !== 'string' || !(/^\d+\.\d+\.\d+$/.test(m.version) || /^\d+\.\d+\.\d+[-+][0-9A-Za-z.-]{1,32}$/.test(m.version))) return fail('bad-manifest', 'the version must look like 1.2.3');
   if (typeof m.publisher !== 'string' || !m.publisher.trim() || m.publisher.length > 80) return fail('bad-manifest', 'the manifest needs a publisher of at most 80 characters');
   if (typeof m.description !== 'string' || m.description.length > 500) return fail('bad-manifest', 'the description must be text of at most 500 characters');
   const perms = m.permissions;
