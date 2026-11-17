@@ -25,8 +25,9 @@ test('high context raises the usage bell and shows the source', async () => {
     await input.press('Enter');
     await expect(win.locator('#usage-bell')).toHaveAttribute('data-state', 'critical');
     await expect(win.locator('#usage-bell-count')).toBeVisible();
-    await expect(win.getByRole('button', { name: 'Change vendor', exact: true })).toBeVisible();
-    await expect(win.getByRole('button', { name: 'Continue with another model', exact: true })).toBeVisible();
+    await expect(win.getByRole('button', { name: 'Change vendor', exact: true })).toHaveCount(0);
+    await expect(win.getByRole('button', { name: 'Continue with another model', exact: true })).toHaveCount(0);
+    await expect(win.getByRole('button', { name: 'New conversation', exact: true })).toBeVisible();
     await expect(win.locator('.chat-pane.show .chat-context-value')).toHaveText('122K / 128K tokens · 95%');
     await win.locator('.toast:not(.is-out) .toast-action').filter({ hasText: /^Dismiss$/ }).click();
     await win.locator('#usage-bell').click();
