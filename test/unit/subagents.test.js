@@ -260,3 +260,64 @@ test('the scan and head caches stay bounded under many transcripts, same result'
   assert.ok(cache.size <= 512, `scan cache grew past its cap: ${cache.size}`);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+const line = (o) => JSON.stringify(o);
+const human = (uuid, at, text, extra = {}) => line({ type: 'user', uuid, timestamp: new Date(at).toISOString(), promptSource: 'sdk', message: { role: 'user', content: text }, ...extra });
+const spawn = (id, at) => line({ type: 'assistant', timestamp: new Date(at).toISOString(), message: { content: [{ type: 'tool_use', id, name: 'Agent', input: { description: 'x' } }] } });
+
+test('an agent links to the human prompt its call was made under, skipping injected turns', () => {
+  const t0 = Date.parse('2026-11-17T10:00:00Z');
+  const idx = Subagents.indexLines(Subagents.emptyIndex(), [
+    human('u1', t0, '[Husk Brain: notes kept here]\n- a note\n[End of Husk Brain notes]\nAudit the agents page'),
+    spawn('toolu_a', t0 + 1000),
+    line({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_a', content: 'ok' }] } }),
+    human('u2', t0 + 5000, '<task-notification>\n<tool-use-id>toolu_z</tool-use-id>\n</task-notification>', { promptSource: 'system', origin: { kind: 'task-notification' } }),
+    human('u3', t0 + 6000, 'meta', { isMeta: true }),
+    line({ type: 'user', timestamp: new Date(t0 + 7000).toISOString(), message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_b' }] }, toolUseResult: { status: 'async_launched' } }).replace('"toolUseResult":{"status":"async_launched"}', '"toolUseResult":{"isAsync":true,"status":"async_launched"}'),
+    spawn('toolu_b', t0 + 6500),
+    human('u4', t0 + 9000, 'Fix the canvas'),
+  ].join('\n'));
+  assert.deepEqual(idx.prompts.map((p) => p.key), ['u1', 'u4']);
+  assert.equal(idx.prompts[0].text, 'Audit the agents page');
+  assert.equal(Subagents.promptFor(idx, { toolUseId: 'toolu_a' }).key, 'u1');
+  assert.equal(Subagents.promptFor(idx, { toolUseId: 'toolu_a' }).link, 'exact');
+  assert.equal(Subagents.promptFor(idx, { toolUseId: 'toolu_b' }).key, 'u1', 'injected turns between are skipped');
+  const late = Subagents.promptFor(idx, { toolUseId: 'toolu_unknown', startedAt: t0 + 9500 });
+  assert.equal(late.key, 'u4');
+  assert.equal(late.link, 'time');
+  assert.equal(Subagents.promptFor(idx, { startedAt: t0 - 1 }), null);
+  assert.equal(idx.done.has('toolu_a'), true);
+  assert.equal(idx.done.has('toolu_b'), false, 'a background launch receipt is not completion');
+  assert.equal(idx.notified.has('toolu_z'), true);
+});
+
+test('state: finished, answered, notified, quiet and moving', () => {
+  const now = 1_000_000_000;
+  const idx = Subagents.emptyIndex();
+  idx.done.add('toolu_done');
+  idx.notified.add('toolu_bg');
+  const st = (meta, mtime = now - 1000, alive = true) => Subagents.subagentState({ alive, meta, idx, mtime, now });
+  assert.equal(st({ toolUseId: 'toolu_x' }), 'working');
+  assert.equal(st({ toolUseId: 'toolu_x' }, now - 5 * 60 * 1000), 'quiet', 'open but quiet does not move');
+  assert.equal(st({ toolUseId: 'toolu_x', finished: true }), 'done');
+  assert.equal(st({ toolUseId: 'toolu_done' }), 'done');
+  assert.equal(st({ toolUseId: 'toolu_bg' }), 'done');
+  assert.equal(st({ toolUseId: 'toolu_x' }, now, false), 'done', 'nothing runs under an exited parent');
+  assert.equal(st({}, now - Subagents.IDLE_MS), 'done');
+});
+
+test('a nested agent is settled by the transcript of the agent that spawned it', () => {
+  const tree = makeTree();
+  const dir = path.join(tree.dir, 'subagents');
+  writeAgent(dir, 'parent', { description: 'Lead', toolUseId: 'toolu_p' });
+  writeAgent(dir, 'child', { description: 'Facts', toolUseId: 'toolu_c', parentAgentId: 'parent' });
+  fs.appendFileSync(tree.transcript, `${human('u1', Date.now() - 1000, 'Map it')}\n${spawn('toolu_p', Date.now() - 900)}\n`);
+  let by = Object.fromEntries(scan(tree).map((r) => [r.agentId, r]));
+  assert.equal(by.child.state, 'working');
+  assert.equal(by.child.parentAgentId, 'parent');
+  assert.equal(by.child.prompt.key, 'u1', 'a nested agent answers to its ancestor prompt');
+  fs.appendFileSync(path.join(dir, 'agent-parent.jsonl'), `${line({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'toolu_c' }] } })}\n`);
+  by = Object.fromEntries(scan(tree).map((r) => [r.agentId, r]));
+  assert.equal(by.child.state, 'done', 'the answer in the parent agent ends the child');
+  assert.equal(by.parent.state, 'working');
+});

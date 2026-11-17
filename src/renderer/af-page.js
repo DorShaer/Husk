@@ -37,9 +37,9 @@
 
   // ─── Formatting ───────────────────────────────────────────────────────────
 
-  // A figure nobody measured is a dash. The dash is the point: it is the one
-  // mark on this page that means "not recorded" rather than "zero".
-  const DASH = '–';
+  // A figure nobody measured shows a hyphen: the one mark on this page that
+  // means "not recorded" rather than "zero".
+  const DASH = '-';
 
   function count(n) {
     if (n === null || n === undefined) return DASH;
