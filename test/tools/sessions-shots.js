@@ -37,22 +37,22 @@ const DAY = 24 * HOUR;
 // today, a few from the last few days, some from two projects.
 function seedSessions(now) {
   return [
-    { n: 1, title: 'Rebuild the sessions page as a command center', ago: 4 * MIN, size: 412_003, proj: 'husk', phase: 'execute', progress: '6/9', agents: [
+    { n: 1, title: 'Rebuild the sessions page as a command center', ago: 4 * MIN, size: 412_003, proj: 'husk', agents: [
       { n: 101, name: 'Extract the reference list grammar', state: 'working', ago: 3 * MIN, detail: 'Reading the reference screenshots', tokens: 48_231 },
       { n: 102, name: 'Audit every session field the list can show', state: 'blocked', ago: 9 * MIN, needs: 'Approval to delete the old row markup', detail: 'Waiting on a decision', tokens: 21_004 },
       { n: 103, name: 'Screenshot both themes', state: 'done', ago: 22 * MIN, detail: 'Captured 8 states', tokens: 9_140 },
     ] },
-    { n: 2, title: 'Release workflow keeps publishing empty artifacts', ago: 26 * MIN, size: 188_440, proj: 'husk', phase: 'observe', progress: '2/7', agents: [
+    { n: 2, title: 'Release workflow keeps publishing empty artifacts', ago: 26 * MIN, size: 188_440, proj: 'husk', agents: [
       { n: 104, name: 'Diff the last three release runs', state: 'working', ago: 20 * MIN, detail: 'Comparing artifact manifests', tokens: 33_770 },
     ] },
     { n: 3, title: 'Why does the terminal drop the first keystroke after resume', ago: 1 * HOUR + 40 * MIN, size: 96_120, proj: 'husk' },
-    { n: 4, title: 'Add an install-path regression gate to CI', ago: 3 * HOUR, size: 260_777, proj: 'husk', phase: 'complete', progress: '9/9' },
+    { n: 4, title: 'Add an install-path regression gate to CI', ago: 3 * HOUR, size: 260_777, proj: 'husk' },
     { n: 5, title: 'Port the fuzzy matcher to the prompts page', ago: 5 * HOUR + 12 * MIN, size: 44_310, proj: 'husk' },
     { n: 6, title: 'Sweep the renderer for hardcoded vendor names', ago: 9 * HOUR, size: 731_004, proj: 'husk' },
     { n: 7, title: 'Explain the auth object interpolation syntax', ago: 1 * DAY + 2 * HOUR, size: 18_900, proj: 'notes' },
     { n: 8, title: 'Draft the OpenSearch query for engine stdout', ago: 1 * DAY + 6 * HOUR, size: 63_220, proj: 'notes' },
     { n: 9, title: 'Migrate the theme tokens to color-mix', ago: 2 * DAY + 3 * HOUR, size: 155_600, proj: 'husk' },
-    { n: 10, title: 'Investigate the worktree retention registry', ago: 3 * DAY, size: 302_118, proj: 'husk', phase: 'think' },
+    { n: 10, title: 'Investigate the worktree retention registry', ago: 3 * DAY, size: 302_118, proj: 'husk' },
     { n: 11, title: 'Compare download counts against updater polls', ago: 5 * DAY, size: 27_400, proj: 'notes' },
     { n: 12, title: 'Trim the startup path so first paint lands sooner', ago: 9 * DAY, size: 89_003, proj: 'husk' },
     { n: 13, title: 'Rewrite the onboarding copy for a first run', ago: 14 * DAY, size: 51_770, proj: 'husk' },
@@ -62,8 +62,7 @@ function seedSessions(now) {
 
 // A transcript the lister will accept: a human turn, an assistant turn, an
 // ai-title entry, padded to the requested size so the meta line reads real.
-// startedAgo controls how far before the last activity the session opened, which
-// is what a PRD is matched against.
+// startedAgo controls how far before the last activity the session opened.
 function writeSession(homeDir, cwd, s) {
   const dir = path.join(homeDir, '.claude', 'projects', sanitize(cwd));
   fs.mkdirSync(dir, { recursive: true });
@@ -119,16 +118,6 @@ function writeSession(homeDir, cwd, s) {
   fs.utimesSync(file, new Date(s.at), new Date(s.at));
 }
 
-// A PRD gives the row its phase and progress, matched by start time.
-function writePrd(homeDir, s) {
-  if (!s.phase) return;
-  const slug = `task-${s.n}`;
-  const dir = path.join(homeDir, '.claude', 'MEMORY', 'WORK', slug);
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'PRD.md'),
-    `---\ntask: ${s.title}\nphase: ${s.phase}\nprogress: ${s.progress || ''}\nstarted: ${new Date(s.at - 40 * MIN).toISOString()}\n---\n\n# ${s.title}\n\nOne paragraph of body so the detail pane has something to render.\n`);
-}
-
 function makeHome({ scene }) {
   const now = Date.now();
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-sessions-'));
@@ -167,12 +156,9 @@ function makeHome({ scene }) {
     for (const s of seedSessions(now)) {
       const dir = s.proj === 'notes' ? notesCwd : cwd;
       writeSession(homeDir, dir, s);
-      writePrd(homeDir, s);
       for (const a of s.agents || []) {
         // The agent's own transcript, so its row resolves a title and the
-        // parent link is recoverable. It opens two minutes before its last
-        // activity so no PRD start lands inside the match window and overwrites
-        // the agent's own title with its parent's task.
+        // parent link is recoverable. It opens two minutes before its last activity.
         writeSession(homeDir, dir, {
           n: a.n, title: a.name, at: now - a.ago, size: 12_000,
           startedAgo: 2 * MIN, parent: sid(s.n),

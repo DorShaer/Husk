@@ -105,7 +105,7 @@ function makeHome() {
   fs.mkdirSync(cfgDir, { recursive: true });
   fs.writeFileSync(path.join(cfgDir, 'config.json'), JSON.stringify({
     firstRunDone: true, skipWelcome: true, agentCommand: 'claude',
-    theme: 'light', lastSeenVersion: '2.11.0', statusCollapsed: true,
+    theme: 'light', lastSeenVersion: '2.11.0', welcomeVersion: 2, statusCollapsed: true,
   }));
   const cwd = path.join(homeDir, 'code', 'acme-api');
   fs.mkdirSync(cwd, { recursive: true });

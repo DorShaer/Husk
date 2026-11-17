@@ -202,7 +202,7 @@ function makeHome() {
     skipWelcome: true,
     // The release highlights are their own surface; a product capture opens on
     // the page it is meant to show.
-    lastSeenVersion: require(path.join(REPO_ROOT, 'package.json')).version,
+    lastSeenVersion: require(path.join(REPO_ROOT, 'package.json')).version, welcomeVersion: 2,
     theme: THEME,
     resumeLastOnLaunch: false,
     agentCommand: 'agent',
