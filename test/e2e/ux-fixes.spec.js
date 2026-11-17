@@ -169,11 +169,11 @@ test('job model picker separates vendors, preserves pins, keeps half-set routing
   });
   // No CLI is picked on the user's behalf: an unset job type waits for a choice.
   expect(info.loading.simpleVendor).toBe('');
-  expect(info.loading.vendorAuto).toBe(false);
+  expect(info.loading.vendorAuto).toBe(true);
   expect(info.loading.complexVendor).toBe('copilot');
-  expect(info.loading.status).toContain('own default model for every task');
-  expect(info.loading.complexModelHidden).toBe(true);
-  expect(info.loading.complexSetupShown).toBe(true);
+  expect(info.loading.status).toContain('Loading');
+  expect(info.loading.complexModelHidden).toBe(false);
+  expect(info.loading.complexSetupShown).toBe(false);
   expect(info.loading.automaticAvailable).toBe(true);
   expect(info.title).toBe('Configure job models');
   expect(info.simple).toBe('gpt-test');
@@ -241,13 +241,14 @@ test('a CLI with no saved models shows Not routed with zero tier controls, and r
   await expect(codexRow.locator('select, input')).toHaveCount(0);
   await expect(codexRow.locator('button')).toHaveText(['Set up routing']);
   await expect(win.locator('#aut-cli-routing .aut-cli-row[data-vendor="claude"]')).toContainText('Simple jobs run on haiku, complex jobs on opus');
-  // The Simple row runs on codex, so it draws no model control either.
-  await expect(win.locator('#aut-mr-simple')).toBeHidden();
-  await expect(win.locator('#aut-model-status-simple')).toHaveText('This CLI uses its own default model for every task.');
-  await expect(win.locator('#aut-setup-simple')).toBeVisible();
+  // Model selection is available even before vendor defaults are configured.
+  await expect(win.locator('#aut-mr-simple')).toBeVisible();
+  await expect(win.locator('#aut-model-status-simple')).toContainText('Codex did not list its models');
+  await expect(win.locator('#aut-setup-simple')).toBeHidden();
   await expect(win.locator('#aut-mr-complex')).toBeVisible();
 
-  await win.locator('#aut-setup-simple').click();
+  await win.locator('#aut-cli-advanced > summary').click();
+  await codexRow.locator('button', { hasText: 'Set up routing' }).click();
   await expect(win.locator('#aut-cli-pick-cheap option')).toHaveCount(3);
   await win.locator('#aut-cli-pick-cheap').selectOption('m-small');
   await win.locator('#aut-cli-pick-smart').selectOption('m-large');
@@ -261,6 +262,7 @@ test('a CLI with no saved models shows Not routed with zero tier controls, and r
   // A catalog that cannot be read still allows a typed id, stored without a catalog time.
   await app.evaluate(() => { global.liveCatalog = false; });
   await win.evaluate(() => openOrchestratorModal());
+  await win.locator('#aut-cli-advanced').evaluate(el => { el.open = true; });
   await codexRow.locator('button', { hasText: 'Change' }).click();
   await expect(win.locator('.aut-cli-picker .aut-routing-status')).toContainText('enter a model id instead');
   await win.locator('#aut-cli-pick-mode').click();

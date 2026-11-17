@@ -77,6 +77,8 @@ test('a first install: Install shows its command before running it, no changelog
     // The rail opens on the everyday pages; Tools is one heading until asked for.
     expect(config(home.homeDir).railToolsFolded).toBe(true);
     await expect(win.locator('#rail-tools')).toHaveClass(/is-folded/);
+    // The chat page's sessions column keeps the rail as an icon strip, which ignores the fold.
+    await win.evaluate(() => setPage('projects')); // eslint-disable-line no-undef
     await expect(win.locator('.rail-item[data-page="skills"]')).toBeHidden();
     await expect(win.locator('.rail-item[data-page="chat"]')).toBeVisible();
     await win.click('#rail-tools-fold');
@@ -144,9 +146,9 @@ test('an existing install keeps its rail, and the chat page explains itself', as
     await win.locator('#pref-ui-size').selectOption('0');
     await expect(win.locator('#toast-stack')).toContainText('Interface size: default');
     await expect.poll(() => config(home.homeDir).uiZoom).toBe(null);
-    // The save button says what it restarts.
-    await win.click('.prefs-nav-item[data-prefs-section="agent"]');
-    await expect(win.locator('#pref-save')).toHaveText('Save and restart agent');
+    // The save button describes saving defaults.
+    await win.click('.prefs-nav-item[data-prefs-section="connections"]');
+    await expect(win.locator('#pref-save')).toHaveText('Save connection');
 
     // Workflows with no run yet: calls to action, no row of zeros and blanks.
     await win.evaluate(() => setPage('workflows')); // eslint-disable-line no-undef

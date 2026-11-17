@@ -58,9 +58,10 @@ test('first run: connect by keys, pick a project and a theme, and start a chat o
     await expect(ob).toBeVisible();
     await expect(win.locator('.cine-scene[data-s="0"]')).toHaveClass(/is-on/);
     await expect(win.locator('.cine-scene[data-s="0"] h1')).toContainText('at home.');
-    // A fresh install is light, and the welcome still opens on its own black field.
+    // A fresh install is light with the indigo accent, and the welcome wears it.
     await expect(win.locator('body')).toHaveAttribute('data-theme', 'light');
-    expect(await bg(win)).toBe('rgb(0, 0, 0)');
+    await expect(win.locator('body')).toHaveAttribute('data-accent', 'indigo');
+    expect(await bg(win)).toBe(await win.evaluate(() => getComputedStyle(document.body).backgroundColor));
     await win.waitForTimeout(700);
     await shot(app, 'onboarding-hero.png');
 
@@ -115,19 +116,66 @@ test('first run: connect by keys, pick a project and a theme, and start a chat o
     await expect(win.locator('.cine-scene[data-s="5"]')).toHaveClass(/is-on/);
     await expect(win.locator('#ob-cli-pick option')).toHaveText(['Claude Code']);
     await expect(win.locator('#ob-project-chip')).toHaveText('acme-notes');
-    await expect(win.locator('#ob-prompt')).toHaveValue('Orient me to this project');
-    await expect(win.locator('#ob-next')).toHaveText('Start chat');
+    // Nothing is sent for the user: the message box starts empty.
+    await expect(win.locator('#ob-prompt')).toHaveValue('');
+    await expect(win.locator('#ob-tour')).toBeChecked();
+    await expect(win.locator('#ob-next')).toHaveText('Start working');
     await win.click('#ob-next');
 
     await expect(ob).toBeHidden();
     const pane = win.locator('.chat-pane.show');
-    await expect(pane.locator('.chat-item-user')).toContainText('Orient me to this project');
-    await expect(pane).toContainText('Echo: Orient me to this project');
+    await expect(pane).toBeVisible();
+    await expect(pane.locator('.chat-item-user')).toHaveCount(0);
     const saved = config(home.homeDir);
     expect(saved.agentCommand).toBe('claude');
     expect(saved.firstRunDone).toBe(true);
     expect(saved.projects.find((p) => p.id === saved.activeProjectId).path).toBe(home.project);
     expect(fs.existsSync(path.join(home.homeDir, 'npm-calls.log'))).toBe(false);
+
+    // Then the tour walks the rail on the real controls, Tools opened for it.
+    const tour = win.locator('#tour');
+    await expect(tour).toBeVisible();
+    await expect(win.locator('#tour-title')).toHaveText('A quick look around');
+    await win.click('#tour-next');
+    await expect(win.locator('#tour-title')).toHaveText('Chat');
+    for (let i = 0; i < 7; i++) await win.click('#tour-next');
+    await expect(win.locator('#tour-title')).toHaveText('Skills');
+    await expect(win.locator('#tour-body')).toContainText('create a new skill');
+    await expect(win.locator('.rail-item[data-page="skills"]')).toBeVisible();
+    await win.keyboard.press('ArrowLeft');
+    await expect(win.locator('#tour-title')).toHaveText('Prompts');
+    await win.keyboard.press('Escape');
+    await expect(tour).toBeHidden();
+    await expect(win.locator('#rail-tools')).toHaveClass(/is-folded/);
+    await expect.poll(() => config(home.homeDir).tourVersion).toBe(2);
+    expect(config(home.homeDir).welcomeVersion).toBe(2);
+  } finally { await app.close(); }
+});
+
+test('an update shows the welcome once to an existing user, without folding their tools', async () => {
+  const home = makeHome({ firstRunDone: true, lastSeenVersion: '2.14.0', theme: 'dark', accent: 'rose', railToolsFolded: false });
+  let { app, win } = await launch(home);
+  try {
+    await expect(win.locator('#onboarding')).toBeVisible();
+    await expect(win.locator('#whatsnew')).toBeHidden();
+    await win.click('#ob-skip');
+    await expect(win.locator('#onboarding')).toBeHidden();
+    await expect(win.locator('#tour')).toBeHidden();
+    const saved = config(home.homeDir);
+    expect(saved.welcomeVersion).toBe(2);
+    expect(saved.railToolsFolded).toBe(false);
+    expect([saved.theme, saved.accent]).toEqual(['dark', 'rose']);
+  } finally { await app.close(); }
+  ({ app, win } = await launch(home));
+  try {
+    await win.waitForTimeout(1500);
+    await expect(win.locator('#onboarding')).toBeHidden();
+    // Preferences starts the tour on demand.
+    await win.evaluate(() => { document.querySelectorAll('.modal').forEach((m) => { m.hidden = true; }); setPage('prefs'); });
+    await win.evaluate(() => document.getElementById('pref-replay-tour').click());
+    await expect(win.locator('#tour')).toBeVisible();
+    await win.click('#tour-back');
+    await expect(win.locator('#tour')).toBeHidden();
   } finally { await app.close(); }
 });
 
