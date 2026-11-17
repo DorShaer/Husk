@@ -78,7 +78,8 @@
         "autopilot-multi-vendor.spec.js",
         "autopilot-survives-chat.spec.js",
         "autopilot-usage-labels.spec.js",
-        "autopilot-legacy-retained.spec.js"
+        "autopilot-legacy-retained.spec.js",
+        "data-safety.spec.js"
       ],
       "tokens": [
         "aut",
@@ -96,7 +97,8 @@
         "src/lib/autopilot-integrate.js",
         "src/lib/autonomy",
         "src/lib/task-routing.js",
-        "src/lib/chat-connection.js"
+        "src/lib/chat-connection.js",
+        "src/lib/config-store.js"
       ]
     },
     "workflows": {
@@ -255,6 +257,7 @@
       "specs": [
         "mcp-shared.spec.js",
         "mcp-collision.spec.js",
+        "qa-error-states.spec.js",
         "project-mcp.spec.js",
         "mcp-clone.spec.js"
       ],
@@ -310,8 +313,7 @@
         "session",
         "sessions",
         "page:sessions",
-        "ipc:sessions",
-        "ipc:prds"
+        "ipc:sessions"
       ],
       "paths": [
         "src/lib/claude-session.js",
@@ -320,6 +322,7 @@
         "src/lib/session-scan.js",
         "src/lib/session-cache.js",
         "src/lib/session-peek.js",
+        "src/lib/agent-branches.js",
         "src/lib/session-activity.js",
         "src/lib/session-head.js"
       ]
@@ -357,6 +360,7 @@
     "terminal": {
       "specs": [
         "chat-model.spec.js",
+        "context-tray.spec.js",
         "per-tab-context.spec.js",
         "pty-start-command.spec.js",
         "recap-voice.spec.js",
@@ -423,6 +427,8 @@
     "chatmode": {
       "specs": [
         "chat-mode.spec.js",
+        "help.spec.js",
+        "qa-layout-paste.spec.js",
         "codex-chat.spec.js",
         "trust-keeps-chat.spec.js",
         "chat-native.spec.js",
@@ -431,6 +437,8 @@
         "chat-login.spec.js",
         "chat-reload-resume.spec.js",
         "chat-ctrl-r-reload.spec.js",
+        "chat-restart-keeps-thread.spec.js",
+        "chat-title.spec.js",
         "chat-pane-teardown.spec.js",
         "welcome-retired.spec.js",
         "terminal-page.spec.js",
@@ -441,6 +449,7 @@
         "usage-bell.spec.js",
         "appearance.spec.js",
         "foundation.spec.js",
+        "security-gate.spec.js",
         "chat-vendor-isolation.spec.js"
       ],
       "tokens": [
@@ -461,8 +470,11 @@
         "src/lib/chat-runtime.js",
         "src/renderer/chat-md.js",
         "src/renderer/chat-ui.js",
+        "src/renderer/model-picker.js",
         "src/renderer/chat-canvas.js",
         "src/lib/turn-changes.js",
+        "src/lib/folder-changes.js",
+        "src/lib/git-setup.js",
         "test/e2e/fixtures/fake-acp-agent.js",
         "src/renderer/tm-page.js",
         "src/lib/transcript-replay.js",
@@ -477,7 +489,10 @@
         "src/renderer/bg-encode.html",
         "src/lib/install-foundation.js",
         "src/lib/market-bundle.js",
+        "src/lib/release-scope.js",
         "src/lib/artifact-scan.js",
+        "src/lib/scan-gate.js",
+        "test/fixtures/content-scanner.js",
         "src/renderer/foundation.js",
         "src/lib/bounded-file.js",
         "src/lib/chat-connection.js"

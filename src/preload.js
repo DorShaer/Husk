@@ -14,7 +14,7 @@ const { parseUnifiedDiff } = require('./lib/unified-diff');
 const { parseLogRecords } = require('./lib/git-refs');
 const { attribute } = require('./lib/change-attribution');
 const { stripControls, hasControls, chatFileRef } = require('./lib/terminal-safe');
-const { agentState, isLive: agentIsLive } = require('./lib/agent-state');
+const { agentState, isLive: agentIsLive, ACTIVE_MS: AGENT_ACTIVE_MS } = require('./lib/agent-state');
 const { transportFor: chatTransportFor, commandSessionId: chatCommandSessionId } = require('./lib/chat-transport');
 const { emptyThread: chatEmptyThread, reduceThread: chatReduceThread } = require('./lib/chat-events');
 
@@ -70,6 +70,7 @@ try {
 } catch (_) { /* the renderer still applies the theme from config on load */ }
 
 contextBridge.exposeInMainWorld('husk', {
+  diag: { longtask: (info) => ipcRenderer.send('diag:longtask', info) },
   foundation: {
     chooseScanner: () => ipcRenderer.invoke('scanner:choose'),
     removeScanner: () => ipcRenderer.invoke('scanner:remove'),
@@ -78,6 +79,8 @@ contextBridge.exposeInMainWorld('husk', {
     exportBundle: (item) => ipcRenderer.invoke('bundles:export', item),
     onReview: (fn) => ipcRenderer.on('installReview:request', (_event, details) => fn(details)),
     answerReview: (answer) => ipcRenderer.invoke('installReview:answer', answer),
+    library: () => ipcRenderer.invoke('scanner:library'),
+    onLibrary: (fn) => ipcRenderer.on('scanner:libraryUpdated', (_event, snap) => fn(snap)),
   },
 
   pty: {
@@ -122,6 +125,7 @@ contextBridge.exposeInMainWorld('husk', {
     // { tabId, text, images? [{ mimeType, data (base64) }] } -> { ok, error? }
     prompt: (opts) => ipcRenderer.invoke('chat:prompt', opts || {}),
     // { tabId } -> { ok }
+    compact: (opts) => ipcRenderer.invoke('chat:compact', opts || {}),
     cancel: (opts) => ipcRenderer.invoke('chat:cancel', opts || {}),
     // { tabId, requestId, optionId } -> { ok }
     permission: (opts) => ipcRenderer.invoke('chat:permission', opts || {}),
@@ -195,6 +199,7 @@ contextBridge.exposeInMainWorld('husk', {
     disambiguateTitles: (items) => { try { return sessionView.disambiguateTitles(items); } catch (_) { return []; } },
     sessionCwd: (s) => { try { return sessionView.sessionCwd(s); } catch (_) { return ''; } },
     basename: (p) => { try { return sessionView.basename(p); } catch (_) { return ''; } },
+    agentLabel: (v) => { try { return sessionView.agentLabel(v); } catch (_) { return 'Agent'; } },
     inCurrentProject: (s, cwd) => { try { return sessionView.inCurrentProject(s, cwd); } catch (_) { return false; } },
     threadKey: (s, names) => { try { return sessionView.threadKey(s, names); } catch (_) { return ''; } },
     formatWhen: (ms, now) => { try { return sessionView.formatWhen(ms, now); } catch (_) { return { label: '', title: '' }; } },
@@ -204,6 +209,7 @@ contextBridge.exposeInMainWorld('husk', {
   },
   config: {
     get: () => ipcRenderer.invoke('config:get'),
+    recovery: () => ipcRenderer.invoke('config:recovery'),
     set: (partial) => ipcRenderer.invoke('config:set', partial),
   },
   models: {
@@ -223,8 +229,6 @@ contextBridge.exposeInMainWorld('husk', {
   },
   sessions: {
     list: (opts) => ipcRenderer.invoke('sessions:list', opts || {}),
-    read: (prdPath) => ipcRenderer.invoke('sessions:read', prdPath),
-    findClaudeId: (payload) => ipcRenderer.invoke('sessions:findClaudeId', payload),
     resolveLiveTitle: (payload) => ipcRenderer.invoke('sessions:resolveLiveTitle', payload),
     rename: (payload) => ipcRenderer.invoke('sessions:rename', payload),
     resumeCommand: (payload) => ipcRenderer.invoke('sessions:resumeCommand', payload),
@@ -243,7 +247,6 @@ contextBridge.exposeInMainWorld('husk', {
     stop: (id) => ipcRenderer.invoke('bgAgents:control', { action: 'stop', id }),
     remove: (id) => ipcRenderer.invoke('bgAgents:control', { action: 'remove', id }),
   },
-  prds: { list: () => ipcRenderer.invoke('prds:list') },
   plugins: {
     list: () => ipcRenderer.invoke('plugins:list'),
     catalog: () => ipcRenderer.invoke('plugins:catalog'),
@@ -280,6 +283,8 @@ contextBridge.exposeInMainWorld('husk', {
     dropFile: (payload) => ipcRenderer.invoke('fs:dropFile', payload),
     listDir: (dir, showHidden) => ipcRenderer.invoke('fs:listDir', { dir, showHidden }),
     home: () => ipcRenderer.invoke('fs:home'),
+    checkFolder: (dir) => ipcRenderer.invoke('fs:checkFolder', dir),
+    recreateFolder: (dir) => ipcRenderer.invoke('fs:recreateFolder', dir),
     indexFiles: (root, showHidden) => ipcRenderer.invoke('fs:indexFiles', { root, showHidden }),
     readFile: (root, rel) => ipcRenderer.invoke('fs:readFile', { root, rel }),
     writeFile: (opts) => ipcRenderer.invoke('fs:writeFile', opts || {}),
@@ -309,10 +314,17 @@ contextBridge.exposeInMainWorld('husk', {
     show: (root, sha) => ipcRenderer.invoke('git:show', { root, sha }),
     fetch: (root, remote) => ipcRenderer.invoke('git:fetch', { root, remote }),
     openRemote: (root, opts) => ipcRenderer.invoke('git:openRemote', Object.assign({ root }, opts || {})),
+    available: (refresh = false) => ipcRenderer.invoke('git:available', { refresh }),
     init: (root, confirm) => ipcRenderer.invoke('git:init', { root, confirm }),
     watch: (root) => ipcRenderer.invoke('git:watch', { root }),
     unwatch: (root) => ipcRenderer.invoke('git:unwatch', { root }),
     onChanged: (cb) => ipcRenderer.on('git:changed', (_e, p) => cb(p)),
+  },
+  folderChanges: {
+    begin: (root) => ipcRenderer.invoke('folderChanges:begin', { root }),
+    finish: (root, id) => ipcRenderer.invoke('folderChanges:finish', { root, id }),
+    status: (root) => ipcRenderer.invoke('folderChanges:status', { root }),
+    diff: (root, rel) => ipcRenderer.invoke('folderChanges:diff', { root, rel }),
   },
   context: {
     list: () => ipcRenderer.invoke('context:list'),
@@ -321,6 +333,8 @@ contextBridge.exposeInMainWorld('husk', {
   agents: {
     state: (state, opts) => { try { return agentState(state, opts || {}); } catch (_) { return 'done'; } },
     isLive: (state) => { try { return agentIsLive(state); } catch (_) { return false; } },
+    // How long work may go without writing before it no longer reads as working.
+    activeMs: AGENT_ACTIVE_MS,
     detect: () => ipcRenderer.invoke('agents:detect'),
     install: (id) => ipcRenderer.invoke('agents:install', { id }),
     authCommand: (command, verb) => ipcRenderer.invoke('agents:authCommand', { command, verb }),
@@ -495,6 +509,7 @@ contextBridge.exposeInMainWorld('husk', {
     liveDiff: (opts) => ipcRenderer.invoke('autopilot:liveDiff', opts || {}),
     history: (opts) => ipcRenderer.invoke('autopilot:history', opts || {}),
     deleteRun: (opts) => ipcRenderer.invoke('autopilot:deleteRun', opts || {}),
+    applyCheck: (opts) => ipcRenderer.invoke('autopilot:applyCheck', opts || {}),
     applyRun: (opts) => ipcRenderer.invoke('autopilot:applyRun', opts || {}),
     discardRun: (opts) => ipcRenderer.invoke('autopilot:discardRun', opts || {}),
     retained: () => ipcRenderer.invoke('autopilot:retained'),
@@ -567,11 +582,14 @@ contextBridge.exposeInMainWorld('husk', {
     // The View menu's zoom items arrive here, so they take the same path as
     // the keyboard: one readout, one terminal refit, and the level is saved.
     onZoomCommand: (cb) => ipcRenderer.on('ui:zoom-command', (_e, dir) => cb(dir)),
+    onMenuCommand: (cb) => ipcRenderer.on('menu:command', (_e, cmd, arg) => cb(cmd, arg)),
     zoomGet: () => webFrame.getZoomLevel(),
     // Husk's base zoom level, so the renderer can label it as 100%.
     zoomBase: HUSK_BASE_ZOOM,
     setRouteState: (state) => ipcRenderer.invoke('ui:setRouteState', state || {}),
     takeReloadState: () => ipcRenderer.invoke('ui:takeReloadState'),
+    saveReloadStateSync: (state) => ipcRenderer.sendSync('ui:saveReloadStateSync', state),
+    takeReloadStateSync: () => ipcRenderer.sendSync('ui:takeReloadStateSync'),
   },
   shortcuts: {
     // Main-process shortcuts are forwarded into the renderer, which owns the

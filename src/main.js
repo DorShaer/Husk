@@ -1,7 +1,7 @@
 // Husk: Electron main process.
 // Wraps a configurable agent CLI via node-pty and exposes pages: chat, skills, sessions, files, preferences.
 
-const { app, BrowserWindow, ipcMain, shell, dialog, Menu, nativeTheme, protocol } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, Menu, nativeTheme, protocol, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -27,14 +27,15 @@ const { stripAnsi } = require('./lib/strip-ansi');
 const { openaiModels } = require('./lib/openai-stream');
 const { turnLineMs, lastLineMatchSteps } = require('./lib/session-activity');
 const { createFileFactsCache } = require('./lib/session-cache');
-const { peekFromEvents } = require('./lib/session-peek');
+const { peekFromEvents, peekFromTranscript, pulseFromTranscript } = require('./lib/session-peek');
 const { resolveInside, isInside, realParentInside, realPathInside } = require('./lib/path-confine');
 const { openCommand: bgOpenCommand, controlArgs: bgControlArgs, controlFailure: bgControlFailure } = require('./lib/bg-agent-open');
-const { isLive: agentIsLive } = require('./lib/agent-state');
+const { isLive: agentIsLive, settle: agentSettle, waitingOn: agentWaitingOn, displayNeeds: agentDisplayNeeds } = require('./lib/agent-state');
 const { createChatRuntime } = require('./lib/chat-runtime');
 const UsageMonitor = require('./lib/usage-monitor');
 const { createBrain, FILE_MAX_BYTES: BRAIN_FILE_MAX_BYTES, withoutContext: withoutBrainContext } = require('./lib/brain');
 const ConfigSecrets = require('./lib/config-secrets');
+const ConfigStore = require('./lib/config-store');
 const { applyMechanical, createStreamFilter } = require('./lib/rule-lint');
 const { deepFirstUserMessage } = require('./lib/session-head');
 const { claudeTranscripts, drain: drainSessions, drainPaced: drainSessionsPaced, realPath: realSessionPath } = require('./lib/session-scan');
@@ -163,7 +164,19 @@ const CLAUDE_DIR = path.join(os.homedir(), '.claude');
 const HOME = os.homedir();
 const COPILOT_DIR = process.env.COPILOT_HOME || path.join(HOME, '.copilot');
 const CONFIG_DIR = path.join(HOME, '.config', 'husk');
+// Files the user attaches to a chat.
+const CONTEXT_DIR = path.join(CONFIG_DIR, 'context');
 const CONFIG_PATH = path.join(CONFIG_DIR, 'config.json');
+const STALL_LOG_PATH = path.join(CONFIG_DIR, 'stalls.log');
+const stallLog = require('./lib/stall-log').createStallLog({ fs, file: STALL_LOG_PATH });
+try { fs.mkdirSync(CONFIG_DIR, { recursive: true }); } catch (_) {}
+stallLog.wrapIpc(ipcMain);
+stallLog.monitorLoop();
+stallLog.note(`start ${app.getVersion()} pid ${process.pid}`);
+ipcMain.on('diag:longtask', (_e, info = {}) => {
+  const ms = Math.round(Number(info.ms) || 0);
+  if (ms > 0) stallLog.note(`renderer long task ${ms}ms on ${String(info.page || '?').slice(0, 30)}${info.what ? ` after ${String(info.what).slice(0, 60)}` : ''}`);
+});
 const BACKGROUNDS_DIR = path.join(CONFIG_DIR, 'backgrounds');
 const BRAIN_MEDIA_DIR = path.join(CONFIG_DIR, 'brain-media');
 const HUSK_PROMPTS_DIR = path.join(CONFIG_DIR, 'prompts');
@@ -348,6 +361,9 @@ const DEFAULT_CONFIG = {
   // differs from the running version (e.g. after an update), the What's new
   // page is shown once, then this is updated.
   lastSeenVersion: null,
+  // The newest available version the user was already told about once, so the
+  // update notice appears once per release instead of every launch.
+  updateNotifiedVersion: null,
   agentCommand: 'claude',
   agentName: 'Husk',
   showSystemView: false,
@@ -399,10 +415,16 @@ function syncNativeTheme() {
   try { nativeTheme.themeSource = themes.isLightTheme(config.theme) ? 'light' : 'dark'; } catch (_) {}
 }
 
+// Set when the settings file could not be read at launch; the renderer shows it.
+let configRecovery = null;
+let configSaveBlocked = false;
+
 function loadConfig() {
   try {
-    if (!fs.existsSync(CONFIG_PATH)) return { ...DEFAULT_CONFIG };
-    const stored = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+    const loaded = ConfigStore.loadConfigFile(CONFIG_PATH);
+    if (loaded.recovery) configRecovery = { ...loaded.recovery, dir: CONFIG_DIR };
+    const stored = loaded.data;
+    if (!stored) return { ...DEFAULT_CONFIG };
     // A config file on disk means an existing install: pin the theme it already
     // shows when the file carries none.
     if (!Object.prototype.hasOwnProperty.call(stored, 'theme')) {
@@ -414,7 +436,11 @@ function loadConfig() {
       stored.statusCollapsed = false;
     }
     return { ...DEFAULT_CONFIG, ...stored };
-  } catch (_) { return { ...DEFAULT_CONFIG }; }
+  } catch (_) {
+    configSaveBlocked = true;
+    configRecovery = { from: 'unreadable', dir: CONFIG_DIR, corruptPath: CONFIG_PATH };
+    return { ...DEFAULT_CONFIG };
+  }
 }
 
 // The OS keychain for secret config fields. Linux without a keyring falls back to
@@ -434,12 +460,10 @@ const configKeychain = {
 };
 
 function saveConfig(cfg) {
+  if (configSaveBlocked) return false;
   try {
     fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(ConfigSecrets.sealConfig(cfg, configKeychain), null, 2), { mode: 0o600 });
-    // writeFileSync applies mode only when it creates the file, so set the mode
-    // on the file and its directory explicitly.
-    try { fs.chmodSync(CONFIG_PATH, 0o600); } catch (_) {}
+    ConfigStore.saveConfigFile(CONFIG_PATH, JSON.stringify(ConfigSecrets.sealConfig(cfg, configKeychain), null, 2));
     try { fs.chmodSync(CONFIG_DIR, 0o700); } catch (_) {}
     return true;
   } catch (_) { return false; }
@@ -449,10 +473,11 @@ let config = loadConfig();
 config.background = bgImage.sanitizeBackground(config.background);
 const installHandlers = new Map();
 let installFoundation;
+// reviewed: true for outside content, 'silent' for Husk's own forms, false for none.
 function registerInstallHandler(channel, handler, reviewed = true) {
   installHandlers.set(channel, handler);
   ipcMain.handle(channel, (event, payload = {}) => reviewed
-    ? installFoundation.reviewInstall(channel, payload, handler, event)
+    ? installFoundation.reviewInstall(channel, payload, handler, event, reviewed)
     : handler(event, payload));
 }
 
@@ -542,7 +567,7 @@ function stopStatuslineRefresh() {
 }
 
 // Reads the plan usage endpoint with the user's claude credential and writes the
-// result into ~/.claude/MEMORY/STATE/usage-cache.json, which the stats:get path
+// result into USAGE_CACHE_PATH, which the stats:get path
 // reads from. The statusline makes the same request each render but persists
 // nothing, so Husk owns the cache write.
 function readClaudeOauthToken() {
@@ -567,6 +592,7 @@ function readClaudeOauthToken() {
 // Requests past 5s are dropped.
 // The endpoint is read only while the preference names it as the source of
 // plan-limit numbers.
+const USAGE_CACHE_PATH = path.join(CONFIG_DIR, 'usage-cache.json');
 function planEndpointEnabled() { return config.planUsageSource !== 'cli'; }
 
 function refreshAnthropicUsageCache() {
@@ -598,11 +624,9 @@ function refreshAnthropicUsageCache() {
         if (res.statusCode !== 200) return;
         const data = JSON.parse(body);
         if (!data || typeof data !== 'object' || !data.five_hour) return;
-        const cacheDir = path.join(CLAUDE_DIR, 'MEMORY', 'STATE');
-        fs.mkdirSync(cacheDir, { recursive: true });
-        const cachePath = path.join(cacheDir, 'usage-cache.json');
-        // ws_cost_dollars and session_cost carry forward from a prior write:
-        // they come from a stop hook rather than from every render.
+        fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+        const cachePath = USAGE_CACHE_PATH;
+        // ws_cost_dollars and session_cost carry forward from a prior write.
         let prior = null;
         try { prior = JSON.parse(fs.readFileSync(cachePath, 'utf8')); } catch (_) {}
         // Allowlisted, type-coerced fields only.
@@ -659,6 +683,87 @@ function sendZoomCommand(dir) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('ui:zoom-command', dir);
 }
 
+// Menu items that act on the page run in the renderer, through the same
+// functions as the rail, the buttons and the keyboard.
+function sendMenuCommand(cmd, arg) {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('menu:command', cmd, arg);
+}
+
+const DOCS_URL = require('./lib/help-content').links.documentation;
+const PKG = require('../package.json');
+
+// Version facts for a bug report, with the CLI named by its command only.
+function diagnosticsText() {
+  const f = feedbackFacts();
+  const cli = path.basename(String(f.agentCommand || '').split(/\s+/)[0] || '');
+  return [
+    `Husk ${PKG.version}`,
+    `Electron ${f.electron}`,
+    `OS ${f.platform} ${f.osVersion} ${f.arch}`,
+    `CLI ${cli || 'none'}${f.agentVersion ? ` ${f.agentVersion}` : ''}`,
+  ].join('\n');
+}
+
+function appMenuTemplate() {
+  const isMac = process.platform === 'darwin';
+  const go = (label, page, accelerator) => ({ label, click: () => sendMenuCommand('page', page), ...(accelerator ? { accelerator, registerAccelerator: false } : {}) });
+  // Alt+digit page keys belong to the renderer, so the menu only shows them.
+  const prefs = { label: 'Preferences', accelerator: 'Alt+6', registerAccelerator: false, click: () => sendMenuCommand('page', 'prefs') };
+  return [
+    ...(isMac ? [{ label: app.name, submenu: [
+      { role: 'about' }, { type: 'separator' }, prefs, { type: 'separator' },
+      { role: 'services' }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' },
+    ] }] : []),
+    { label: 'File', submenu: [
+      { label: 'New chat', click: () => sendMenuCommand('new-chat') },
+      { label: 'New terminal', click: () => sendMenuCommand('new-terminal') },
+      { label: 'Open folder…', click: () => sendMenuCommand('open-folder') },
+      ...(isMac ? [] : [{ type: 'separator' }, prefs, { type: 'separator' }, { role: 'quit' }]),
+    ] },
+    // Undo, redo, cut and paste do not bind their keys: the terminal reads them
+    // itself, and text fields handle them natively.
+    { label: 'Edit', submenu: [
+      { role: 'undo', registerAccelerator: false }, { role: 'redo', registerAccelerator: false }, { type: 'separator' },
+      { role: 'cut', registerAccelerator: false }, { role: 'copy' }, { role: 'paste', registerAccelerator: false }, { role: 'selectAll' },
+    ] },
+    { label: 'View', submenu: [
+      // The renderer saves the route first, so the reload comes back to the same place.
+      { label: 'Reload', accelerator: 'CmdOrCtrl+R', registerAccelerator: false, click: () => mainWindow && mainWindow.webContents.send('app:reload-shortcut') },
+      ...(app.isPackaged ? [] : [{ role: 'toggleDevTools', accelerator: 'F12' }]),
+      { type: 'separator' },
+      // Zoom goes through the renderer, so the readout, the terminal refit and
+      // the saved interface size all follow.
+      { label: 'Zoom in', accelerator: 'CmdOrCtrl+Plus', registerAccelerator: false, click: () => sendZoomCommand('in') },
+      { label: 'Zoom out', accelerator: 'CmdOrCtrl+-', registerAccelerator: false, click: () => sendZoomCommand('out') },
+      { label: 'Actual size', accelerator: 'CmdOrCtrl+0', registerAccelerator: false, click: () => sendZoomCommand('reset') },
+      { type: 'separator' },
+      { role: 'togglefullscreen', label: 'Toggle full screen' },
+      { label: 'Toggle sessions column', click: () => sendMenuCommand('toggle-sessions') },
+      { label: 'Toggle status panel', click: () => sendMenuCommand('toggle-status') },
+    ] },
+    { label: 'Go', submenu: [
+      go('Chat', 'chat', 'Alt+1'), go('Agents', 'agents', 'Alt+7'), go('Workflows', 'workflows'), go('Autopilot', 'autopilot'),
+      go('Brain', 'brain'), go('Projects', 'projects'), go('Skills', 'skills', 'Alt+2'), go('MCP', 'mcp', 'Alt+5'),
+      go('Source', 'source'), go('Files', 'files', 'Alt+4'), go('Sessions', 'sessions', 'Alt+3'), go('Terminal', 'terminal'),
+    ] },
+    ...(isMac ? [{ role: 'windowMenu' }] : []),
+    { role: 'help', submenu: [
+      { label: 'Documentation', click: () => sendMenuCommand('help', 'documentation') },
+      { label: 'Keyboard shortcuts', click: () => sendMenuCommand('help', 'shortcuts') },
+      { label: 'Troubleshooting', click: () => sendMenuCommand('help', 'troubleshooting') },
+      { type: 'separator' },
+      { label: 'Open logs folder', click: () => { shell.openPath(path.dirname(STALL_LOG_PATH)).catch(() => {}); } },
+      { label: 'Copy diagnostics', click: () => { clipboard.writeText(diagnosticsText()); sendMenuCommand('toast', 'Diagnostics copied'); } },
+      // Prefilled with the version facts, so a report arrives with them.
+      { label: 'Report a bug', click: () => openFeedback('bug') },
+      { label: 'Request a feature', click: () => openFeedback('feature') },
+      { type: 'separator' },
+      { label: 'Check for updates', click: () => sendMenuCommand('check-updates') },
+      ...(isMac ? [] : [{ role: 'about', label: 'About Husk' }]),
+    ] },
+  ];
+}
+
 function createWindow() {
   syncNativeTheme();
   mainWindow = new BrowserWindow({
@@ -673,9 +778,6 @@ function createWindow() {
     backgroundColor: themes.themeBackground(config.theme),
     title: 'Husk',
     titleBarStyle: 'hiddenInset',
-    // Off macOS the menu is a second bar above the app. It stays out of the
-    // way until Alt asks for it; every item in it has a key or a button.
-    autoHideMenuBar: process.platform !== 'darwin',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -704,13 +806,6 @@ function createWindow() {
   // Alt+key combos still arrive as their own events (input.key is the combo
   // key), so terminal Alt-sequences keep working.
   mainWindow.webContents.on('before-input-event', (event, input) => {
-    const key = String(input.key || '').toLowerCase();
-    const code = String(input.code || '');
-    if ((input.control || input.meta) && (key === 'r' || code === 'KeyR')) {
-      event.preventDefault();
-      if (!input.isAutoRepeat) mainWindow.webContents.send('app:reload-shortcut');
-      return;
-    }
     if (input.key === 'F5') {
       event.preventDefault();
       if (!input.isAutoRepeat) reloadMainWindow();
@@ -731,42 +826,7 @@ function createWindow() {
     }
   });
 
-  // The View submenu drops the DevTools toggle in shipped builds, where
-  // webPreferences.devTools is false.
-  const viewSubmenu = [
-    {
-      label: 'Reload',
-      accelerator: 'CmdOrCtrl+R',
-      // Custom click instead of role:reload: the renderer records the current
-      // route as users navigate, so a main-process reload can come back there.
-      click: reloadMainWindow,
-    },
-    ...(app.isPackaged ? [] : [{ role: 'toggleDevTools', accelerator: 'F12' }, { type: 'separator' }]),
-    // The renderer owns the Ctrl/Cmd +/-/0 keys (applies zoom, refits the
-    // terminal, shows the percent, saves the level), so `registerAccelerator:
-    // false` keeps the menu from binding them too. Menu clicks are forwarded to
-    // the renderer so they go through the same path instead of the built-in
-    // zoom roles, which would bypass the readout, the refit and the save.
-    { label: 'Actual Size', accelerator: 'CmdOrCtrl+0', registerAccelerator: false, click: () => sendZoomCommand('reset') },
-    { label: 'Zoom In', accelerator: 'CmdOrCtrl+Plus', registerAccelerator: false, click: () => sendZoomCommand('in') },
-    { label: 'Zoom Out', accelerator: 'CmdOrCtrl+-', registerAccelerator: false, click: () => sendZoomCommand('out') },
-  ];
-  Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: 'File', submenu: [{ role: 'quit' }] },
-    // `paste` keeps `registerAccelerator: false` so Ctrl/Cmd+V binds once:
-    // xterm already pastes on the native browser paste event.
-    { label: 'Edit', submenu: [{ role: 'copy' }, { role: 'paste', registerAccelerator: false }, { role: 'selectAll' }] },
-    { label: 'View', submenu: viewSubmenu },
-    { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'close' }] },
-    // Help: straight to a prefilled GitHub issue, with the environment block
-    // already written so a report arrives with the facts.
-    { label: 'Help', submenu: [
-      { label: 'Report a bug', click: () => openFeedback('bug') },
-      { label: 'Request a feature', click: () => openFeedback('feature') },
-      { type: 'separator' },
-      { label: 'Husk on GitHub', click: () => { shell.openExternal('https://github.com/DorShaer/Husk').catch(() => {}); } },
-    ] },
-  ]));
+  Menu.setApplicationMenu(Menu.buildFromTemplate(appMenuTemplate()));
 
   mainWindow.on('closed', () => {
     killPtyTree();
@@ -961,6 +1021,7 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
       agentCommand: rawCmd,
       agentName: config.agentName,
       recap: config.recap,
+      contextDir: CONTEXT_DIR,
     });
     // Prompt-based persona injection uses quoting that cmd.exe and node-pty
     // cannot preserve. Aider's discrete --read file argument remains safe on
@@ -978,38 +1039,7 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   //   4. fall back to HOME
   // Pointing Husk at a project subdirectory rather than $HOME is what lets
   // claude offer its three-option, durable "remember this folder" trust prompt.
-  let cwd = HOME;
-  if (config.agentCwd && typeof config.agentCwd === 'string') {
-    try {
-      if (fs.existsSync(config.agentCwd) && fs.statSync(config.agentCwd).isDirectory()) {
-        cwd = config.agentCwd;
-      }
-    } catch (_) {}
-  }
-  if (Array.isArray(config.projects) && config.activeProjectId) {
-    const active = config.projects.find((p) => p && p.id === config.activeProjectId);
-    if (active && active.path && typeof active.path === 'string') {
-      try {
-        if (fs.existsSync(active.path) && fs.statSync(active.path).isDirectory()) {
-          cwd = active.path;
-        }
-      } catch (_) {}
-    }
-  }
-  // Selecting a repo-installed agent does not change the working directory: the
-  // agent is loaded by its CLI natively and the cwd stays whatever the user
-  // configured (agentCwd / active project / home).
-  if (overrideCwd) {
-    try {
-      if (fs.existsSync(overrideCwd) && fs.statSync(overrideCwd).isDirectory()) {
-        cwd = overrideCwd;
-      } else {
-        // The original project dir is gone. claude --resume keys sessions to the
-        // original cwd path, so recreate it as an empty dir.
-        try { fs.mkdirSync(overrideCwd, { recursive: true }); cwd = overrideCwd; } catch (_) {}
-      }
-    } catch (_) {}
-  }
+  const cwd = chatCwd(overrideCwd);
 
   // The user's standing rules ride the same channel as the session directives.
   if (!isSubcommand) {
@@ -1021,7 +1051,7 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
   agentArgs = withCopilotContextDir({
     agentExe,
     agentArgs,
-    contextDir: path.join(CLAUDE_DIR, 'MEMORY', 'CONTEXT'),
+    contextDir: CONTEXT_DIR,
   });
 
   // Narrow this launch to the MCP servers the folder wants. Only customized
@@ -1181,8 +1211,7 @@ function spawnPty(cols = 100, rows = 30, overrideCmd = null, overrideCwd = null,
 
 // Read the most-recent claude session JSONL for the active PTY cwd and return a
 // coarse usage estimate: turn count plus a chars/4 token estimate. The agent
-// process owns the real token counter and writes it to usage-cache.json only
-// when a statusline script that writes it is wired up.
+// process owns the real token counter.
 let _claudeJsonCache = { mtime: 0, data: null };
 function readClaudeJson() {
   try {
@@ -1479,7 +1508,13 @@ function readActiveSessionStats() {
 function targetSession(sessionId) {
   return (sessionId && sessions.get(sessionId)) || activeSession();
 }
-ipcMain.handle('pty:start', (_e, { cols, rows, command, cwd, sessionId, resumeLast } = {}) => spawnPty(cols, rows, command || null, cwd || null, sessionId || null, !!resumeLast));
+ipcMain.handle('pty:start', (_e, { cols, rows, command, cwd, sessionId, resumeLast, shell } = {}) => {
+  const id = spawnPty(cols, rows, command || null, cwd || null, sessionId || null, !!resumeLast);
+  // A plain shell tab stays a shell tab when a reloaded renderer reattaches.
+  const s = sessions.get(id);
+  if (s) s.isShell = !!shell;
+  return id;
+});
 // List the chat PTYs that are still alive, so a reloaded renderer can rebuild
 // its tabs and reattach instead of orphaning them and minting a fresh chat.
 ipcMain.handle('terminal:defaults', () => {
@@ -1511,7 +1546,7 @@ ipcMain.handle('pty:list', () => {
         resumable = fs.existsSync(path.join(CLAUDE_DIR, 'projects', enc, `${s.claudeSessionId}.jsonl`));
       } catch (_) {}
     }
-    list.push({ sessionId: id, cwd: s.cwd || null, claudeSessionId: s.claudeSessionId || null, resumable, active: id === activeSessionId });
+    list.push({ sessionId: id, cwd: s.cwd || null, claudeSessionId: s.isShell ? null : (s.claudeSessionId || null), resumable: resumable && !s.isShell, shell: !!s.isShell, active: id === activeSessionId });
   }
   return { ok: true, sessions: list, activeSessionId };
 });
@@ -1578,12 +1613,23 @@ ipcMain.handle('ui:setRouteState', (_e, state = {}) => {
   return true;
 });
 
-ipcMain.handle('ui:takeReloadState', () => {
+function takeRendererReloadState() {
   const state = pendingRendererReloadState;
   pendingRendererReloadState = null;
   if (!state || Date.now() - Number(state.ts || 0) > 60_000) return null;
   return state;
+}
+
+let rendererReloadExpiry = null;
+ipcMain.on('ui:saveReloadStateSync', (event, state) => {
+  pendingRendererReloadState = state && typeof state === 'object' ? { ...state, ts: Date.now() } : null;
+  clearTimeout(rendererReloadExpiry);
+  rendererReloadExpiry = setTimeout(() => { pendingRendererReloadState = null; }, 60_000);
+  rendererReloadExpiry.unref();
+  event.returnValue = true;
 });
+ipcMain.on('ui:takeReloadStateSync', (event) => { event.returnValue = takeRendererReloadState(); });
+ipcMain.handle('ui:takeReloadState', takeRendererReloadState);
 
 // Close exactly one session, leaving the others running. Promotes the next
 // remaining session to active if the closed one was focused.
@@ -1616,7 +1662,7 @@ function feedbackFacts() {
   let osVersion = '';
   try { osVersion = os.release(); } catch (_) {}
   return {
-    huskVersion: app.getVersion(), platform: process.platform, arch: process.arch, osVersion,
+    huskVersion: PKG.version, platform: process.platform, arch: process.arch, osVersion,
     electron: process.versions.electron, agentCommand: cmd, agentVersion,
     chatView: config.chatView === 'terminal' ? 'terminal' : 'chat',
   };
@@ -1690,7 +1736,7 @@ function countDailyUsage(tabId, event) {
 }
 // Plan numbers for the bell, whichever tab is active. Empty with the endpoint off.
 ipcMain.handle('usage:get', () => {
-  const cache = planEndpointEnabled() ? readJSON(path.join(CLAUDE_DIR, 'MEMORY', 'STATE', 'usage-cache.json'), null) : null;
+  const cache = planEndpointEnabled() ? readJSON(USAGE_CACHE_PATH, null) : null;
   const plan = cache && cache.fetched_at ? {
     agent: 'claude',
     at: Date.parse(cache.fetched_at) || 0,
@@ -1832,14 +1878,10 @@ function prepareHandoff(src) {
 // chatCwd applies spawnPty's cwd policy: explicit override, else the active
 // project, else the configured agentCwd, else HOME.
 function chatCwd(overrideCwd) {
-  const isDir = (p) => { try { return typeof p === 'string' && p && fs.existsSync(p) && fs.statSync(p).isDirectory(); } catch (_) { return false; } };
-  if (isDir(overrideCwd)) return overrideCwd;
-  if (Array.isArray(config.projects) && config.activeProjectId) {
-    const active = config.projects.find((p) => p && p.id === config.activeProjectId);
-    if (active && isDir(active.path)) return active.path;
-  }
-  if (isDir(config.agentCwd)) return config.agentCwd;
-  return HOME;
+  const active = Array.isArray(config.projects) && config.projects.find((p) => p && p.id === config.activeProjectId);
+  const dir = overrideCwd || (active && active.path) || config.agentCwd || HOME;
+  try { if (fs.statSync(dir).isDirectory()) return dir; } catch (_) {}
+  throw new Error(`Folder not found: ${dir}. Locate or recreate the folder before starting the agent.`);
 }
 
 // A chat tab has no PTY, but the status panel, the Context tab and the
@@ -1891,6 +1933,8 @@ ipcMain.handle('chat:start', async (_e, { tabId, command, cwd, replay, handoff, 
   const selected = resolveChatConnection({ config, connection, command });
   if (!selected.ok) return selected;
   const cmd = (command || config.agentCommand || 'claude').trim();
+  const cli = cmd.split(/\s+/)[0];
+  if (selected.connection === 'cli' && !isOnPath(cli)) return { ok: false, missing: true, cli, error: `${agentLabel(cli)} is not installed` };
   const dir = chatCwd(cwd);
   const transport = chatTransportFor(cmd);
   // A fresh chat is pinned to an id Husk picks; a resume already names its
@@ -2023,7 +2067,7 @@ function readSessionHistory({ agent, sessionId, cwd, tailBytes = HISTORY_TAIL_BY
   }
   if (!isInside(root, file)) return { ok: false, error: 'refused' };
   // The agents Husk runs write these files, so a planted symlink here could
-  // point the read at an arbitrary file. Canonicalize like sessions:read, and
+  // point the read at an arbitrary file. Canonicalize the real path, and
   // open with O_NOFOLLOW like fs:readFile, so a symlink at the path is refused.
   if (!realPathInside(file, root)) return { ok: false, error: 'refused' };
   try {
@@ -2208,6 +2252,8 @@ function brainObserve(tabId, ev) {
   }
 }
 
+ipcMain.handle('chat:compact', (_e, opts = {}) => chatRuntime.compact({ tabId: opts.tabId }));
+
 ipcMain.handle('chat:prompt', async (_e, { tabId, text, images } = {}) => {
   const ask = String(text || '');
   // A slash command is an instruction to the CLI, not a question: it must reach
@@ -2375,10 +2421,10 @@ const pendingRuns = []; // { runId, payload, workspaceRoot } queued past the con
 const AP_MAX_CONCURRENT = 4;
 const AUT_OUTPUT_FLUSH_MS = 250;
 
-const { applyWorktreeChanges, isSafeRelPath: isSafeApplyRelPath } = require('./lib/autopilot-apply');
+const { applyWorktreeChanges, findApplyConflicts, isSafeRelPath: isSafeApplyRelPath } = require('./lib/autopilot-apply');
 const Orchestrator = require('./lib/autopilot-orchestrator');
 const { classifyTier } = require('./lib/model-routing');
-const { resolveTaskRoute, availableRoutes, resolveCollabRoutes, resolveWorkflowRoutes } = require('./lib/task-routing');
+const { resolveTaskRoute, availableRoutes, seedTaskRouting, resolveCollabRoutes, resolveWorkflowRoutes } = require('./lib/task-routing');
 const { resolveChatConnection, applyCliEndpoint } = require('./lib/chat-connection');
 const { agentBaseName } = require('./lib/agent-oneshot');
 const {
@@ -4160,7 +4206,7 @@ function captureApplyUndo(sessionId, workspaceRoot, changes) {
   const { encrypt } = autopilotCrypto();
   try {
     const res = Autopilot.snapshot.captureSnapshot(
-      workspaceRoot, autopilotStorageRoot(), undoId, { paths, encrypt },
+      workspaceRoot, autopilotStorageRoot(), undoId, { paths, encrypt, keepEarlier: true },
     );
     if (!res || !res.ok) return { ok: false, error: (res && res.error) || 'undo snapshot failed' };
     return { ok: true, undoId };
@@ -4182,13 +4228,70 @@ ipcMain.handle('autopilot:applyRun', async (_e, payload = {}) => {
   if (entry.groupId && collabGroups.has(entry.groupId) && !entry.isIntegrator) {
     return { ok: false, error: 'this run is part of an active team; wait for the integrator to finish, then apply its result' };
   }
-  const undo = captureApplyUndo(entry.sessionId, entry.workspaceRoot, entry.changes || []);
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- paths come from the retained registry
+  if (!entry.workspaceRoot || !fs.existsSync(entry.workspaceRoot)) {
+    return { ok: false, runId, applied: [], failed: [], error: `the project folder ${entry.workspaceRoot || ''} is no longer there; nothing was applied` };
+  }
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- paths come from the retained registry
+  if (!entry.worktreePath || !fs.existsSync(entry.worktreePath)) {
+    return { ok: false, runId, applied: [], failed: [], error: 'this run\'s worktree is gone; nothing was applied' };
+  }
+  const changes = entry.changes || [];
+  // A conflict with no choice keeps your copy; 'theirs' writes the run's, 'skip' leaves it for a later apply.
+  const choices = (payload && payload.resolutions && typeof payload.resolutions === 'object') ? payload.resolutions : {};
+  const conflicts = applyConflictsFor(entry);
+  const kept = []; const skipped = [];
+  for (const c of conflicts) {
+    const pick = Object.prototype.hasOwnProperty.call(choices, c.path) ? choices[c.path] : 'mine';
+    if (pick === 'theirs') continue;
+    (pick === 'skip' ? skipped : kept).push(c.path);
+  }
+  const leave = new Set([...kept, ...skipped]);
+  const toApply = changes.filter((c) => !leave.has(c && c.path));
+  const undo = captureApplyUndo(entry.sessionId, entry.workspaceRoot, toApply);
   if (!undo.ok) return { ok: false, runId, applied: [], failed: [], error: `${undo.error}; nothing was applied` };
-  const result = applyWorktreeChanges(entry.worktreePath, entry.workspaceRoot, entry.changes || []);
-  if (!result.ok) return { ok: false, runId, applied: result.applied, failed: result.failed };
+  const result = applyWorktreeChanges(entry.worktreePath, entry.workspaceRoot, toApply);
+  const out = { ok: result.ok, runId, applied: result.applied, failed: result.failed, kept, skipped };
+  if (!result.ok) return out;
+  if (skipped.length) {
+    retainRun(runId, { ...entry, changes: changes.filter((c) => skipped.includes(c && c.path)) });
+    return out;
+  }
   try { removeRunWorktree(entry.worktreePath, entry.workspaceRoot); } catch (_) {}
   dropRetained(runId);
-  return { ok: result.ok, runId, applied: result.applied, failed: result.failed };
+  return out;
+});
+
+// The run's starting state per changed path: its snapshot manifest, or the
+// worktree's HEAD for a run recovered without one.
+function applyBaseEntries(entry) {
+  const fromSnap = Autopilot.snapshot.readManifestEntries(autopilotStorageRoot(), entry.sessionId);
+  if (fromSnap) return fromSnap;
+  const entries = {};
+  for (const c of entry.changes || []) {
+    if (!c || !isSafeApplyRelPath(c.path)) continue;
+    try {
+      const buf = execFileSync('git', ['-C', entry.worktreePath, 'cat-file', 'blob', `HEAD:${c.path}`], { stdio: 'pipe', maxBuffer: 256 * 1024 * 1024 });
+      entries[c.path] = { type: 'file', sha: crypto.createHash('sha256').update(buf).digest('hex') };
+    } catch (_) {}
+  }
+  return entries;
+}
+
+function applyConflictsFor(entry) {
+  return findApplyConflicts(entry.worktreePath, entry.workspaceRoot, entry.changes || [], applyBaseEntries(entry));
+}
+
+// Files you changed in your copy since the run started, for the Apply confirm.
+ipcMain.handle('autopilot:applyCheck', async (_e, payload = {}) => {
+  const runId = String(payload && payload.runId || '').trim();
+  const entry = getRetained(runId);
+  if (!entry) return { ok: false, error: 'no retained run with that id' };
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- paths come from the retained registry
+  if (!entry.workspaceRoot || !fs.existsSync(entry.workspaceRoot)) {
+    return { ok: false, error: `the project folder ${entry.workspaceRoot || ''} is no longer there` };
+  }
+  return { ok: true, runId, workspaceRoot: entry.workspaceRoot, fileCount: (entry.changes || []).length, conflicts: applyConflictsFor(entry) };
 });
 
 // Discard a retained run: remove its worktree without applying anything.
@@ -4966,7 +5069,7 @@ async function runCodexModelProbe(command) {
         if (cursor && seen.has(cursor)) break;
         if (cursor) seen.add(cursor);
       } while (cursor && seen.size < 20);
-      return (codexSession({}, models).models?.available || []).map((m) => ({ value: m.id, label: m.name }));
+      return (codexSession({}, models).models?.available || []).map((m) => ({ value: m.id, label: m.name, description: m.description || '' }));
     };
     return { ok: true, models: await Promise.race([read(), failed]) };
   } catch (err) { return { ok: false, models: [], error: err.message || String(err) }; }
@@ -5007,7 +5110,7 @@ async function discoverModelCatalog({ refresh = false, command = null, fast = fa
       if (!Array.isArray(available) || !available.length) continue;
       if (available.length === 1) break; // Chat also augments single-entry catalogs.
       return Object.assign({}, base, {
-        models: available.map((m) => ({ value: m.id, label: m.name || m.id })),
+        models: available.map((m) => ({ value: m.id, label: m.name || m.id, description: m.description || '' })),
         live: available.map((m) => m.id), readAt: Date.now(),
         source: 'chat-protocol', sourceLabel: `Listed by ${providerLabel(vendor)}`,
       });
@@ -5047,7 +5150,7 @@ async function discoverModelCatalog({ refresh = false, command = null, fast = fa
   const liveModels = (authBlocked || partialCopilotCatalog) ? [] : (Array.isArray(probe.models) ? probe.models : parseModelCatalog(probeOutput, vendor));
   const savedModels = savedRoutingModels(vendor);
   const fallbackModels = (!liveModels.length && !authBlocked) ? fallbackModelsFor(vendor) : [];
-  const models = uniqueModels([...liveModels, ...fallbackModels, ...savedModels]);
+  const models = uniqueModels(liveModels.length ? liveModels : [...fallbackModels, ...savedModels]);
   const value = Object.assign(base, {
     models,
     // Only ids the CLI listed just now; routing picks and stale checks read these.
@@ -5055,7 +5158,7 @@ async function discoverModelCatalog({ refresh = false, command = null, fast = fa
     readAt: Date.now(),
     source: liveModels.length ? (vendor === 'codex' ? 'app-server' : vendor === 'aider' || vendor === 'kiro-cli' ? 'list-models' : 'slash-model') : (fallbackModels.length ? 'fallback' : (savedModels.length ? 'saved' : 'none')),
     sourceLabel: liveModels.length
-      ? (vendor === 'codex' ? 'Listed by OpenAI Codex' : vendor === 'aider' ? 'Read from aider --list-models' : (vendor === 'kiro-cli' ? 'Read from kiro-cli chat --list-models' : 'Read from /model'))
+      ? `Listed by ${providerLabel(vendor)}`
       : (fallbackModels.length ? 'Known provider catalog' : (savedModels.length ? 'Saved selections' : 'No models discovered')),
     error: (liveModels.length || fallbackModels.length) ? '' : (authBlocked
       ? (vendor === 'kiro-cli' ? 'Kiro requires login before it will list models.' : 'Copilot requires login before it will list models.')
@@ -5069,7 +5172,12 @@ ipcMain.handle('models:list', async (_e, opts = {}) => discoverModelCatalog({ re
 
 // ─── Config IPC ──────────────────────────────────────────────────────────────────
 
-ipcMain.handle('config:get', () => ({ ...config }));
+ipcMain.handle('config:get', () => {
+  const seeded = seedTaskRouting(config, installedTaskVendors());
+  if (seeded !== config) { config = seeded; saveConfig(config); }
+  return { ...config };
+});
+ipcMain.handle('config:recovery', () => configRecovery);
 // Config keys the renderer may not write.
 const CONFIG_KEYS_MAIN_OWNS = new Set(['statuslineTrust', 'background', 'scannerPath', 'trustedPublishers']);
 
@@ -5078,7 +5186,7 @@ ipcMain.handle('config:set', (_e, partial) => {
   for (const key of Object.keys(partial || {})) {
     if (!CONFIG_KEYS_MAIN_OWNS.has(key)) incoming[key] = partial[key];
   }
-  config = { ...config, ...incoming };
+  config = seedTaskRouting({ ...config, ...incoming }, installedTaskVendors());
   saveConfig(config);
   if (Object.prototype.hasOwnProperty.call(incoming, 'theme')) syncNativeTheme();
   return { ...config };
@@ -5094,13 +5202,13 @@ const KNOWN_AGENTS = [
     id: 'claude', label: 'Claude Code', command: 'claude',
     install: { tool: 'npm', args: ['install', '-g', '@anthropic-ai/claude-code'] },
     login: ['auth', 'login'], logout: ['auth', 'logout'],
-    docs: 'https://docs.anthropic.com/claude/docs/claude-code',
+    docs: 'https://code.claude.com/docs/en/overview',
   },
   {
     id: 'copilot', label: 'GitHub Copilot CLI', command: 'copilot',
     install: { tool: 'npm', args: ['install', '-g', '@github/copilot'] },
     login: ['login'],
-    docs: 'https://docs.github.com/en/copilot/github-copilot-in-the-cli',
+    docs: 'https://docs.github.com/en/copilot/how-tos/copilot-cli',
   },
   {
     id: 'codex', label: 'OpenAI Codex CLI', command: 'codex',
@@ -5336,6 +5444,9 @@ ipcMain.handle('mcp:list', () => {
   const result = SharedMcp.list(activeAgentCommand());
   return {
     ...result,
+    servers: (result.servers || []).map((server) => ({ ...server,
+      commandMissing: !['http', 'sse'].includes(server.transport) && !!server.command && !isOnPath(server.command),
+    })),
     agent: active.agent,
     activeAgent: active.agent,
     supportsWrite: true,
@@ -5418,7 +5529,7 @@ ipcMain.handle('projectMcp:clear', (_e, cwd) => {
 });
 
 ipcMain.handle('mcp:health', () => activeMcpAdapter().health());
-ipcMain.handle('mcp:add', (_e, payload = {}) => SharedMcp.add(payload));
+registerInstallHandler('mcp:add', (_e, payload = {}) => SharedMcp.add(payload), 'silent');
 ipcMain.handle('mcp:update', (_e, payload = {}) => {
   // `id` is the (possibly edited) name from the form; `oldId` is the
   // original key. Locate by oldId, pass the new name as `newId` so the
@@ -5428,7 +5539,11 @@ ipcMain.handle('mcp:update', (_e, payload = {}) => {
 });
 ipcMain.handle('mcp:remove', (_e, id) => SharedMcp.remove(id));
 ipcMain.handle('mcp:clone', (_e, id) => SharedMcp.clone(id, activeAgentCommand()));
-ipcMain.handle('mcp:toggle', (_e, id) => SharedMcp.toggle(id, activeAgentCommand()));
+ipcMain.handle('mcp:toggle', async (_e, id) => {
+  const server = (SharedMcp.list(activeAgentCommand(), { sync: false }).servers || []).find((x) => x.id === id);
+  if (server && server.enabled === false && !(await installFoundation.confirmUse(`mcp:${id}`))) return { ok: false, canceled: true, error: 'Not enabled' };
+  return SharedMcp.toggle(id, activeAgentCommand());
+});
 
 // addMany takes a list of canonical payloads (each already split into
 // command/args + transport per the buildServerEntry contract) and tries
@@ -5468,7 +5583,6 @@ function safeCount(dir, predicate) {
   catch (_) { return 0; }
 }
 function readJSON(p, fb) { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch (_) { return fb; } }
-function countLines(p) { try { return fs.readFileSync(p, 'utf8').split('\n').filter(Boolean).length; } catch (_) { return 0; } }
 
 // Resolve the active agent CLI's version by running `<cmd> --version`, using the
 // agent spawn env so the command resolves against the user's real PATH. Every
@@ -5516,7 +5630,7 @@ function gitSummary(cwd) {
   const dir = cwd || HOME;
   try {
     execFileSync('git', ['-C', dir, 'rev-parse', '--git-dir'], { stdio: 'ignore', timeout: 1500 });
-  } catch (_) { return { isRepo: false }; }
+  } catch (err) { return { isRepo: false, ...(['ENOENT', 'EACCES'].includes(err.code) ? { gitAvailable: false } : {}) }; }
   try {
     const out = execFileSync('git', ['-C', dir, 'status', '--porcelain=v1', '--branch'],
       { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'], timeout: 2500 });
@@ -5714,60 +5828,19 @@ ipcMain.handle('stats:get', () => {
     hooks = safeCount(hooksDir, (e) => e.isFile() && e.name.endsWith('.json'));
     hooksApplicable = true;
   }
-  const workDir = path.join(CLAUDE_DIR, 'MEMORY', 'WORK');
-  const sessionsCount = safeCount(workDir, (e) => e.isDirectory());
-  const ratings = countLines(path.join(CLAUDE_DIR, 'MEMORY', 'LEARNING', 'SIGNALS', 'ratings.jsonl'));
-  const researchDir = path.join(CLAUDE_DIR, 'MEMORY', 'RESEARCH');
-  const research = safeCount(researchDir, (e) => e.isDirectory());
-
-  // Reads from the same caches the statusline-command.sh consumes
+  // Caches written by the user's own statusline script.
   const stateDir = path.join(CLAUDE_DIR, 'MEMORY', 'STATE');
-  const usage = agentIsClaude && planEndpointEnabled() ? readJSON(path.join(stateDir, 'usage-cache.json'), {}) : {};
+  const usage = agentIsClaude && planEndpointEnabled() ? readJSON(USAGE_CACHE_PATH, {}) : {};
   const location = readJSON(path.join(stateDir, 'location-cache.json'), {});
   const weather = readJSON(path.join(stateDir, 'weather-cache.json'), {});
-
-  // Recent ratings: parse last N lines of ratings.jsonl, compute averages by window
-  const ratingsPath = path.join(CLAUDE_DIR, 'MEMORY', 'LEARNING', 'SIGNALS', 'ratings.jsonl');
-  const learning = { latest: null, latestSource: '', avg1h: null, avg1d: null, avg1w: null, avg1mo: null, recent: [], recentTs: [] };
-  try {
-    const raw = fs.readFileSync(ratingsPath, 'utf8').split('\n').filter(Boolean);
-    const now = Date.now();
-    const samples = [];
-    for (let i = raw.length - 1; i >= 0 && samples.length < 200; i--) {
-      try {
-        const obj = JSON.parse(raw[i]);
-        const ts = Date.parse(obj.timestamp);
-        if (!isFinite(ts) || typeof obj.rating !== 'number') continue;
-        samples.unshift({ ts, rating: obj.rating, source: obj.source || 'auto' });
-      } catch (_) {}
-    }
-    if (samples.length) {
-      learning.latest = samples[samples.length - 1].rating;
-      learning.latestSource = samples[samples.length - 1].source;
-      const avg = (within) => {
-        const filt = samples.filter((s) => now - s.ts <= within);
-        if (!filt.length) return null;
-        const sum = filt.reduce((a, b) => a + b.rating, 0);
-        return Math.round((sum / filt.length) * 10) / 10;
-      };
-      learning.avg1h = avg(60 * 60 * 1000);
-      learning.avg1d = avg(24 * 60 * 60 * 1000);
-      learning.avg1w = avg(7 * 24 * 60 * 60 * 1000);
-      learning.avg1mo = avg(30 * 24 * 60 * 60 * 1000);
-      // Recent 30 ratings for sparkline
-      learning.recent = samples.slice(-30).map((s) => s.rating);
-      // Timestamps for the chart's date axis (stocks-style x labels).
-      learning.recentTs = samples.slice(-30).map((s) => s.ts);
-    }
-  } catch (_) {}
 
   const activeProject = (Array.isArray(config.projects) && config.activeProjectId)
     ? config.projects.find((p) => p && p.id === config.activeProjectId) : null;
   const cwd = activePtyCwd || (activeProject && activeProject.path) || HOME;
   return {
-    skills, workflows, hooks, hooksApplicable, sessions: sessionsCount, ratings, research,
+    skills, workflows, hooks, hooksApplicable,
     agent: agentCmd, agentIsClaude, agentVersion: getAgentVersion(agentCmd),
-    huskVer: app.getVersion(),
+    huskVer: PKG.version,
     workspace: {
       name: (activeProject && activeProject.name) || path.basename(cwd) || '',
       cwd,
@@ -5775,10 +5848,7 @@ ipcMain.handle('stats:get', () => {
     },
     mcp: mcpSummary(),
     claudeDir: CLAUDE_DIR, skillsDir, hooksDir,
-    memoryDir: path.join(CLAUDE_DIR, 'MEMORY'),
     workflowsDir,
-    sessionsDir: workDir,
-    researchDir,
     // Rich statusline data
     location: {
       city: location.city || '',
@@ -5812,7 +5882,6 @@ ipcMain.handle('stats:get', () => {
         return n == null ? null : { label: agentCmd === 'copilot' ? 'Session AIC' : 'Session usage', value: n };
       })(),
     },
-    learning,
     home: HOME,
   };
 });
@@ -6041,7 +6110,7 @@ function recordWorkflowRun(run, workflow) {
         // Left empty rather than guessed: Husk does not ask the CLI its version.
         agentVersion: '',
         os: process.platform,
-        huskVersion: app.getVersion(),
+        huskVersion: PKG.version,
         workspace: { vcs, trackedFiles: tracked, languages: [] },
       };
     } catch (_) {
@@ -6247,7 +6316,7 @@ function createWorkflowRecord(payload) {
   return entry;
 }
 
-ipcMain.handle('workflows:create', (_e, payload = {}) => createWorkflowRecord(payload));
+registerInstallHandler('workflows:create', (_e, payload = {}) => createWorkflowRecord(payload), 'silent');
 
 // Duplicating carries the origin and drops the consent.
 //
@@ -6304,10 +6373,18 @@ ipcMain.handle('workflows:update', (_e, payload = {}) => {
   return { ok: true };
 });
 
-ipcMain.handle('workflows:delete', (_e, id) => {
+ipcMain.handle('workflows:delete', (_e, payload) => {
+  const id = typeof payload === 'string' ? payload : payload && payload.id;
+  const scheduleAction = payload && payload.scheduleAction;
   const live = [...activeRuns.values()].find((r) => r.workflowId === id && r.status === 'running');
   if (live) return { ok: false, error: 'this workflow is running; stop it first' };
   if (!id) return { ok: false, error: 'missing id' };
+  const schedules = loadSchedules();
+  const linked = schedules.filter((s) => s.target === 'workflow' && s.targetId === id);
+  if (linked.length && !['pause', 'remove'].includes(scheduleAction)) return { ok: false, needsScheduleChoice: true, schedules: linked, error: 'Choose whether to pause or remove the schedules using this workflow.' };
+  if (linked.length) saveSchedules(scheduleAction === 'remove'
+    ? schedules.filter((s) => !linked.some((r) => r.id === s.id))
+    : schedules.map((s) => linked.some((r) => r.id === s.id) ? { ...s, enabled: false } : s));
   saveWorkflows(loadWorkflows().filter((w) => w.id !== id));
   // The sidecar row goes with the workflow, so a row never outlives the workflow
   // it describes and cannot be inherited by a later id.
@@ -6393,7 +6470,10 @@ function startWorkflowRun(workflowId, opts = {}) {
   return { ok: true, runId, cwd: gate.cwd };
 }
 
-ipcMain.handle('workflows:run', (_e, workflowId, opts = {}) => startWorkflowRun(workflowId, opts));
+ipcMain.handle('workflows:run', async (_e, workflowId, opts = {}) => {
+  if (!(await installFoundation.confirmUse(`workflow:${workflowId}`))) return { ok: false, cancelled: true };
+  return startWorkflowRun(workflowId, opts);
+});
 
 // Returns a context block to inject at session start for ai-suggested workflows.
 // The AI reads this and knows when to suggest running a workflow.
@@ -6905,7 +6985,7 @@ ipcMain.handle('workflows:preflight', (_e, payload = {}) => {
     skills: wfxLocalSkills(),
     markerFiles: wfxMarkerFiles(cwd, artifact.requires.workspace.markerFiles),
     cwd,
-    huskVersion: app.getVersion(),
+    huskVersion: PKG.version,
   }, dirFacts);
 
   const result = WorkflowInstall.evaluatePreflight(artifact, facts);
@@ -6921,7 +7001,7 @@ ipcMain.handle('workflows:preflight', (_e, payload = {}) => {
     // made.
     chainCheck: checked.chainCheck,
     cwd,
-    huskVersion: app.getVersion(),
+    huskVersion: PKG.version,
   };
 });
 
@@ -6996,9 +7076,9 @@ registerInstallHandler('workflows:install', (_e, payload = {}) => {
 
 const REGISTRY_TIMEOUT_MS = 10000;
 const REGISTRY_MAX_REDIRECTS = 3;
-// The default catalog. Overridable in config, so a fork or an air-gapped
-// install can point somewhere else without patching the binary.
-const DEFAULT_REGISTRY_URL = 'https://raw.githubusercontent.com/DorShaer/husk-workflows/main/index.json';
+// Registries are added explicitly until a public catalog is available.
+const DEFAULT_REGISTRY_URL = '';
+const RETIRED_REGISTRY_URL = 'https://raw.githubusercontent.com/DorShaer/husk-workflows/main/index.json';
 
 function registryFetch(rawUrl, maxBytes) {
   return new Promise((resolve) => {
@@ -7069,11 +7149,11 @@ function registryFetch(rawUrl, maxBytes) {
 // them rather than a special case, so removing it is an ordinary act.
 function registryList() {
   const stored = Array.isArray(config.workflowRegistries) ? config.workflowRegistries : null;
-  if (!stored) return [{ url: DEFAULT_REGISTRY_URL, addedAt: null, builtin: true }];
+  if (!stored) return [];
   const out = [];
   for (const row of stored.slice(0, 16)) {
     const url = row && typeof row.url === 'string' ? WorkflowRegistry.normalizeRegistryUrl(row.url) : null;
-    if (!url || !url.ok) continue;
+    if (!url || !url.ok || url.url === RETIRED_REGISTRY_URL) continue;
     if (out.some((r) => r.url === url.url)) continue;
     out.push({
       url: url.url,
@@ -7171,9 +7251,11 @@ function mintScheduleId(list) {
 // never has to re-derive it and the two cannot disagree.
 function scheduleRows() {
   const now = Date.now();
+  const workflows = new Set(loadWorkflows().map((w) => w.id));
   return loadSchedules().map((s) => ({
     ...s,
-    nextRunAt: Schedule.nextRunAt(s, now),
+    broken: s.target === 'workflow' && !workflows.has(s.targetId),
+    nextRunAt: s.target === 'workflow' && !workflows.has(s.targetId) ? null : Schedule.nextRunAt(s, now),
     describe: Schedule.describe(s),
   }));
 }
@@ -7185,6 +7267,9 @@ async function runSchedule(s) {
     if (!s.targetId) return { ok: false, error: 'this schedule names no workflow' };
     const already = [...activeRuns.values()].some((r) => r.status === 'running' && r.workflowId === s.targetId);
     if (already) return { ok: false, error: 'that workflow is already running' };
+    if (!(await installFoundation.allowUnattended(`workflow:${s.targetId}`))) {
+      return { ok: false, error: 'Husk\'s security scanner flagged this workflow. Run it once by hand to decide.' };
+    }
     try {
       return startWorkflowRun(s.targetId, { cwd: s.cwd || undefined });
     } catch (err) {
@@ -7585,7 +7670,7 @@ function wfxReceiptsFor(workflow, graphHash, runs, opts) {
     String(figures.runs),
     (figures.window && figures.window.firstRunAt) || '',
     (figures.window && figures.window.lastRunAt) || '',
-  ].join(' ')).digest('hex').slice(0, 16)}`;
+  ].join('\u0000')).digest('hex').slice(0, 16)}`;
 
   const receipt = {
     id: receiptId,
@@ -7832,7 +7917,7 @@ function wfxWriteArtifactAtomic(target, artifact) {
 // targetPath skips the dialog, which is what a republish onto an already
 // chosen file wants: the second publish of the same workflow writes
 // immediately and offers an Undo rather than asking the same question again.
-ipcMain.handle('workflows:export', async (_e, payload = {}) => {
+if (require('./lib/release-scope').sharing) ipcMain.handle('workflows:export', async (_e, payload = {}) => {
   const p = (payload && typeof payload === 'object') ? payload : {};
   const raw = loadWorkflows().find((w) => w.id === p.workflowId);
   if (!raw) return wfxRefuse('not-found', 'that workflow is not in your list any more', p.workflowId, 'export');
@@ -7863,7 +7948,7 @@ ipcMain.handle('workflows:export', async (_e, payload = {}) => {
   if (receipts.refusal) return receipts.refusal;
 
   const built = WorkflowArtifact.buildArtifact(workflow, {
-    huskVersion: app.getVersion(),
+    huskVersion: PKG.version,
     // Republishing keeps the artifact's identity and moves its revision, so a
     // reader can tell a new version of a workflow they know from a different
     // workflow that happens to share a name.
@@ -8036,7 +8121,7 @@ function wfOpenRunAudit(run, workflow, graph) {
         startedAt: run.startedAt,
         steps: graph.nodes.length,
         os: process.platform,
-        huskVersion: app.getVersion(),
+        huskVersion: PKG.version,
       },
     });
     if (!started.ok) return null;
@@ -8565,7 +8650,7 @@ ipcMain.handle('profiles:listImportableAgents', () => {
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
-ipcMain.handle('profiles:importAgents', (_e, payload = {}) => {
+registerInstallHandler('profiles:importAgents', (_e, payload = {}) => {
   const picks = Array.isArray(payload && payload.picks) ? payload.picks : [];
   const activateAfter = !!(payload && payload.activate);
   if (!picks.length) return { ok: false, error: 'nothing to import' };
@@ -8601,7 +8686,7 @@ ipcMain.handle('profiles:importAgents', (_e, payload = {}) => {
     nextConfig = { ...nextConfig, activeProfileIds: active, activeProfileId: active[0] || null };
   }
   config = nextConfig;
-  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  saveConfig(config);
   syncAgentFiles();
   return { ok: true, imported: importedIds.length, importedIds };
 });
@@ -8886,7 +8971,7 @@ registerInstallHandler('repoAgents:install', (_e, payload = {}) => {
     nextConfig = { ...nextConfig, activeProfileIds: active, activeProfileId: active[0] || null };
   }
   config = nextConfig;
-  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  saveConfig(config);
   // Agent-agnostic distribution: mirror the imported agents into every
   // installed CLI's native agents dir (claude, copilot, ...). Copilot also
   // reads the repo's own .github/agents/ when run there, so no per-CLI
@@ -9027,7 +9112,7 @@ const SNIPPET_TARGETS = new Set(['codex', 'aider', 'kiro-cli']);
 const WRITE_TARGETS = new Set(['claude', 'copilot', 'gemini']);
 const KNOWN_TARGETS = new Set([...SNIPPET_TARGETS, ...WRITE_TARGETS]);
 
-ipcMain.handle('repoMcp:install', (_e, payload = {}) => {
+registerInstallHandler('repoMcp:install', (_e, payload = {}) => {
   const summary = payload && payload.server;
   const envValues = (payload && payload.envValues) || {};
   const targets = Array.isArray(payload && payload.targets) ? payload.targets : [];
@@ -9076,7 +9161,7 @@ ipcMain.handle('repoMcp:install', (_e, payload = {}) => {
   return { ok: true, serverId, spec, results };
 });
 
-ipcMain.handle('profiles:create', (_e, payload = {}) => {
+registerInstallHandler('profiles:create', (_e, payload = {}) => {
   const id = `profile-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const entry = {
     id,
@@ -9088,7 +9173,7 @@ ipcMain.handle('profiles:create', (_e, payload = {}) => {
   };
   const profiles = [...getProfiles(), entry];
   config = { ...config, profiles };
-  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  saveConfig(config);
   syncAgentFiles();
   return entry;
 });
@@ -9107,7 +9192,7 @@ ipcMain.handle('profiles:update', (_e, payload = {}) => {
     };
   });
   config = { ...config, profiles };
-  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  saveConfig(config);
   // If the name changed, drop the stale agent file before writing the new one.
   if (prev && payload.name !== undefined && String(payload.name).slice(0, 64) !== prev.name) removeAgentFiles(prev.name);
   syncAgentFiles();
@@ -9123,7 +9208,7 @@ function getActiveIds() {
 }
 function writeActiveIds(ids) {
   config = { ...config, activeProfileIds: ids, activeProfileId: ids[0] || null };
-  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  saveConfig(config);
 }
 
 ipcMain.handle('profiles:delete', (_e, id) => {
@@ -9132,7 +9217,7 @@ ipcMain.handle('profiles:delete', (_e, id) => {
   const profiles = getProfiles().filter((p) => p.id !== id);
   const active = getActiveIds().filter((a) => a !== id);
   config = { ...config, profiles, activeProfileIds: active, activeProfileId: active[0] || null };
-  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  saveConfig(config);
   if (removed) removeAgentFiles(removed.name);
   return { ok: true };
 });
@@ -9224,7 +9309,7 @@ ipcMain.handle('projects:create', (_e, payload = {}) => {
   const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const entry = { id, name, path: projPath, addedAt: new Date().toISOString(), lastUsedAt: null };
   config = { ...config, projects: [...projects, entry] };
-  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  saveConfig(config);
   return { ok: true, project: entry };
 });
 
@@ -9234,13 +9319,13 @@ ipcMain.handle('projects:setActive', (_e, id) => {
   if (!found) return { ok: false, error: 'Project not found.' };
   const stamped = projects.map((p) => p && p.id === id ? { ...p, lastUsedAt: new Date().toISOString() } : p);
   config = { ...config, projects: stamped, activeProjectId: id };
-  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  saveConfig(config);
   return { ok: true, project: found };
 });
 
 ipcMain.handle('projects:clearActive', () => {
   config = { ...config, activeProjectId: null };
-  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  saveConfig(config);
   return { ok: true };
 });
 
@@ -9250,7 +9335,7 @@ ipcMain.handle('projects:delete', (_e, id) => {
   const remaining = projects.filter((p) => p && p.id !== id);
   const newActive = config.activeProjectId === id ? null : config.activeProjectId;
   config = { ...config, projects: remaining, activeProjectId: newActive };
-  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  saveConfig(config);
   return { ok: true };
 });
 
@@ -9352,7 +9437,7 @@ ipcMain.handle('projects:markViewed', (_e, id) => {
   if (!projects.some((p) => p && p.id === id)) return { ok: false, error: 'Project not found.' };
   const stamped = projects.map((p) => p && p.id === id ? { ...p, lastViewedAt: new Date().toISOString() } : p);
   config = { ...config, projects: stamped };
-  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  saveConfig(config);
   return { ok: true };
 });
 
@@ -9487,7 +9572,7 @@ registerInstallHandler('prompts:create', (_e, payload = {}) => {
   } catch (err) {
     return { ok: false, error: err.message };
   }
-}, false);
+}, 'silent');
 
 ipcMain.handle('skills:list', () => {
   try {
@@ -9545,15 +9630,17 @@ registerInstallHandler('skills:create', (_e, { name, description, content }, bun
     if (err && err.code === 'EEXIST') return { ok: false, error: `A skill named "${name}" already exists.` };
     return { ok: false, error: err.message };
   }
-}, false);
+}, 'silent');
 
 // Toggle a shared or legacy Claude skill (directory move) or a Husk prompt
 // (file rename). Renderer passes the item's `id` and `source` so we route
 // correctly. Back-compat: callers using only `dirName` still work.
-ipcMain.handle('skills:toggle', (_e, payload = {}) => {
+ipcMain.handle('skills:toggle', async (_e, payload = {}) => {
   const { dirName, id, source } = payload;
   const itemId = id || dirName;
   if (!itemId) return { ok: false, error: 'No item id' };
+  const enabling = source !== 'husk' && listClaudeSkills().find((sk) => sk.id === itemId && sk.disabled);
+  if (enabling && !(await installFoundation.confirmUse(`skill:${enabling.name}`))) return { ok: false, canceled: true, error: 'Not enabled' };
   if (source === 'husk' || (!source && itemId.endsWith('.md') || itemId.endsWith('.md.disabled'))) {
     const isDisabled = itemId.endsWith('.disabled');
     const newName = isDisabled ? itemId.slice(0, -'.disabled'.length) : `${itemId}.disabled`;
@@ -9765,44 +9852,6 @@ ipcMain.handle('plugins:openFolder', (_e, payload = {}) => {
   if (!installPath) return { ok: false, error: 'plugin not found' };
   shell.openPath(installPath);
   return { ok: true };
-});
-
-// ─── Sessions reader (MEMORY/WORK/<slug>/PRD.md) ────────────────────────────────
-
-function parseFrontmatter(content) {
-  const m = content.match(/^---\n([\s\S]*?)\n---/);
-  if (!m) return {};
-  const out = {};
-  for (const line of m[1].split('\n')) {
-    const idx = line.indexOf(':');
-    if (idx < 0) continue;
-    const k = line.slice(0, idx).trim();
-    const v = line.slice(idx + 1).trim().replace(/^["']|["']$/g, '');
-    out[k] = v;
-  }
-  return out;
-}
-
-// PRD listing API: enumerates work folders under MEMORY/WORK and returns frontmatter metadata.
-ipcMain.handle('prds:list', () => {
-  const workDir = path.join(CLAUDE_DIR, 'MEMORY', 'WORK');
-  try {
-    const slugs = fs.readdirSync(workDir, { withFileTypes: true })
-      .filter((e) => e.isDirectory()).map((e) => e.name);
-    const prds = slugs.map((slug) => {
-      const dir = path.join(workDir, slug);
-      const prd = path.join(dir, 'PRD.md');
-      let fm = {}; let task = slug;
-      try { fm = parseFrontmatter(fs.readFileSync(prd, 'utf8')); task = fm.task || slug; } catch (_) {}
-      let mtime = 0;
-      try { mtime = fs.statSync(prd).mtimeMs || fs.statSync(dir).mtimeMs; } catch (_) {}
-      return { slug, task, phase: fm.phase || 'unknown', progress: fm.progress || '',
-               effort: fm.effort || '', started: fm.started || '', updated: fm.updated || '',
-               path: dir, prdPath: prd, mtime };
-    });
-    prds.sort((a, b) => b.mtime - a.mtime);
-    return { ok: true, prds };
-  } catch (err) { return { ok: false, error: err.message, prds: [] }; }
 });
 
 // Decode an encoded project dir name back to a real on-disk path. The CLI's
@@ -10054,7 +10103,6 @@ function listGeminiSessions(opts = {}) {
         named: !!summary,
         firstMessage: firstMessage || summary || '',
         hasContent,
-        prdSlug: '', prdPhase: '', prdProgress: '', prdPath: '',
         startedISO: new Date(startedMs).toISOString(),
         startedMs,
         sizeBytes: st.size,
@@ -10322,7 +10370,6 @@ function* copilotSessionRows(opts = {}) {
       // a user rename), not the first-user-message fallback.
       named: !!(name || eventTitle.generatedTitle),
       firstMessage,
-      prdSlug: '', prdPhase: '', prdProgress: '', prdPath: '',
       // Tab discovery prefers a session that carries content, since an empty one
       // can never earn a name.
       hasContent,
@@ -10365,6 +10412,10 @@ function codexHeadFacts(fullPath) {
   let project = '';
   let startedISO = '';
   let title = '';
+  // A rollout a running session spawned for a subagent or forked from another
+  // thread is not a conversation the user started; it inherits the parent's
+  // first message, so listing it would duplicate that session in the column.
+  let subagent = false;
   for (const line of readHead(fullPath, 262144).split('\n')) {
     if (!line.trim()) continue;
     let row;
@@ -10379,12 +10430,13 @@ function codexHeadFacts(fullPath) {
       if (payload.id) id = String(payload.id);
       if (payload.cwd) project = String(payload.cwd);
       if (payload.timestamp) startedISO = String(payload.timestamp);
+      if (payload.source && typeof payload.source === 'object' && payload.source.subagent) subagent = true;
     }
     if (!title && row.type === 'event_msg' && payload.type === 'user_message') {
       title = withoutBrainContext(String(payload.message || '')).trim();
     }
   }
-  return { id, project, startedISO, title: title.slice(0, 2000) };
+  return { id, project, startedISO, title: title.slice(0, 2000), subagent };
 }
 
 // Codex stores each conversation as a rollout JSONL under
@@ -10414,14 +10466,14 @@ function listCodexSessions() {
     try {
       head = sessionFacts.fill(sessionFileReads(fullPath, st), 'codex', () => codexHeadFacts(fullPath));
     } catch (_) { continue; }
-    const { id, project, startedISO, title } = head;
+    const { id, project, startedISO, title, subagent } = head;
+    if (subagent) continue;
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{3,120}$/.test(id)) continue;
     const startedMs = Date.parse(startedISO) || st.ctimeMs || st.mtimeMs;
     out.push({
       id, project, projectPath: project, originalCwd: project, path: fullPath,
       title: title.replace(/\s+/g, ' ').slice(0, 120) || 'Codex session',
-      named: false, firstMessage: title, prdSlug: '', prdPhase: '', prdProgress: '',
-      prdPath: '', startedISO: startedISO || new Date(startedMs).toISOString(),
+      named: false, firstMessage: title, startedISO: startedISO || new Date(startedMs).toISOString(),
       startedMs, sizeBytes: st.size, mtime: st.mtimeMs,
     });
   }
@@ -10544,35 +10596,6 @@ async function listAgentSessions(opts = {}) {
   // machine that has never run claude) and lists as empty.
   const projectsDir = path.join(CLAUDE_DIR, 'projects');
 
-  // Pre-load PRDs for matching by timestamp
-  let prds = [];
-  try {
-    const workDir = path.join(CLAUDE_DIR, 'MEMORY', 'WORK');
-    const slugs = fs.readdirSync(workDir, { withFileTypes: true }).filter((e) => e.isDirectory());
-    for (const s of slugs) {
-      const prdPath = path.join(workDir, s.name, 'PRD.md');
-      try {
-        const fm = parseFrontmatter(fs.readFileSync(prdPath, 'utf8'));
-        if (fm.started) {
-          prds.push({ slug: s.name, task: fm.task || s.name, phase: fm.phase || '', progress: fm.progress || '', startedMs: Date.parse(fm.started), prdPath });
-        }
-      } catch (_) {}
-    }
-  } catch (_) {}
-
-  // A PRD is created moments after the session that runs it starts, so match
-  // only near the session start rather than anywhere in its lifetime.
-  const PRD_MATCH_WINDOW_MS = 5 * 60_000;
-  function matchPrd(sessionStartMs) {
-    let best = null; let bestDiff = Infinity;
-    for (const p of prds) {
-      if (!isFinite(p.startedMs)) continue;
-      const diff = Math.abs(p.startedMs - sessionStartMs);
-      if (diff <= PRD_MATCH_WINDOW_MS && diff < bestDiff) { bestDiff = diff; best = p; }
-    }
-    return best;
-  }
-
   // Chats only, newest first. A print run or an autopilot worktree is dropped
   // before it can take a place under the cap.
   let hiddenAutopilot = 0;
@@ -10608,7 +10631,6 @@ async function listAgentSessions(opts = {}) {
       const firstMessage = (aiTitle || userMessage || queueContent || '').slice(0, 220);
 
       const sessionStartMs = startedISO ? Date.parse(startedISO) : st.mtimeMs;
-      const matchedPrd = matchPrd(sessionStartMs);
 
       // Authoritative cwd is what the JSONL recorded; fall back to decoded project name
       const cwdAuthoritative = originalCwd || decodeProjectPath(projName);
@@ -10619,15 +10641,11 @@ async function listAgentSessions(opts = {}) {
         projectPath: cwdAuthoritative,
         originalCwd: originalCwd || '',
         path: fullPath,
-        title: matchedPrd ? matchedPrd.task : firstMessage,
+        title: firstMessage,
         // True once the transcript carries a generated title, not just the
         // first user message standing in for one.
-        named: !!aiTitle || !!matchedPrd,
+        named: !!aiTitle,
         firstMessage: firstMessage || '',
-        prdSlug: matchedPrd ? matchedPrd.slug : '',
-        prdPhase: matchedPrd ? matchedPrd.phase : '',
-        prdProgress: matchedPrd ? matchedPrd.progress : '',
-        prdPath: matchedPrd ? matchedPrd.prdPath : '',
         startedISO: startedISO || new Date(st.mtimeMs).toISOString(),
         startedMs: sessionStartMs,
         sizeBytes: st.size,
@@ -10999,6 +11017,7 @@ function bgAgentJobState(shortId) {
       detail: typeof j.detail === 'string' ? j.detail.replace(/\s+/g, ' ').trim().slice(0, 160) : '',
       intent: typeof j.intent === 'string' ? j.intent.replace(/\s+/g, ' ').trim().slice(0, 400) : '',
       needs: typeof j.needs === 'string' ? j.needs.slice(0, 160) : '',
+      ask: j.block && Array.isArray(j.block.questions) && j.block.questions[0] && typeof j.block.questions[0].question === 'string' ? j.block.questions[0].question.slice(0, 240) : '',
       tokens: Number(j.tokens) || 0,
       updatedAt: Number(j.updatedAt) || 0,
     };
@@ -11148,6 +11167,8 @@ ipcMain.handle('bgAgents:list', async (_e, payload = {}) => {
       const transcript = bgFindTranscript(String(r.sessionId), String(r.cwd || '') || cwd);
       let lastActivityAt = 0;
       if (transcript) { try { lastActivityAt = Math.round(fs.statSync(transcript).mtimeMs); } catch (_) {} }
+      const parentSessionId = transcript ? bgAgentParent(String(r.sessionId), path.dirname(transcript)) : '';
+      const parentTranscript = parentSessionId ? bgFindTranscript(parentSessionId, String(r.cwd || '') || cwd) : '';
       return {
         id: shortId,
         sessionId: String(r.sessionId),
@@ -11165,14 +11186,17 @@ ipcMain.handle('bgAgents:list', async (_e, payload = {}) => {
         // resume a session anything is holding.
         held: pidAlive(r.pid),
         status: String(r.status || ''),
-        state: String(r.state || ''),
+        state: agentSettle(String(r.state || ''), Math.max(lastActivityAt, job.updatedAt || 0, Number(r.startedAt) || 0)),
         detail: job.detail || '',
         intent: job.intent || '',
-        needs: job.needs || '',
+        needs: agentDisplayNeeds(job.needs),
+        ask: job.ask || '',
         tokens: job.tokens || 0,
         startedAt: Number(r.startedAt) || 0,
         updatedAt: Math.max(job.updatedAt || 0, lastActivityAt),
-        parentSessionId: transcript ? bgAgentParent(String(r.sessionId), path.dirname(transcript)) : '',
+        parentSessionId,
+        // The prompt in the parent chat this agent was started under, by time.
+        prompt: parentTranscript ? Subagents.promptFor(Subagents.transcriptIndex(parentTranscript, subagentScanCache), { startedAt: Number(r.startedAt) || 0 }) : null,
         // An agent can be listed and running with nothing on disk yet, so the
         // caller must not treat a missing transcript as a missing agent.
         hasTranscript: !!transcript,
@@ -11200,7 +11224,16 @@ ipcMain.handle('bgAgents:list', async (_e, payload = {}) => {
       }, { cache: subagentScanCache, now, heads: subagentHeadCache }));
     } catch (_) {}
   }
-  return { ok: true, supported: true, controllable: true, agents: Subagents.describe(Subagents.retainLastBatch(fleet)), chats };
+  const listedFleet = Subagents.describe(Subagents.retainLastBatch(fleet));
+  for (const a of listedFleet) if (a && a.transcript) a.pulse = bgPulse(a.kind === 'subagent' ? a.transcript : bgConversation(a.transcript, a.sessionId));
+  // Blocked is the CLI's word for any agent waiting on a person; only a question
+  // or an approval needs one. An agent done with its work is ready instead.
+  for (const a of listedFleet) {
+    if (!a || a.state !== 'blocked') continue;
+    a.wait = agentWaitingOn({ needs: a.needs, ask: a.ask, pending: a.pulse && a.pulse.pending, said: (a.pulse && a.pulse.said) || a.detail });
+    if (a.wait.kind === 'ready') { a.state = 'ready'; a.running = false; a.needs = ''; }
+  }
+  return { ok: true, supported: true, controllable: true, agents: listedFleet, chats };
 });
 
 // The tail of one agent's conversation, compacted to what a human skims: what
@@ -11208,6 +11241,40 @@ ipcMain.handle('bgAgents:list', async (_e, payload = {}) => {
 // call off the transcript tail, so the detail pane can poll it while the agent
 // works and the feed moves in near real time.
 const BG_PEEK_TAIL_BYTES = 192 * 1024;
+
+// The last stretch of a transcript, starting on a whole line.
+function bgReadTail(transcript) {
+  const fd = fs.openSync(transcript, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0));
+  try {
+    const size = fs.fstatSync(fd).size;
+    const start = Math.max(0, size - BG_PEEK_TAIL_BYTES);
+    const buf = Buffer.alloc(Math.min(size, BG_PEEK_TAIL_BYTES));
+    const n = fs.readSync(fd, buf, 0, buf.length, start);
+    let text = buf.toString('utf8', 0, n);
+    // A mid-file start lands inside a line; drop the partial one.
+    if (start > 0) text = text.slice(text.indexOf('\n') + 1);
+    return { text, truncated: start > 0 };
+  } finally { fs.closeSync(fd); }
+}
+
+// Tool-call times per transcript, re-read only when the file has moved.
+const bgPulseCache = new Map();
+function bgPulse(transcript) {
+  if (!transcript) return null;
+  let st = null;
+  try { st = fs.statSync(transcript); } catch (_) { return null; }
+  const key = `${st.size}:${st.mtimeMs}`;
+  const hit = bgPulseCache.get(transcript);
+  if (hit && hit.key === key) return hit.pulse;
+  let pulse = null;
+  try {
+    const tail = bgReadTail(transcript);
+    pulse = pulseFromTranscript(tail.text, { truncated: tail.truncated });
+  } catch (_) { return null; }
+  if (bgPulseCache.size > 400) bgPulseCache.clear();
+  bgPulseCache.set(transcript, { key, pulse });
+  return pulse;
+}
 // The feed from Husk's own record of a chat, else from the CLI's session log
 // where Husk reads one. noPreview means neither exists for this CLI.
 function peekFromChatEvents(agent, sessionId, cwd) {
@@ -11241,79 +11308,12 @@ ipcMain.handle('bgAgents:peek', (_e, payload = {}) => {
     transcript = named;
   } else {
     if (!/^[0-9a-fA-F-]{16,}$/.test(sessionId)) return { ok: false, error: 'no session' };
-    transcript = bgFindTranscript(sessionId, cwd);
+    transcript = bgConversation(bgFindTranscript(sessionId, cwd), sessionId);
   }
   if (!transcript) return named ? { ok: true, entries: [], model: '', empty: true } : peekFromChatEvents('claude', sessionId, cwd);
-  let text = '';
-  let size = 0;
-  try {
-    const fd = fs.openSync(transcript, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK || 0));
-    try {
-      size = fs.fstatSync(fd).size;
-      const start = Math.max(0, size - BG_PEEK_TAIL_BYTES);
-      const buf = Buffer.alloc(Math.min(size, BG_PEEK_TAIL_BYTES));
-      const n = fs.readSync(fd, buf, 0, buf.length, start);
-      text = buf.toString('utf8', 0, n);
-      // A mid-file start lands inside a line; drop the partial one.
-      if (start > 0) text = text.slice(text.indexOf('\n') + 1);
-    } finally { fs.closeSync(fd); }
-  } catch (err) {
-    return { ok: false, error: err.message };
-  }
-  const entries = [];
-  let model = '';
-  const clip = (s, max) => {
-    const t = String(s || '').replace(/\s+/g, ' ').trim();
-    return t.length > max ? t.slice(0, max - 1) + '\u2026' : t;
-  };
-  // One-line summary of a tool call: the argument a human would use to name
-  // it. Paths keep their tail, the interesting part, rather than the noise
-  // of a temp prefix.
-  const toolArg = (input) => {
-    if (!input || typeof input !== 'object') return '';
-    for (const k of ['file_path', 'path']) {
-      if (typeof input[k] === 'string' && input[k]) {
-        const segs = input[k].split(/[\\/]/).filter(Boolean);
-        return clip(segs.slice(-2).join('/'), 72);
-      }
-    }
-    const keys = ['command', 'pattern', 'query', 'url', 'description', 'prompt'];
-    for (const k of keys) if (typeof input[k] === 'string' && input[k]) return clip(input[k], 80);
-    return '';
-  };
-  for (const line of text.split('\n')) {
-    if (!line || line.length > 2 * 1024 * 1024) continue;
-    let o = null;
-    try { o = JSON.parse(line); } catch (_) { continue; }
-    if (!o || typeof o !== 'object') continue;
-    const ts = o.timestamp ? Date.parse(o.timestamp) : 0;
-    if (o.type === 'user' && o.message) {
-      const c = o.message.content;
-      if (typeof c === 'string' && c.trim()) {
-        entries.push({ kind: 'user', text: clip(c, 200), ts });
-      } else if (Array.isArray(c)) {
-        for (const part of c) {
-          if (part && part.type === 'text' && String(part.text || '').trim()) {
-            entries.push({ kind: 'user', text: clip(part.text, 200), ts });
-            break;
-          }
-        }
-      }
-    } else if (o.type === 'assistant' && o.message) {
-      if (typeof o.message.model === 'string') model = o.message.model;
-      const c = o.message.content;
-      if (!Array.isArray(c)) continue;
-      for (const part of c) {
-        if (!part) continue;
-        if (part.type === 'text' && String(part.text || '').trim()) {
-          entries.push({ kind: 'assistant', text: clip(part.text, 240), ts });
-        } else if (part.type === 'tool_use') {
-          entries.push({ kind: 'tool', tool: clip(part.name, 40), text: toolArg(part.input), ts });
-        }
-      }
-    }
-  }
-  return { ok: true, entries: entries.slice(-24), model, empty: entries.length === 0 };
+  let tail = null;
+  try { tail = bgReadTail(transcript); } catch (err) { return { ok: false, error: err.message }; }
+  return { ok: true, ...peekFromTranscript(tail.text) };
 });
 
 // How to reach one agent, validated before it is handed back the way copilot and
@@ -11327,15 +11327,73 @@ ipcMain.handle('bgAgents:openCommand', (_e, payload = {}) => {
   // from. Found wherever it lives, so opening works from any project, and the
   // tab is told to start there instead of in the asking chat's directory.
   const hint = String((payload && payload.cwd) || activePtyCwd || '');
-  const transcript = sessionId ? bgFindTranscript(sessionId, hint) : '';
-  return bgOpenCommand({
+  const attach = !!(payload && payload.attach);
+  let transcript = sessionId ? bgFindTranscript(sessionId, hint) : '';
+  let resumeId = sessionId;
+  if (transcript && !attach) {
+    transcript = bgConversation(transcript, sessionId);
+    if (!bgHasTurns(transcript)) return { ok: false, error: 'That agent has no conversation to open yet' };
+    resumeId = path.basename(transcript, '.jsonl');
+  }
+  const plan = bgOpenCommand({
     id,
-    sessionId,
-    attach: !!(payload && payload.attach),
+    sessionId: resumeId,
+    attach,
     transcript,
     cwd: (transcript && bgTranscriptCwd(transcript)) || String((payload && payload.cwd) || ''),
   });
+  if (!plan.ok || plan.mode !== 'resume') return plan;
+  // The CLI refuses to resume in a folder that is gone; say so before anything is stopped.
+  if (plan.cwd && !fs.existsSync(plan.cwd)) return { ok: false, error: `The folder this agent worked in no longer exists: ${plan.cwd}` };
+  return { ...plan, sessionId: resumeId };
 });
+
+// Whether a transcript holds a conversation, not only the title rows a new session writes.
+function bgHasTurns(transcript) {
+  try {
+    if (fs.statSync(transcript).size > 64 * 1024) return true;
+    return /"type":"(?:user|assistant)"/.test(readHead(transcript, 64 * 1024));
+  } catch (_) { return false; }
+}
+
+// The transcript holding a session's conversation. A session continued in the
+// background has no turns of its own until it is prompted; its conversation is
+// the session it continued from.
+function bgConversation(transcript, sessionId) {
+  if (!transcript || bgHasTurns(transcript)) return transcript;
+  const from = bgContinuedFrom(sessionId, path.dirname(transcript));
+  return from ? path.join(path.dirname(transcript), `${from}.jsonl`) : transcript;
+}
+
+// The session whose transcript ends by naming this one as where it continued.
+const bgContinuedCache = new Map();
+function bgContinuedFrom(sessionId, dir) {
+  const hit = bgContinuedCache.get(sessionId);
+  if (hit && (hit.from || Date.now() - hit.at < 10000)) return hit.from;
+  const needle = `"continuedInSessionId":"${sessionId}"`;
+  let names = [];
+  let born = 0;
+  try {
+    names = fs.readdirSync(dir).filter((n) => n.endsWith('.jsonl') && n !== `${sessionId}.jsonl`);
+    const st = fs.statSync(path.join(dir, `${sessionId}.jsonl`));
+    born = Math.min(st.birthtimeMs || st.mtimeMs, st.mtimeMs);
+  } catch (_) { return ''; }
+  for (const name of names) {
+    const file = path.join(dir, name);
+    try {
+      // The marker is written as the session moves, so only files touched since then can hold it.
+      if (fs.statSync(file).mtimeMs < born - 5000) continue;
+      if (fs.readFileSync(file, 'utf8').includes(needle)) {
+        const from = name.slice(0, -'.jsonl'.length);
+        bgContinuedCache.set(sessionId, { from, at: Date.now() });
+        return from;
+      }
+    } catch (_) {}
+  }
+  if (bgContinuedCache.size > 400) bgContinuedCache.clear();
+  bgContinuedCache.set(sessionId, { from: '', at: Date.now() });
+  return '';
+}
 
 // End one agent. `stop` halts the worker and keeps the conversation; `remove`
 // discards the job and its worktree.
@@ -11377,19 +11435,8 @@ ipcMain.handle('sessions:rename', (_e, payload = {}) => {
   const names = (config.sessionNames && typeof config.sessionNames === 'object') ? { ...config.sessionNames } : {};
   if (name) names[agentId] = name; else delete names[agentId];
   config = { ...config, sessionNames: names };
-  try { fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 }); } catch (_) {}
+  saveConfig(config);
   return { ok: true, name };
-});
-
-// Reads a PRD, confined to the work directory.
-ipcMain.handle('sessions:read', (_e, prdPath) => {
-  if (typeof prdPath !== 'string' || !prdPath) return { ok: false, error: 'Missing path' };
-  const workDir = path.join(CLAUDE_DIR, 'MEMORY', 'WORK');
-  if (!isInside(workDir, prdPath) || !realPathInside(prdPath, workDir)) {
-    return { ok: false, error: 'Refusing to read outside the work directory' };
-  }
-  try { return { ok: true, content: fs.readFileSync(prdPath, 'utf8') }; }
-  catch (err) { return { ok: false, error: err.message }; }
 });
 
 // Permanently delete one or more claude session JSONL files.
@@ -11435,64 +11482,15 @@ ipcMain.handle('sessions:delete', async (_e, payload) => {
   return { ok: failed.length === 0, deleted, failed };
 });
 
-// Find the closest claude session (by file mtime/ctime) to a PRD's started timestamp.
-// Claude stores sessions at ~/.claude/projects/<encoded-cwd>/<UUID>.jsonl
-ipcMain.handle('sessions:findClaudeId', (_e, { startedISO, slug }) => {
-  const projectsDir = path.join(CLAUDE_DIR, 'projects');
-  const target = startedISO ? Date.parse(startedISO) : NaN;
-  if (!isFinite(target)) return { ok: false, error: 'No valid start timestamp on PRD' };
-
-  const candidates = [];
-  try {
-    const projects = fs.readdirSync(projectsDir, { withFileTypes: true })
-      .filter((e) => e.isDirectory());
-    for (const p of projects) {
-      const projPath = path.join(projectsDir, p.name);
-      let files = [];
-      try { files = fs.readdirSync(projPath); } catch (_) { continue; }
-      for (const f of files) {
-        if (!f.endsWith('.jsonl')) continue;
-        const id = f.slice(0, -6);
-        const full = path.join(projPath, f);
-        try {
-          const st = fs.statSync(full);
-          // Use min(ctime, mtime) so we approximate the session's original creation time.
-          const start = Math.min(st.ctimeMs, st.mtimeMs);
-          candidates.push({ id, project: p.name, path: full, start, mtime: st.mtimeMs });
-        } catch (_) {}
-      }
-    }
-  } catch (err) { return { ok: false, error: err.message }; }
-
-  if (!candidates.length) return { ok: false, error: 'No claude session files found in ~/.claude/projects/' };
-
-  // Find candidate with start closest to target (PRD started)
-  let best = null; let bestDiff = Infinity;
-  for (const c of candidates) {
-    const diff = Math.abs(c.start - target);
-    if (diff < bestDiff) { bestDiff = diff; best = c; }
-  }
-  // Threshold: within 10 minutes is a high-confidence match
-  const confident = bestDiff < 10 * 60 * 1000;
-  return {
-    ok: true,
-    id: best.id,
-    project: best.project,
-    path: best.path,
-    diffMs: bestDiff,
-    confident,
-  };
-});
-
 // ─── File system actions ─────────────────────────────────────────────────────────
 
 ipcMain.handle('fs:open', (_e, p) => { if (!p) return false; shell.openPath(p); return true; });
 
-// Files in the agent's "context" tray (~/.claude/MEMORY/CONTEXT/). Listed
+// Files in the agent's "context" tray (CONTEXT_DIR). Listed
 // under the Chat section in the rail so the user can see at a glance what
 // they have shared with the agent, click to re-inject, or remove.
 ipcMain.handle('context:list', () => {
-  const ctxDir = path.join(CLAUDE_DIR, 'MEMORY', 'CONTEXT');
+  const ctxDir = CONTEXT_DIR;
   try {
     if (!fs.existsSync(ctxDir)) return { ok: true, items: [] };
     const items = fs.readdirSync(ctxDir, { withFileTypes: true })
@@ -11510,17 +11508,17 @@ ipcMain.handle('context:list', () => {
 
 ipcMain.handle('context:remove', (_e, filePath) => {
   if (!filePath) return { ok: false, error: 'No path' };
-  const ctxDir = path.join(CLAUDE_DIR, 'MEMORY', 'CONTEXT');
-  // Only removes files inside the CONTEXT dir.
+  const ctxDir = CONTEXT_DIR;
+  // Only removes files inside the context dir.
   const resolved = path.resolve(filePath);
   if (!resolved.startsWith(path.resolve(ctxDir) + path.sep)) {
-    return { ok: false, error: 'Refusing to remove outside CONTEXT/' };
+    return { ok: false, error: 'Refusing to remove outside the context folder' };
   }
   try { fs.unlinkSync(resolved); return { ok: true }; }
   catch (err) { return { ok: false, error: err.message }; }
 });
 
-ipcMain.handle('fs:dropFile', async (_e, { sourcePath, kind }) => {
+registerInstallHandler('fs:dropFile', async (_e, { sourcePath, kind }) => {
   if (!sourcePath || typeof sourcePath !== 'string') return { ok: false, error: 'No source path' };
   if (!fs.existsSync(sourcePath)) return { ok: false, error: 'Source not found' };
   try {
@@ -11544,10 +11542,10 @@ ipcMain.handle('fs:dropFile', async (_e, { sourcePath, kind }) => {
       fs.mkdirSync(destDir);
       dest = path.join(destDir, 'SKILL.md');
     } else {
-      destDir = path.resolve(path.join(CLAUDE_DIR, 'MEMORY', 'CONTEXT'));
+      destDir = path.resolve(CONTEXT_DIR);
       const resolvedDest = path.resolve(path.join(destDir, baseName));
-      if (!resolvedDest.startsWith(destDir + path.sep)) return { ok: false, error: 'Refusing path outside CONTEXT/' };
-      fs.mkdirSync(destDir, { recursive: true });
+      if (!resolvedDest.startsWith(destDir + path.sep)) return { ok: false, error: 'Refusing path outside the context folder' };
+      fs.mkdirSync(destDir, { recursive: true, mode: 0o700 });
       dest = resolvedDest;
     }
     const buf = fs.readFileSync(sourcePath);
@@ -11581,6 +11579,15 @@ ipcMain.handle('fs:listDir', async (_e, { dir, showHidden }) => {
 });
 
 ipcMain.handle('fs:home', () => HOME);
+ipcMain.handle('fs:checkFolder', (_e, dir) => {
+  try { return { ok: typeof dir === 'string' && fs.statSync(dir).isDirectory() }; } catch (_) { return { ok: false }; }
+});
+ipcMain.handle('fs:recreateFolder', (_e, dir) => {
+  try {
+    if (typeof dir !== 'string' || !path.isAbsolute(dir)) return { ok: false, error: 'Choose an absolute folder path' };
+    fs.mkdirSync(dir, { recursive: true }); return { ok: true };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
 
 // ─── Files command-center IPC ────────────────────────────────────────────────
 // Backs the Files page: a fuzzy-searchable index, inline preview, and git
@@ -11837,6 +11844,7 @@ function gitRun(args, opts) {
     const settle = (err, stdout, stderr) => resolve({
       ok: !err,
       code: err && typeof err.code === 'number' ? err.code : (err ? 1 : 0),
+      errorCode: err && typeof err.code === 'string' ? err.code : '',
       stdout: typeof stdout === 'string' ? stdout : '',
       stderr: typeof stderr === 'string' ? stderr : '',
       timedOut: !!(err && (err.killed || err.signal)),
@@ -11856,6 +11864,9 @@ function gitRun(args, opts) {
     }
   });
 }
+
+const gitSetup = require('./lib/git-setup').createGitSetup({ run: gitRun });
+ipcMain.handle('git:available', (_e, { refresh } = {}) => gitSetup.available(!!refresh));
 
 // Async forms of gitOut/gitLine, used by the hot read handlers (git:repo,
 // git:status) so a slow git on the 3s source-control poll or a file-watch burst
@@ -12038,7 +12049,9 @@ ipcMain.handle('git:repo', async (_e, { root } = {}) => {
   if (typeof root !== 'string' || !root) return { ok: false, error: 'root required' };
   const rootAbs = path.resolve(root);
   try {
-    if (await gitOutA(['-C', rootAbs, 'rev-parse', '--git-dir']) === null) return { ok: true, isRepo: false };
+    const git = await gitSetup.available();
+    if (!git.available) return { ok: true, isRepo: false, gitAvailable: false, gitMessage: git.error };
+    if (await gitOutA(['-C', rootAbs, 'rev-parse', '--git-dir']) === null) return gitSetup.nonRepository(rootAbs);
     const gitDir = await gitLineA(['-C', rootAbs, 'rev-parse', '--absolute-git-dir']) || '';
     const toplevel = await gitLineA(['-C', rootAbs, 'rev-parse', '--show-toplevel']) || rootAbs;
     const branch = await gitLineA(['-C', rootAbs, 'symbolic-ref', '--quiet', '--short', 'HEAD']);
@@ -12100,8 +12113,10 @@ ipcMain.handle('git:status', async (_e, { root } = {}) => {
   const readAt = Date.now();
   const big = { timeout: 6000, maxBuffer: 16 * 1024 * 1024 };
   try {
+    const git = await gitSetup.available();
+    if (!git.available) return { ok: true, isRepo: false, gitAvailable: false, gitMessage: git.error, porcelain: '' };
     if (await gitOutA(['-C', rootAbs, 'rev-parse', '--git-dir']) === null) {
-      return { ok: true, isRepo: false, porcelain: '', numstat: { staged: [], unstaged: [] }, mtimes: {}, truncated: false, readAt };
+      return { ...await gitSetup.nonRepository(rootAbs), porcelain: '', numstat: { staged: [], unstaged: [] }, mtimes: {}, truncated: false, readAt };
     }
     const raw = await gitOutA(['-C', rootAbs, 'status', '--porcelain=v1', '--untracked-files=all', '--renames'], big);
     if (raw === null) return { ok: false, error: 'could not read status' };
@@ -12658,19 +12673,35 @@ ipcMain.handle('git:openRemote', async (_e, { root, kind, ref, rel, line, sha } 
 
 // The one write reachable from the empty state. The branch name is a literal
 // here, and a folder that already sits inside a repository is refused.
+// Initialization also accepts an open chat folder without registering it as a project.
+function chatFolderGate(root) {
+  if (typeof root !== 'string' || !root) return { ok: false, error: 'Choose a working folder first.' };
+  let resolved;
+  try { resolved = fs.realpathSync(path.resolve(root)); if (!fs.statSync(resolved).isDirectory()) return { ok: false, error: 'The working folder is no longer a directory.' }; } catch (_) { return { ok: false, error: 'Working folder not found.' }; }
+  if (resolved === path.parse(resolved).root || resolved === fs.realpathSync(HOME) || isAutopilotWorkspacePath(resolved)) return { ok: false, code: 'ineligible', error: 'Choose a project folder.' };
+  const allowed = [...chatRuntime.list().map(c => c.cwd), ..._projectsList().map(p => p && p.path)].filter(Boolean);
+  if (!allowed.some(p => { try { return fs.realpathSync(p) === resolved; } catch (_) { return false; } })) return { ok: false, code: 'ineligible', error: 'This folder is not an open chat or project.' };
+  return { ok: true, root: resolved };
+}
+
+const folderChanges = require('./lib/folder-changes').createFolderChanges();
+for (const action of ['begin', 'finish', 'status', 'diff']) {
+  ipcMain.handle('folderChanges:' + action, async (_e, input = {}) => {
+    const gate = chatFolderGate(input.root);
+    if (!gate.ok) return gate;
+    try { return await folderChanges[action](gate.root, action === 'diff' ? input.rel : input.id); }
+    catch (_) { return { ok: false, error: 'Could not compare the working folder.' }; }
+  });
+}
+
 ipcMain.handle('git:init', async (_e, { root, confirm } = {}) => {
-  const gate = gitMutateGate(root);
+  let gate = gitMutateGate(root);
+  if (!gate.ok) gate = chatFolderGate(root);
   if (!gate.ok) return gate;
   const rootAbs = gate.root;
   if (confirm !== true) return { ok: false, error: 'initializing needs a confirmation' };
-  try {
-    if (gitOut(['-C', rootAbs, 'rev-parse', '--show-toplevel']) !== null) {
-      return { ok: false, error: 'this folder is already in a repository' };
-    }
-    const r = await gitRun(['-C', rootAbs, 'init', '-b', 'main'], { timeout: 10000 });
-    if (!r.ok) return { ok: false, error: 'could not initialize a repository here', detail: scDetail(r.stderr) };
-    return { ok: true, toplevel: gitLine(['-C', rootAbs, 'rev-parse', '--show-toplevel']) || rootAbs };
-  } catch (_) { return { ok: false, error: 'could not initialize a repository here' }; }
+  try { return await gitSetup.initialize(rootAbs); }
+  catch (_) { return { ok: false, error: 'Could not initialize Git. Check the folder and try again.' }; }
 });
 
 // One watcher per window, on the resolved git directory only and never on the
@@ -12982,12 +13013,13 @@ ipcMain.handle('voice:uninstall', async () => {
 //   AppImage      full auto-update (the AppImage runtime swaps in the new image)
 //   macOS dmg     auto-update requires signing. On unsigned builds we surface
 //                 the new version + a 'Download from GitHub' button, no install.
-//   deb / rpm     not auto-updatable; same fallback as unsigned macOS.
+//   deb / rpm     install through the system package manager with authorization.
 //   dev mode      autoUpdater is disabled by electron-updater itself.
 //
-// Status events are pushed to the renderer over 'update:status'. The renderer
-// renders a small version pill in the topbar that picks the right CTA based
-// on which state we are in.
+// Status events are pushed to the renderer over 'update:status'. A pending
+// update marks the topbar Help button and its menu from every page, a one-time
+// notice announces each new release, and Preferences > About carries the CTA
+// for whichever state we are in.
 
 let updaterInstance = null;
 let updaterInitialTimer = null;
@@ -12997,7 +13029,7 @@ function stopAutoUpdater() {
   if (updaterInitialTimer) { clearTimeout(updaterInitialTimer); updaterInitialTimer = null; }
   if (updaterPeriodicTimer) { clearInterval(updaterPeriodicTimer); updaterPeriodicTimer = null; }
 }
-let updateState = { status: 'idle', current: app.getVersion() };
+let updateState = { status: 'idle', current: PKG.version };
 let updateInstallAttempted = false;
 
 function sendUpdateStatus(extra = {}) {
@@ -13165,11 +13197,11 @@ ipcMain.handle('update:open-release', (_e, url) => {
 // Open an http(s) URL in the user's default browser. Used by the
 // terminal link click handler (xterm WebLinksAddon) and any future
 // in-renderer surface that needs to surface a clickable URL.
-ipcMain.handle('urls:openExternal', (_e, url) => {
+ipcMain.handle('urls:openExternal', async (_e, url) => {
   if (typeof url !== 'string') return { ok: false, error: 'invalid url' };
   if (!/^https?:\/\//i.test(url)) return { ok: false, error: 'unsupported scheme' };
-  shell.openExternal(url).catch(() => {});
-  return { ok: true };
+  try { await shell.openExternal(url); return { ok: true }; }
+  catch (err) { return { ok: false, error: err.message || 'Could not open your browser.' }; }
 });
 
 // ─── Lifecycle ────────────────────────────────────────────────────────────────────
@@ -13190,9 +13222,32 @@ installFoundation = require('./lib/install-foundation').registerFoundation({
   agentDir: path.join(CLAUDE_DIR, 'agents'), skillsDir: SHARED_SKILLS_DIR, promptsDir: HUSK_PROMPTS_DIR,
   prepareSkills: prepareSharedSkills, resolveAgents: resolveRepoAgentsDir,
   listWorkflows: () => loadWorkflows(),
+  storePath: path.join(CONFIG_DIR, 'scan-results.json'),
+  listLibrary: () => {
+    const ScanGate = require('./lib/scan-gate');
+    let servers = [];
+    try { servers = SharedMcp.list(activeAgentCommand(), { sync: false }).servers || []; } catch (_) {}
+    return [
+      ...ScanGate.skillItems(listClaudeSkills(), fs),
+      ...ScanGate.agentItems(getProfiles()),
+      ...ScanGate.workflowItems(loadWorkflows()),
+      ...ScanGate.mcpItems(servers),
+    ];
+  },
+  readAgentPicks: (picks) => {
+    const byLabel = new Map(AGENT_SOURCES.map((s) => [s.label, s]));
+    const out = [];
+    for (const pick of picks) {
+      const src = byLabel.get(pick && pick.source);
+      const fname = String((pick && pick.filename) || '');
+      if (!src || !/^[^/\\]+\.md$/.test(fname) || fname.includes('..')) continue;
+      try { out.push({ path: `agents/${fname}`, content: fs.readFileSync(path.join(src.dir, fname)) }); } catch (_) {}
+    }
+    return out;
+  },
   workflowExport: (id) => {
     const workflow = loadWorkflows().find((w) => w.id === id);
-    const built = WorkflowArtifact.buildArtifact(workflow, { huskVersion: app.getVersion() });
+    const built = WorkflowArtifact.buildArtifact(workflow, { huskVersion: PKG.version });
     return built.ok ? built.artifact : null;
   },
 });
@@ -13227,6 +13282,7 @@ if (!gotLock) {
   process.on('unhandledRejection', (err) => { try { console.error('[husk] unhandledRejection:', err); } catch (_) {} });
 
   app.whenReady().then(async () => {
+    try { app.setAboutPanelOptions({ applicationName: 'Husk', applicationVersion: PKG.version, website: DOCS_URL }); } catch (_) {}
     // Secret fields decrypt once the keychain is reachable; a plain one on disk is re-written sealed.
     {
       const opened = ConfigSecrets.unsealConfig(config, configKeychain);
