@@ -99,7 +99,7 @@ test('a pasted snippet installs its new servers and reports only the collision',
       { id: 'brand-new', transport: 'stdio', command: 'npx', args: ['-y', 'thing'] },
     ]));
 
-    await win.getByRole('dialog', { name: 'Review installation' }).getByRole('button', { name: 'Install after review' }).click();
+    await win.getByRole('dialog', { name: 'Security check' }).getByRole('button', { name: 'Use it anyway' }).click();
     const res = await installing;
 
     expect(res.results.filesystem.status, 'the collision was reported as installed').toBe('error');

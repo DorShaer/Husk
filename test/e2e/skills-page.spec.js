@@ -406,6 +406,10 @@ test('a skill you already have can be imported from disk', async () => {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [p] });
     }, src);
     await win.click('#btn-skills-import');
+    // No scanner is connected, so the import says so and waits for an answer.
+    const check = win.getByRole('dialog', { name: 'Security check' });
+    await expect(check).toContainText('This skill was not checked');
+    await check.getByRole('button', { name: 'Use it anyway' }).click();
     await expect.poll(
       () => fs.existsSync(path.join(skillsDir, 'handover', 'SKILL.md')),
       { timeout: 10_000 },
