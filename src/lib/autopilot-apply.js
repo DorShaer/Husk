@@ -14,6 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { STATUS_FILE } = require('./autopilot-status');
+const { readBoundedFile } = require('./bounded-file');
 const { realParentInside, realPathInside } = require('./path-confine');
 
 // A change entry is { path: <relative>, status: 'added'|'modified'|'deleted' },
@@ -122,8 +123,8 @@ function fingerprintAt(root, rel) {
   // eslint-disable-next-line security/detect-non-literal-fs-filename -- same confined path, read as a link
   if (st.isSymbolicLink()) { try { return 'link:' + fs.readlinkSync(abs); } catch (_) { return 'other'; } }
   if (!st.isFile()) return 'other';
-  // eslint-disable-next-line security/detect-non-literal-fs-filename -- same confined path, a regular file per lstat
-  try { return crypto.createHash('sha256').update(fs.readFileSync(abs)).digest('hex'); } catch (_) { return 'other'; }
+  // Read through the descriptor checked against the lstat above, so a swap cannot redirect it.
+  try { return crypto.createHash('sha256').update(readBoundedFile(abs, Number.MAX_SAFE_INTEGER)).digest('hex'); } catch (_) { return 'other'; }
 }
 
 // The run's starting state for rel from its snapshot manifest entries.
