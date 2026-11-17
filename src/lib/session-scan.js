@@ -11,6 +11,7 @@ const MESSAGE_KEEP = 400;
 
 function readHead(filePath, bytes) {
   const buf = Buffer.alloc(bytes);
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- a transcript under the agent's projects folder
   const fd = fs.openSync(filePath, 'r');
   try { return buf.toString('utf8', 0, fs.readSync(fd, buf, 0, bytes, 0)); }
   finally { fs.closeSync(fd); }
@@ -20,6 +21,7 @@ function readHead(filePath, bytes) {
 function authorship(fullPath, size) {
   if (size > WHOLE_SCAN_CAP) return null;
   let text;
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- a transcript under the agent's projects folder
   try { text = fs.readFileSync(fullPath, 'utf8'); } catch (_) { return null; }
   const out = { human: false, sdk: false, stream: false };
   for (const line of text.split('\n')) {
@@ -101,17 +103,20 @@ function scanTranscript(fullPath, size) {
 // how many transcripts past the cap were left unread.
 function* claudeTranscripts(projectsDir, { cap = 300, reads = () => ({}), accept = () => true } = {}) {
   let projects = [];
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- the agent's projects folder
   try { projects = fs.readdirSync(projectsDir, { withFileTypes: true }).filter((e) => e.isDirectory()); }
   catch (_) { return Object.assign([], { older: 0 }); }
   const candidates = [];
   for (const proj of projects) {
     const projPath = path.join(projectsDir, proj.name);
     let files = [];
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- the agent's projects folder
     try { files = fs.readdirSync(projPath); } catch (_) { continue; }
     for (const f of files) {
       if (!f.endsWith('.jsonl')) continue;
       const fullPath = path.join(projPath, f);
       let st;
+      // eslint-disable-next-line security/detect-non-literal-fs-filename -- a transcript under the agent's projects folder
       try { st = fs.statSync(fullPath); } catch (_) { continue; }
       if (!st.isFile() || st.size === 0) continue;
       candidates.push({ id: f.slice(0, -6), project: proj.name, fullPath, st });
@@ -170,6 +175,7 @@ function realPath(p) {
   let tail = '';
   let out = head;
   for (;;) {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- resolving a folder the CLI reported
     try { out = path.join(fs.realpathSync(head), tail); break; } catch (_) {}
     const up = path.dirname(head);
     if (up === head) break;
