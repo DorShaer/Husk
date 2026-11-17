@@ -16,6 +16,7 @@ const JOINER = /^(?:\u200D|\uFE0F|\u20E3|\p{Emoji_Modifier})$/u;
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 function termRe(p) {
+  // eslint-disable-next-line security/detect-non-literal-regexp -- the term is escaped
   return new RegExp(`(?<!${WORD})${escapeRe(p.term)}(?!${WORD})`, p.caseSensitive ? 'gu' : 'giu');
 }
 
