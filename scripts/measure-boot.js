@@ -10,7 +10,8 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
-const { _electron: electron } = require('@playwright/test');
+const electron = require('electron');
+const execFileAsync = require('node:util').promisify(require('node:child_process').execFile);
 const { seedClaude, seedCopilot } = require('../test/helpers/session-fixture');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -37,46 +38,29 @@ function makeHome(count) {
 async function run(home, seconds, label) {
   const t0 = Date.now();
   const reportFile = path.join(home, 'boot-' + label + '.json');
-  const app = await electron.launch({
-    args: ['-r', PROBE, path.join(ROOT, 'src', 'main.js'), '--no-sandbox'],
+  await execFileAsync(electron, [PROBE, '--no-sandbox'], {
     cwd: ROOT,
     env: {
       ...process.env, HOME: home, USERPROFILE: home, ELECTRON_DISABLE_SANDBOX: '1', HUSK_E2E: '1',
       HUSK_BOOT_RESULT: reportFile, HUSK_BOOT_SECONDS: String(seconds),
       ...(process.env.HUSK_BOOT_PROFILE ? { HUSK_BOOT_PROFILE: `${process.env.HUSK_BOOT_PROFILE}.${label}` } : {}),
     },
-    timeout: 60_000,
+    timeout: (seconds + 90) * 1000, killSignal: 'SIGKILL',
   });
-  try {
-    const win = await app.firstWindow({ timeout: 60_000 });
-    await win.waitForLoadState('domcontentloaded');
-    const windowMs = Date.now() - t0;
-    const listed = await win.evaluate(async () => {
-      const t = performance.now();
-      const [r] = await Promise.all([window.husk.sessions.list({}), window.husk.agents.detect()]);
-      const all = await window.husk.sessions.list({ agent: 'claude', selectedOnly: true, limit: 20000 });
-      return { ms: Math.round(performance.now() - t), count: (r.sessions || []).length, claude: all.sessions.length, olderUnread: all.olderUnread };
-    });
-    const deadline = Date.now() + (seconds + 15) * 1000;
-    while (!fs.existsSync(reportFile)) {
-      if (Date.now() > deadline) throw new Error('main process did not finish the startup probe');
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    const { mark, blocks } = JSON.parse(fs.readFileSync(reportFile, 'utf8'));
-    const top = blocks.slice().sort((a, b) => b.ms - a.ms).slice(0, 5);
-    const report = {
-      label, windowMs, sessionsListMs: listed.ms, sessions: listed.count, claudeAll: listed.claude, olderUnread: listed.olderUnread,
-      maxAfterWindowMs: Math.max(0, ...blocks.filter((b) => b.at - b.ms > mark).map((b) => b.ms)),
-      maxBlockMs: top.length ? top[0].ms : 0,
-      blocksOver100: blocks.filter((b) => b.ms > 100).length,
-      totalBlockedMs: blocks.reduce((n, b) => n + b.ms, 0),
-      top,
-    };
-    console.log(JSON.stringify(report));
-    return report;
-  } finally {
-    await app.close();
-  }
+  const { mark, blocks, listed, windowAt } = JSON.parse(fs.readFileSync(reportFile, 'utf8'));
+  const windowMs = windowAt - t0;
+  const top = blocks.slice().sort((a, b) => b.ms - a.ms).slice(0, 5);
+  const report = {
+    label, windowMs, sessionsListMs: listed.ms, sessions: listed.count, claudeAll: listed.claude, olderUnread: listed.olderUnread,
+    maxAfterWindowMs: Math.max(0, ...blocks.filter((b) => b.at - b.ms > mark).map((b) => b.ms)),
+    maxBlockMs: top.length ? top[0].ms : 0,
+    blocksOver100: blocks.filter((b) => b.ms > 100).length,
+    totalBlockedMs: blocks.reduce((n, b) => n + b.ms, 0),
+    top,
+  };
+  console.log(JSON.stringify(report));
+  return report;
+
 }
 
 async function main() {

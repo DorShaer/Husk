@@ -38,12 +38,20 @@ if (out) {
 require('electron').app.once('browser-window-created', (_event, win) => {
   win.webContents.once('dom-ready', () => {
     const mark = performance.now();
-    setTimeout(async () => {
-      if (globalThis.__huskStopProfile) await globalThis.__huskStopProfile();
-      const fs = require('node:fs');
-      const file = process.env.HUSK_BOOT_RESULT;
-      fs.writeFileSync(file + '.tmp', JSON.stringify({ mark, blocks }));
-      fs.renameSync(file + '.tmp', file);
-    }, Number(process.env.HUSK_BOOT_SECONDS) * 1000);
+    const windowAt = Date.now();
+    const listed = win.webContents.executeJavaScript(`(async () => {
+      const t = performance.now();
+      const [r] = await Promise.all([window.husk.sessions.list({}), window.husk.agents.detect()]);
+      const all = await window.husk.sessions.list({ agent: 'claude', selectedOnly: true, limit: 20000 });
+      return { ms: Math.round(performance.now() - t), count: r.sessions.length, claude: all.sessions.length, olderUnread: all.olderUnread };
+    })()`);
+    Promise.all([listed, new Promise(resolve => setTimeout(resolve, Number(process.env.HUSK_BOOT_SECONDS) * 1000))])
+      .then(async ([sessions]) => {
+        if (globalThis.__huskStopProfile) await globalThis.__huskStopProfile();
+        require('node:fs').writeFileSync(process.env.HUSK_BOOT_RESULT, JSON.stringify({ mark, blocks, listed: sessions, windowAt }));
+        win.close();
+      }).catch(err => { console.error(err); require('electron').app.exit(1); });
   });
 });
+
+require('../../src/main');
