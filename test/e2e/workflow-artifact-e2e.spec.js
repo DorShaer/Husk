@@ -85,7 +85,7 @@ test.afterEach(async () => {
 });
 
 
-test('a workflow exports, re-imports, installs, gates, runs, and leaves evidence', async () => {
+test('a workflow file imports, installs, gates, runs, and leaves evidence', async () => {
   test.setTimeout(180000);
   const env = boot();
   const app = await launch(env);
@@ -95,10 +95,12 @@ test('a workflow exports, re-imports, installs, gates, runs, and leaves evidence
 
   const target = path.join(env.homeDir, 'shared.husk.json');
 
-  // 1. Export. targetPath skips the native dialog, which cannot be driven here.
-  const exported = await win.evaluate((p) => window.husk.workflows.export({ workflowId: 'wf-src', targetPath: p }), target);
-  expect(exported.ok, `export refused: ${JSON.stringify(exported)}`).toBe(true);
-  expect(fs.existsSync(target)).toBe(true);
+  // 1. Write the file. Export is out of this release, so the artifact is built
+  // with the same library the export handler uses.
+  const exported = require('../../src/lib/workflow-artifact').buildArtifact(
+    { id: 'wf-src', name: 'Triage and patch', trigger: 'manual', graph: GRAPH }, { huskVersion: '9.9.9' });
+  expect(exported.ok, `build refused: ${JSON.stringify(exported)}`).toBe(true);
+  fs.writeFileSync(target, JSON.stringify(exported.artifact));
 
   // 2. Read it back the way an importer would.
   const read = await win.evaluate((p) => window.husk.workflows.artifactRead({ source: 'file', path: p }), target);
@@ -116,7 +118,7 @@ test('a workflow exports, re-imports, installs, gates, runs, and leaves evidence
 
   // 4. Install.
   const installing = win.evaluate(([a, cwd]) => window.husk.workflows.install({ artifact: a, cwd }), [read.artifact, env.proj]);
-  await win.getByRole('dialog', { name: 'Review installation' }).getByRole('button', { name: 'Install after review' }).click();
+  await win.getByRole('dialog', { name: 'Security check' }).getByRole('button', { name: 'Use it anyway' }).click();
   const inst = await installing;
   expect(inst.ok, `install refused: ${JSON.stringify(inst)}`).toBe(true);
   const newId = inst.workflow.id;
@@ -155,15 +157,10 @@ test('a workflow exports, re-imports, installs, gates, runs, and leaves evidence
   expect(mine.length, 'run history has no row for this workflow').toBeGreaterThan(0);
   expect(mine[0].graphHash, 'a recorded run carries no fingerprint, so no receipt can ever name it').toBe(read.artifact.graphHash);
 
-  // 8. Publishing it back out must now carry a receipt rather than an empty list.
-  await win.evaluate((id) => { window.__wfId = id; }, newId);
-  const rp = await win.evaluate((p) => window.husk.workflows.export({ workflowId: window.__wfId, targetPath: p }),
+  // 8. Export is held back by the release scope, so its channel is not registered.
+  const rp = await win.evaluate((p) => window.husk.workflows.export({ workflowId: 'wf-src', targetPath: p }).then(() => 'answered', () => 'unregistered'),
     path.join(env.homeDir, 'republished.husk.json'));
-  expect(rp.ok, `republish refused: ${JSON.stringify(rp)}`).toBe(true);
-  expect(Array.isArray(rp.artifact.receipts)).toBe(true);
-  expect(rp.artifact.receipts.length, 'a workflow with a completed run still publishes zero receipts').toBeGreaterThan(0);
-  expect(rp.artifact.receipts[0].graphHash).toBe(read.artifact.graphHash);
-  expect(rp.artifact.receipts[0].runs).toBeGreaterThan(0);
+  expect(rp).toBe('unregistered');
 
   await app.close();
 });

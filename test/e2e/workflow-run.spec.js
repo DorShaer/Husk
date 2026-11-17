@@ -82,6 +82,13 @@ test('the run plays out on the graph and each node has its own terminal', async 
 
     await win.waitForFunction(() => document.querySelector('#wf-run-canvas .wf-rn-node.is-running'), null, { timeout: 20000 });
 
+    await win.locator('#wf-run-canvas .wf-rn-node.is-running').hover();
+    await expect(win.locator('#wf-run-canvas .wf-rn-open')).toHaveCount(0);
+    fs.mkdirSync('/tmp/husk-node-branch-fixes', { recursive: true });
+    await win.waitForTimeout(250);
+    const hoverPng = await app.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0].capturePage()).toPNG().toString('base64'));
+    fs.writeFileSync('/tmp/husk-node-branch-fixes/workflow-hover.png', Buffer.from(hoverPng, 'base64'));
+
     await win.click('#wf-run-canvas .wf-rn-node.is-running');
     await win.waitForSelector('#wf-term:not([hidden])', { timeout: 10000 });
     await win.waitForFunction(() => {
