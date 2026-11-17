@@ -5,6 +5,7 @@
 // which the gate treats as review.
 
 const path = require('node:path');
+const { readBoundedFile } = require('./bounded-file');
 
 const SCAN_TIMEOUT_MS = 30000;
 const MAX_REPORT_BYTES = 4 * 1024 * 1024;
@@ -114,8 +115,12 @@ function scanArtifact(opts = {}) {
       if (err && typeof err.code !== 'number') return done(unscanned('crashed'));
       let parsed;
       try {
-        if (fs.statSync(outFile).size > MAX_REPORT_BYTES) return done(unscanned('unreadable-report'));
-        parsed = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+        let bytes;
+        try { bytes = readBoundedFile(outFile, MAX_REPORT_BYTES, fs); } catch (e) {
+          if (/byte limit/.test(e.message)) return done(unscanned('unreadable-report'));
+          throw e;
+        }
+        parsed = JSON.parse(bytes.toString('utf8'));
       } catch (_) { return done(unscanned(err ? 'crashed' : 'unreadable-report')); }
       const report = readReport(parsed);
       if (!report) return done(unscanned('unreadable-report'));
