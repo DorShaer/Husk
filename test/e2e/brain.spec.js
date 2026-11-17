@@ -124,7 +124,7 @@ test('the Brain learns, recalls into a prompt, signals on the rail and remembers
     // The counts say what is here; nothing has been asked yet.
     await expect(win.locator('#br-stats .br-stat')).toHaveCount(8);
     await expect(win.locator('#br-stats .br-stat').nth(0)).toContainText('2');
-    await expect(win.locator('#br-stats .br-stat').nth(6)).toContainText('–');
+    await expect(win.locator('#br-stats .br-stat').nth(6)).toContainText('-');
     // A file lists what was learned from it, and a passage leads back to its file.
     await win.locator('#br-list .br-row[data-kind="file"]').click();
     await expect(win.locator('#br-detail')).toContainText('1 passage learned');

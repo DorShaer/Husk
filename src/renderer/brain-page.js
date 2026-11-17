@@ -540,7 +540,7 @@
       ['What the Brain has done', [
         ['Prompts seen', compact(st.prompts), 'Prompts the Brain looked at, across all workspaces',
           st.prompts ? `${compact(st.recalled)} woke a memory` : 'None yet'],
-        ['Hit rate', st.prompts ? rate + '%' : '–', 'Share of those prompts that woke at least one memory',
+        ['Hit rate', st.prompts ? rate + '%' : '-', 'Share of those prompts that woke at least one memory',
           st.prompts ? 'of prompts seen' : 'No prompts yet', meter(rate)],
         ['Tokens added', st.chars ? '~' + compact(Math.round(st.chars / 4)) : '0', 'Rough size, in tokens, of everything recalled into prompts so far',
           st.chars && st.recalled ? `~${compact(Math.round(st.chars / 4 / st.recalled))} per recall` : 'Nothing yet'],
