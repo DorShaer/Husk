@@ -7,7 +7,7 @@ const os = require('node:os');
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
-test('Ctrl+R reloads the window on every page and keeps the live chat session', async () => {
+test('reload shortcuts preserve the live session and yield Ctrl+R to a terminal', async () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-e2e-copilot-reload-'));
   fs.mkdirSync(path.join(homeDir, '.config', 'husk'), { recursive: true });
   fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify({
@@ -83,10 +83,7 @@ setInterval(() => {}, 1000);
   const dirs = fs.readdirSync(path.join(homeDir, '.copilot', 'session-state')).sort();
   expect(dirs).toEqual(beforeDirs);
 
-  // On the chat page too, Ctrl+R now reloads the window and reattaches to the
-  // live session, rather than restarting the agent into a fresh one. So the
-  // renderer context is replaced (the sentinel is gone), no second Copilot
-  // session is spawned, and the surviving PTY is reattached in place.
+  // Terminal Ctrl+R belongs to shell history; Ctrl+Shift+R reloads the window.
   await win.evaluate(() => {
     setPage('chat');
     window.__huskNoReloadSentinel = 'chat-before';
@@ -95,7 +92,9 @@ setInterval(() => {}, 1000);
   await win.bringToFront();
   await win.click('body');
   await win.keyboard.press('Control+R');
-  await win.waitForFunction(() => typeof TABS !== 'undefined' && TABS.size === 1 && bootingFromReloadState === null, null, { timeout: 15_000 });
+  expect(await win.evaluate(() => window.__huskNoReloadSentinel)).toBe('chat-before');
+  await win.keyboard.press('Control+Shift+R');
+  await win.waitForFunction(() => typeof TABS !== 'undefined' && TABS.size === 1 && bootingFromReloadState === null && window.__huskNoReloadSentinel === undefined, null, { timeout: 15_000 });
 
   const afterReload = await win.evaluate(async () => {
     const live = await window.husk.pty.list();

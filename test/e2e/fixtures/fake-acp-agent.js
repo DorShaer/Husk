@@ -142,7 +142,7 @@ function handle(msg) {
       break;
     case 'session/new': {
       const sessionId = 'fake-' + (++sessionCounter);
-      send({ jsonrpc: '2.0', id: msg.id, result: { sessionId, modes: { availableModes: [{ id: 'default', name: 'Default', description: 'Asks first' }], currentModeId: 'default' }, models: { availableModels: [{ modelId: 'fake-1', name: 'Fake 1' }, { modelId: 'fake-2', name: 'Fake 2', description: 'The other one' }], currentModelId: 'fake-1' } } });
+      send({ jsonrpc: '2.0', id: msg.id, result: { sessionId, modes: { availableModes: [{ id: 'default', name: 'Default', description: 'Asks first' }], currentModeId: 'default' }, models: { availableModels: [{ modelId: 'fake-1', name: 'Fake 1' }, { modelId: 'fake-2', name: 'Fake 2', description: 'The other one' }], currentModelId: process.env.FAKE_ACP_NO_MODEL ? null : 'fake-1' } } });
       notify(sessionId, { sessionUpdate: 'available_commands_update', availableCommands: [{ name: 'help', description: 'Show help' }].concat('abcdefghijkl'.split('').map((ch) => ({ name: ch + 'cmd', description: 'Command ' + ch.toUpperCase() }))) });
       break;
     }

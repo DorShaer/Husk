@@ -315,8 +315,14 @@ test('an agent that exits on its own offers Restart in the composer, and Restart
   await expect(pane.locator('.chat-send')).toBeHidden();
   await expect(pane.locator('.chat-stop')).toBeHidden();
   await expect(pane.locator('.chat-input')).toHaveAttribute('placeholder', /exited. Press Restart/);
-  await restart.click();
+  // The top bar says the same, and its own Restart starts the new session.
+  await expect(win.locator('#topbar-chatstat')).toHaveAttribute('data-state', 'stopped');
+  await expect(win.locator('#tcs-state')).toHaveText('Stopped');
+  await expect(win.locator('#tcs-act')).toHaveText('Restart');
+  await win.locator('#tcs-act').click();
   await chatReady(win);
+  await expect(win.locator('#topbar-chatstat')).toHaveAttribute('data-state', 'ready');
+  await expect(win.locator('#tcs-act')).toBeHidden();
   await expect(restart).toBeHidden();
   await expect(pane.locator('.chat-item-user')).toHaveCount(0);
   await pane.locator('.chat-input').fill('back again');
@@ -383,12 +389,19 @@ test('the Sessions column lists live tabs with their state, + New adds a second 
   await expect(live.first()).toHaveAttribute('data-state', 'running');
   await expect(live.first().locator('.cs-card-state')).toHaveText('Thinking...');
   await expect(live.first().locator('.cs-card-excerpt')).toContainText('slow: write a greeting');
-  await expect(win.locator('#tcs-run')).toHaveAttribute('data-on', '1');
+  await expect(win.locator('#topbar-chatstat')).toHaveAttribute('data-state', 'working');
+  await expect(win.locator('#tcs-state')).toHaveText(/^Working: /);
   await expect(live.first()).toHaveAttribute('data-state', 'needs');
   await expect(live.first().locator('.cs-card-state')).toHaveText('Needs approval');
+  await expect(win.locator('#tcs-state')).toHaveText('Waiting for you');
+  await expect(win.locator('#tcs-act')).toHaveText('Respond');
+  // Respond brings the open question into view and puts focus on its first answer.
+  await win.locator('#tcs-act').click();
+  await expect(pane.locator('.chat-perm .chat-perm-btn').first()).toBeFocused();
   await pane.locator('.chat-perm .chat-perm-btn', { hasText: 'Allow once' }).click();
   await expect(live.first()).toHaveAttribute('data-state', 'done');
-  await expect(win.locator('#tcs-run')).toHaveAttribute('data-on', '0');
+  await expect(win.locator('#topbar-chatstat')).toHaveAttribute('data-state', 'idle');
+  await expect(win.locator('#tcs-state')).toHaveText('Idle');
 
   // + New opens a second tab, which gets its own card and becomes the active one.
   await col.locator('#cs-new').click();
@@ -448,7 +461,8 @@ test('a tool row opens into its card, Formatted and Raw switch, the top bar coun
   const pane = win.locator('.chat-pane.show');
   await chatReady(win);
   await expect(win.locator('#topbar-chatstat')).toBeVisible();
-  await expect(win.locator('#tcs-conn')).toHaveAttribute('data-on', '1');
+  await expect(win.locator('#tcs-state')).toHaveText('Ready');
+  await expect(win.locator('#tcs-cli')).toHaveText('Gemini');
   await expect(win.locator('#tcs-ctx')).toBeHidden();
 
   await pane.locator('.chat-input').fill('copilot: write a greeting');
@@ -530,9 +544,10 @@ function seedPastSession(homeDir, bin, extraConfig) {
   return { id, work };
 }
 
-test('with resuming turned on, a cold boot resumes the newest session into Chat', async () => {
+test('a cold boot resumes the newest session into Chat by default', async () => {
   const { homeDir, bin } = makeHome();
-  const { id } = seedPastSession(homeDir, bin, { resumeLastOnLaunch: true });
+  // resumeLastOnLaunch unset, as in an install that never touched it.
+  const { id } = seedPastSession(homeDir, bin);
   const { app, win } = await launch(homeDir, bin);
   await expect(win.locator('.chat-tab')).toHaveCount(1);
   await expect(win.locator('.chat-tab.active')).toHaveAttribute('title', "Yesterday's thread");
@@ -555,9 +570,9 @@ test('with resuming turned on, a cold boot resumes the newest session into Chat'
   await app.close();
 });
 
-test('a cold boot opens a fresh chat by default and keeps past sessions as cards', async () => {
+test('with resuming turned off, a cold boot opens a fresh chat and keeps past sessions as cards', async () => {
   const { homeDir, bin } = makeHome();
-  seedPastSession(homeDir, bin);
+  seedPastSession(homeDir, bin, { resumeLastOnLaunch: false });
   const { app, win } = await launch(homeDir, bin);
   await expect(win.locator('.chat-tab')).toHaveCount(1);
   await expect(win.locator('.chat-pane.show .chat-item-user')).toHaveCount(0);
@@ -827,15 +842,15 @@ test('Report a bug and Request a feature live in the top bar and the Help menu, 
   await expect(win.locator('#btn-report-bug')).toBeVisible();
   await expect(win.locator('#btn-request-feature')).toBeVisible();
   // The menu is on top: the element under each item's centre is the item.
-  const onTop = await win.evaluate(() => [...document.querySelectorAll('#topbar-help-menu .tb-menu-item')].every((b) => { const r = b.getBoundingClientRect(); const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return !!hit && b.contains(hit); }));
+  const onTop = await win.evaluate(() => [...document.querySelectorAll('#topbar-help-menu .tb-menu-item:not([hidden])')].every((b) => { const r = b.getBoundingClientRect(); const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return !!hit && b.contains(hit); }));
   expect(onTop).toBe(true);
-  const order = await win.evaluate(() => [...document.querySelectorAll('#topbar-help-menu .tb-menu-item')].map((b) => b.id));
-  expect(order).toEqual(['btn-report-bug', 'btn-request-feature', 'btn-help-github']);
+  const order = await win.evaluate(() => [...document.querySelectorAll('#topbar-help-menu .tb-menu-item:not([hidden])')].map((b) => b.id));
+  expect(order).toEqual(['btn-help-documentation', 'btn-help-shortcuts', 'btn-help-troubleshooting', 'btn-report-bug', 'btn-request-feature', 'btn-help-github']);
   await win.keyboard.press('Escape');
   await expect(win.locator('#btn-report-bug')).toBeHidden();
   // Right side reads as groups: agents/status, help, then the two actions.
   const groups = await win.evaluate(() => [...document.querySelectorAll('.topbar-side-right > *')].map((n) => n.id || n.className.split(' ')[0]));
-  expect(groups).toEqual(['topbar-agents', 'topbar-chatstat', 'tb-sep', 'topbar-usage', 'topbar-help', 'tb-sep', 'btn-status-toggle']);
+  expect(groups).toEqual(['topbar-agents', 'tb-sep', 'topbar-usage', 'topbar-help', 'tb-sep', 'btn-status-toggle']);
   const bug = await win.evaluate(() => window.husk.feedback.url('bug'));
   expect(bug.ok).toBe(true);
   const u = new URL(bug.url);
@@ -851,8 +866,8 @@ test('Report a bug and Request a feature live in the top bar and the Help menu, 
     const help = m.items.find((i) => i.label === 'Help');
     return { labels, help: help ? help.submenu.items.map((i) => i.label).filter(Boolean) : [] };
   });
-  expect(menu.labels.slice(-2)).toEqual(['Window', 'Help']);
-  expect(menu.help.slice(0, 2)).toEqual(['Report a bug', 'Request a feature']);
+  expect(menu.labels).toEqual(['File', 'Edit', 'View', 'Go', 'Help']);
+  expect(menu.help).toEqual(expect.arrayContaining(['Report a bug', 'Request a feature']));
   await app.close();
 });
 
@@ -1031,7 +1046,7 @@ test('a session log over the replay limit still resumes into Chat, showing its l
   await app.close();
 });
 
-test('the status bar names the model the chat reports, and follows a switch', async () => {
+test('the top bar names the model the chat reports, and follows a switch', async () => {
   const { homeDir, bin } = makeHome();
   // A default for new sessions that this chat is not running.
   fs.mkdirSync(path.join(homeDir, '.claude'), { recursive: true });
@@ -1040,11 +1055,11 @@ test('the status bar names the model the chat reports, and follows a switch', as
   await chatReady(win);
   const pane = win.locator('.chat-pane.show');
   await expect(pane.locator('.chat-model-btn')).toHaveText('Fake 1');
-  await expect(win.locator('#sb-model')).toHaveText('Fake 1');
+  await expect(win.locator('#tcs-model')).toHaveText('Fake 1');
   await pane.locator('.chat-model-btn').click();
   await win.locator('.chat-model-item', { hasText: 'Fake 2' }).click();
   await expect(pane.locator('.chat-model-btn')).toHaveText('Fake 2');
-  await expect(win.locator('#sb-model')).toHaveText('Fake 2');
+  await expect(win.locator('#tcs-model')).toHaveText('Fake 2');
   await app.close();
 });
 
@@ -1156,4 +1171,40 @@ test('Allow all stops the asking for the rest of the chat, shows what it let thr
   await expect(again.locator('.chat-perm:not(.is-resolved)')).toHaveCount(1);
   await expect(again.locator('.chat-meta .chat-meta-line', { hasText: 'Done' })).toHaveCount(3);
   await app.close();
+});
+
+test('top bar uses compact activity labels and keeps the context counter on one line', async () => {
+  const { homeDir, bin } = makeHome();
+  const { app, win } = await launch(homeDir, bin);
+  try {
+    await chatReady(win);
+    await setWindowContentSize(app, 1920, 900);
+    const command = 'python3 - <<PY\n' + 'a very long shell command '.repeat(60);
+    for (const [kind, label] of [['execute', 'Running'], ['edit', 'Editing'], ['read', 'Reading'], ['search', 'Searching'], ['fetch', 'Fetching'], ['other', 'Using tools'], [null, 'Thinking'], ['text', 'Writing']]) {
+      await win.evaluate(({ kind, command }) => {
+        const tab = TABS.get(activeTabId);
+        tab.exited = false; tab.chatAlive = true; tab.chatRunning = true; tab.chatEventAt = Date.now(); tab.turnAt = Date.now();
+        const item = kind === 'text' ? { kind: 'text', open: true, text: 'Drafting a reply' }
+          : kind ? { kind: 'tool', toolKind: kind, status: 'running', title: command, detail: command } : { kind: 'thought', text: 'Reasoning' };
+        tab.chatState = { ...tab.chatState, turnOpen: true, pending: [], items: [item], usage: { used: 243000, size: 475000 } };
+        refreshTopbarChatStat();
+      }, { kind, command });
+      await expect(win.locator('#tcs-state')).toHaveText('Working: ' + label);
+      await expect(win.locator('#tcs-ctx')).toBeVisible();
+      await expect(win.locator('#tcs-ctx-text')).toHaveText('243K / 475K');
+      const fit = await win.locator('#tcs-ctx-text').evaluate(el => {
+        const range = document.createRange(); range.selectNodeContents(el);
+        const meter = el.parentElement.getBoundingClientRect();
+        const box = document.querySelector('#topbar-chatstat').getBoundingClientRect();
+        return { lines: range.getClientRects().length, overflow: el.scrollWidth > el.clientWidth, contained: meter.right <= box.right + 1 };
+      });
+      expect(fit).toEqual({ lines: 1, overflow: false, contained: true });
+      if (kind === 'execute') {
+        await expect(win.locator('#tcs-main')).toHaveAttribute('title', new RegExp('Activity: python3'));
+        await win.waitForTimeout(150);
+        const png = await app.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0].capturePage()).toPNG().toString('base64'));
+        fs.writeFileSync('/tmp/husk-compact-activity.png', Buffer.from(png, 'base64'));
+      }
+    }
+  } finally { await app.close(); fs.rmSync(homeDir, { recursive: true, force: true }); }
 });

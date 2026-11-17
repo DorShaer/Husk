@@ -32,7 +32,7 @@ test('new-chat vendor selection and saved defaults leave existing discussions al
       bindPrefs();
       document.querySelector('#pref-save').click();
     });
-    await expect(win.locator('#toast-stack')).toContainText('Defaults saved for new chats');
+    await expect(win.locator('#toast-stack')).toContainText('Connection saved');
     expect((await win.evaluate(async () => (await window.husk.chat.list()).sessions)).map((s) => s.tabId).sort()).toEqual(before.map((s) => s.tabId).sort());
     await win.evaluate(async () => restartChat(TABS.get(activeTabId), { silent: true }));
     await expect(win.locator('.chat-pane.show .chat-input')).toBeEnabled();

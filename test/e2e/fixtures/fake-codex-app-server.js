@@ -76,6 +76,7 @@ async function playTurn(turnId, prompt) {
 }
 
 function handle(msg) {
+  if (msg.method && process.env.FAKE_CODEX_REQUEST_LOG) require('node:fs').appendFileSync(process.env.FAKE_CODEX_REQUEST_LOG, JSON.stringify(msg) + '\n');
   if (msg.id !== undefined && !msg.method) {
     const done = waiting.get(msg.id);
     if (done) { waiting.delete(msg.id); done(msg.result); }
@@ -91,6 +92,19 @@ function handle(msg) {
       send({ id: msg.id, result: { thread: { id: THREAD }, model: 'gpt-fake' } });
       break;
     case 'thread/start': send({ id: msg.id, result: { thread: { id: THREAD }, model: (msg.params && msg.params.model) || 'gpt-fake' } }); break;
+    case 'thread/compact/start': {
+      if (process.env.FAKE_CODEX_NO_COMPACT === '1') { send({ id: msg.id, error: { code: -32601, message: 'unknown method thread/compact/start' } }); break; }
+      send({ id: msg.id, result: {} });
+      const turnId = 'compact-' + (++turnSeq);
+      note('turn/started', { threadId: THREAD, turn: { id: turnId, status: 'inProgress' } });
+      note('item/started', { threadId: THREAD, turnId, item: { id: turnId, type: 'contextCompaction' } });
+      setTimeout(() => {
+        note('thread/tokenUsage/updated', { threadId: THREAD, tokenUsage: { last: { totalTokens: 5000 }, total: { totalTokens: 50000 }, modelContextWindow: 128000 } });
+        note('item/completed', { threadId: THREAD, turnId, item: { id: turnId, type: 'contextCompaction' } });
+        note('turn/completed', { threadId: THREAD, turn: { id: turnId, status: 'completed' } });
+      }, 100);
+      break;
+    }
     case 'turn/start': {
       const turnId = 'turn-' + (++turnSeq);
       send({ id: msg.id, result: { turn: { id: turnId, status: 'inProgress' } } });
