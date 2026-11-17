@@ -10,8 +10,11 @@ const Scan = require('../../src/lib/artifact-scan');
 
 const SCANNER = path.resolve(__dirname, '..', 'fixtures', 'fake-scanner.js');
 
+const made = [];
+process.on('exit', () => { for (const d of made) fs.rmSync(d, { recursive: true, force: true }); });
 function staged() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-scan-test-'));
+  made.push(dir);
   fs.writeFileSync(path.join(dir, 'SKILL.md'), '# sample\n');
   return dir;
 }
@@ -161,7 +164,9 @@ test('unreadable output is unscanned', async () => {
 });
 
 test('a result is cached by content hash and an unscanned one is not', async () => {
-  const log = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'husk-scan-log-')), 'calls');
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-scan-log-'));
+  made.push(logDir);
+  const log = path.join(logDir, 'calls');
   process.env.HUSK_FAKE_SCAN_LOG = log;
   const calls = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').length : 0);
   try {

@@ -5,22 +5,29 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const { execFile } = require('node:child_process');
 const Bundle = require('./market-bundle');
+const RELEASE_SCOPE = require('./release-scope');
 const Scan = require('./artifact-scan');
+const Gate = require('./scan-gate');
 const { parseAgentMd } = require('./agent-md');
 const { readBoundedFile } = require('./bounded-file');
 
-function registerFoundation({ ipcMain, dialog, window, getConfig, setConfig, installers, agentDir, skillsDir, promptsDir, prepareSkills, resolveAgents, workflowExport, listWorkflows = () => [] }) {
+function registerFoundation({ ipcMain, dialog, window, getConfig, setConfig, installers, agentDir, skillsDir, promptsDir, prepareSkills, resolveAgents, workflowExport, listWorkflows = () => [], listLibrary = () => [], readAgentPicks = () => [], storePath = null }) {
   const cache = new Map();
   const pending = new Map();
+  const library = Gate.createLibrary({
+    fs, execFile, tmpRoot: os.tmpdir(), getScanner: () => getConfig().scannerPath, storePath, listItems: listLibrary,
+    onUpdate: () => { const win = window(); if (win && !win.isDestroyed()) win.webContents.send('scanner:libraryUpdated', library.snapshot()); },
+  });
+  ipcMain.handle('scanner:library', () => { library.refresh(); return library.snapshot(); });
   ipcMain.handle('scanner:choose', async () => {
     const picked = await dialog.showOpenDialog(window(), { title: 'Choose a local scanner executable', properties: ['openFile'] });
     if (picked.canceled || !picked.filePaths.length) return { ok: true, canceled: true };
     const scannerPath = picked.filePaths[0];
     if (!fs.statSync(scannerPath).isFile()) return { ok: false, error: 'Choose an executable file' };
-    setConfig({ scannerPath }); cache.clear();
+    setConfig({ scannerPath }); cache.clear(); library.refresh();
     return { ok: true, scannerPath };
   });
-  ipcMain.handle('scanner:remove', () => { setConfig({ scannerPath: '' }); cache.clear(); return { ok: true }; });
+  ipcMain.handle('scanner:remove', () => { setConfig({ scannerPath: '' }); cache.clear(); library.refresh(); return { ok: true }; });
   ipcMain.handle('installReview:answer', (event, { id, approved } = {}) => {
     const p = pending.get(id);
     if (!p || event.sender !== p.sender) return { ok: false };
@@ -47,10 +54,10 @@ function registerFoundation({ ipcMain, dialog, window, getConfig, setConfig, ins
       sender.once('destroyed', cancel);
       sender.on('did-start-navigation', navigating);
       pending.set(id, { resolve: finish, sender, blocked: details.scan.verdict === 'block', timer });
-      win.webContents.send('installReview:request', { ...details, id });
+      win.webContents.send('installReview:request', { ...details, summary: Gate.describe(details.scan), kindLabel: Gate.kindLabel(details.kind || (details.manifest && details.manifest.kind)), id });
     });
   }
-  async function gate(files, manifest, signature, install) {
+  async function gate(files, manifest, signature, install, opts = {}) {
     const staged = Bundle.stageFiles(fs, files, os.tmpdir());
     if (!staged.ok) return staged;
     try {
@@ -63,31 +70,32 @@ function registerFoundation({ ipcMain, dialog, window, getConfig, setConfig, ins
         return Bundle.contentHash(current) === Bundle.contentHash(hashed);
       };
       if (!unchanged()) return { ok: false, error: 'The staged files changed during scanning. Import the item again.' };
-      const approved = await review({ manifest, signature: signature || { state: 'unsigned' }, scan, files: files.map((f) => ({ path: f.path, text: f.content.toString('utf8') })) });
-      if (!approved || Scan.gateDecision(scan) === 'block') return { ok: false, error: scan.verdict === 'block' ? 'Installation blocked by the scanner' : 'Installation canceled', canceled: true };
-      if (!unchanged()) return { ok: false, error: 'The staged files changed during review. Import the item again.' };
-      return await install(staged.dir);
+      const decision = Gate.decide(scan, { silent: !!opts.silent });
+      let before = null;
+      if (decision !== 'proceed') {
+        const approved = await review({ mode: 'install', kind: manifest.kind, name: manifest.name, manifest, signature: signature || { state: 'unsigned' }, scan, files: files.map((f) => ({ path: f.path, text: f.content.toString('utf8') })) });
+        if (!approved || decision === 'block' || Scan.gateDecision(scan) === 'block') return { ok: false, error: scan.verdict === 'block' ? 'Blocked by Husk\'s security scanner' : 'Installation canceled', canceled: true };
+        if (!unchanged()) return { ok: false, error: 'The staged files changed during review. Import the item again.' };
+        if (scan.status === 'scanned') before = library.hashes(manifest.kind);
+      }
+      const result = await install(staged.dir);
+      if (before && result && result.ok !== false) library.approveNew(manifest.kind, before);
+      else library.refresh();
+      return result;
     } finally { fs.rmSync(staged.dir, { recursive: true, force: true }); }
   }
   const genericManifest = (name, kind) => ({ name, kind, publisher: 'Not supplied', permissions: null });
-  async function reviewInstall(channel, payload, handler, event) {
+  // mode 'silent' is content typed into Husk's own form.
+  async function reviewInstall(channel, payload, handler, event, mode) {
     try {
-      if (channel === 'repoAgents:install') {
-        const resolved = resolveAgents(String(payload.root || ''));
-        if (!resolved) return { ok: false, error: 'No agents directory found' };
-        const collected = Bundle.collectDir(fs, resolved.dir);
-        if (!collected.ok) return collected;
-        const files = collected.files.map((f) => ({ ...f, path: `agents/${f.path}` }));
-        return await gate(files, genericManifest(path.basename(payload.root), 'agent'), null, (root) => handler(event, { ...payload, root }));
-      }
-      const file = channel === 'workflows:install' ? 'workflow.json' : 'mcp.json';
-      const content = channel === 'mcp:addMany'
-        ? { mcpServers: Object.fromEntries((Array.isArray(payload.items) ? payload.items : []).map((item, i) => [`${i}-${String(item.id || "server")}`, item])) }
-        : payload.artifact || payload;
-      const files = [{ path: file, content: Buffer.from(JSON.stringify(content)) }];
-      return await gate(files, genericManifest(channel.startsWith('mcp:') ? 'MCP configuration' : 'Workflow', file === 'mcp.json' ? 'mcp' : 'workflow'), null, () => handler(event, payload));
+      const spec = Gate.installSpec(channel, payload, { fs, resolveAgents, readAgentPicks });
+      if (!spec) return await handler(event, payload);
+      const run = (dir) => handler(event, spec.payloadFor ? spec.payloadFor(dir) : payload);
+      return await gate(spec.files, genericManifest(spec.name, spec.kind), null, run, { silent: spec.silent || mode === 'silent' });
     } catch (err) { return { ok: false, error: err.message }; }
   }
+  const confirmUse = (key) => library.checkUse(key, (d) => review({ mode: 'use', kind: d.kind, name: d.name, scan: d.scan }));
+  const allowUnattended = (key) => library.checkUse(key, null);
   async function installBundle(bundle, dir, opts, event) {
     const m = bundle.manifest;
     const text = bundle.files[0].content.toString('utf8');
@@ -105,6 +113,8 @@ function registerFoundation({ ipcMain, dialog, window, getConfig, setConfig, ins
     if (m.kind === 'prompt') return installers.get('prompts:create')(event, input);
     return installers.get('skills:create')(event, input, bundle.files);
   }
+  if (RELEASE_SCOPE.sharing) registerBundles();
+  function registerBundles() {
   ipcMain.handle('bundles:import', async (event) => {
     const picked = await dialog.showOpenDialog(window(), { title: 'Import a Husk bundle', properties: ['openFile'], filters: [{ name: 'Husk bundle', extensions: ['json'] }] });
     if (picked.canceled || !picked.filePaths.length) return { ok: true, canceled: true };
@@ -171,6 +181,7 @@ function registerFoundation({ ipcMain, dialog, window, getConfig, setConfig, ins
       return { ok: true };
     } catch (err) { return { ok: false, error: err.message }; }
   });
-  return { reviewInstall };
+  }
+  return { reviewInstall, confirmUse, allowUnattended, refreshLibrary: () => library.refresh() };
 }
 module.exports = { registerFoundation };

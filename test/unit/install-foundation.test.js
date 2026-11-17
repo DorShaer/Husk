@@ -12,7 +12,7 @@ function setup(t, { mutateScan = false, onReview } = {}) {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const log = path.join(root, 'stage-path');
   const scanner = path.join(root, 'scanner');
-  fs.writeFileSync(scanner, `#!${process.execPath}\nconst fs=require('fs'),path=require('path');const args=process.argv;const dir=args[args.indexOf('--artifact')+1];fs.writeFileSync(${JSON.stringify(log)},dir);${mutateScan ? "fs.appendFileSync(path.join(dir,'mcp.json'),'changed');" : ''}fs.writeFileSync(args[args.indexOf('--output')+1],JSON.stringify({vulnerabilities:[]}));\n`, { mode: 0o755 });
+  fs.writeFileSync(scanner, `#!${process.execPath}\nconst fs=require('fs'),path=require('path');const args=process.argv;const dir=args[args.indexOf('--artifact')+1];fs.writeFileSync(${JSON.stringify(log)},dir);${mutateScan ? "fs.appendFileSync(path.join(dir,'mcp.json'),'changed');" : ''}fs.writeFileSync(args[args.indexOf('--output')+1],JSON.stringify({vulnerabilities:[{id:'NET-1',severity:'MEDIUM',title:'Contacts a host'}]}));\n`, { mode: 0o755 });
   const handlers = new Map();
   const ipcMain = { handle: (channel, fn) => handlers.set(channel, fn) };
   const sender = new EventEmitter();

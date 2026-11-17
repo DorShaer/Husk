@@ -1,7 +1,6 @@
 'use strict';
 (function () {
   const api = window.husk.foundation;
-  const byId = (id) => document.getElementById(id);
   const el = (tag, text, cls) => {
     const node = document.createElement(tag);
     if (text !== undefined) node.textContent = text;
@@ -10,45 +9,93 @@
   };
   const reviews = [];
   let reviewing = false;
+  let lib = { scanner: true, reason: null, items: {} };
+  const connect = async () => {
+    try {
+      const r = await api.chooseScanner();
+      if (r?.ok === false) toast(r.error || 'Could not connect the scanner', 'error');
+      else if (!r?.canceled) toast('Scanner connected. Husk checks your library in the background.', 'success');
+    } catch (err) { toast(err.message, 'error'); }
+    loadLibrary();
+  };
+  function findingList(summary) {
+    const list = el('ul', undefined, 'risk-findings');
+    for (const f of summary.findings) {
+      const li = el('li', undefined, 'risk-finding');
+      const head = el('div', undefined, 'risk-finding-head');
+      head.append(el('span', f.severity, `risk-sev is-${f.severity.toLowerCase()}`), el('span', f.title, 'risk-finding-title'));
+      li.append(head);
+      if (f.detail) li.append(el('p', f.detail, 'risk-finding-detail'));
+      if (f.evidence) li.append(el('code', f.evidence.split('\n')[0].slice(0, 200), 'risk-finding-evidence'));
+      if (f.where) li.append(el('div', f.where, 'risk-finding-where'));
+      list.append(li);
+    }
+    return list;
+  }
   async function showReview() {
     if (reviewing || !reviews.length) return;
     reviewing = true;
     const details = reviews.shift();
+    const summary = details.summary;
+    const kind = details.kindLabel || 'item';
+    const using = details.mode === 'use';
+    const runs = details.kind === 'workflow';
     const overlay = el('div', undefined, 'modal');
-    const card = el('div', undefined, 'modal-card install-review');
+    const card = el('div', undefined, `modal-card install-review risk-${summary.state}`);
     card.setAttribute('role', 'dialog'); card.setAttribute('aria-modal', 'true');
-    card.setAttribute('aria-label', 'Review installation');
-    card.append(el('h2', 'Review installation'));
-    card.append(el('p', `${details.manifest.name} (${details.manifest.kind})`));
-    const signed = details.signature;
-    card.append(el('p', `Publisher: ${details.manifest.publisher}. Signature: ${signed.state}${signed.publisher ? ` (${signed.publisher})` : ''}`));
-    card.append(el('p', 'Declared permissions: ' + (details.manifest.permissions ? JSON.stringify(details.manifest.permissions) : 'Not supplied')));
-    const scan = details.scan;
-    card.append(el('h3', scan.status === 'unscanned' ? 'Unscanned: review required' : `Scan: ${scan.verdict}`));
-    if (scan.reason) card.append(el('p', scan.reason));
-    for (const finding of scan.findings) {
-      const box = el('details');
-      box.append(el('summary', `${finding.severity}: ${finding.title || finding.id}`));
-      box.append(el('p', finding.description)); box.append(el('pre', finding.evidence)); box.append(el('p', finding.location));
-      card.append(box);
+    card.setAttribute('aria-label', 'Security check');
+    const title = summary.state === 'blocked' ? `Husk's security scanner blocked this ${kind}`
+      : summary.state === 'unchecked' ? `This ${kind} was not checked`
+        : `This ${kind} looks risky`;
+    card.append(el('h2', title, 'risk-title'));
+    card.append(el('p', details.name, 'risk-name'));
+    if (details.manifest && details.manifest.publisher && details.manifest.publisher !== 'Not supplied') {
+      const signed = details.signature || { state: 'unsigned' };
+      card.append(el('p', `Publisher: ${details.manifest.publisher}. Signature: ${signed.state}${signed.publisher ? ` (${signed.publisher})` : ''}`, 'risk-meta'));
     }
-    card.append(el('p', 'Detected capabilities: ' + JSON.stringify(scan.capabilities)));
-    const files = el('div', undefined, 'install-review-files');
-    for (const file of details.files) {
-      const item = el('details'); item.append(el('summary', file.path)); item.append(el('pre', file.text)); files.append(item);
+    if (summary.state === 'unchecked') {
+      const note = el('div', undefined, 'risk-note');
+      note.append(el('span', summary.note));
+      if (summary.connect) {
+        const btn = el('button', 'Connect', 'ghost-btn'); btn.type = 'button';
+        btn.addEventListener('click', () => { finish(false); connect(); });
+        note.append(btn);
+      }
+      card.append(note);
+      card.append(el('p', 'Read it yourself before an agent uses it.', 'risk-lead'));
+    } else {
+      const n = summary.findings.length + summary.more;
+      card.append(el('p', summary.state === 'blocked'
+        ? `It found ${n === 1 ? 'a problem' : `${n} problems`} serious enough that Husk will not ${using ? (runs ? 'run' : 'turn on') : 'add'} it.`
+        : `Husk's security scanner found ${n === 1 ? 'one thing' : `${n} things`} to look at${using ? (runs ? ' before this runs' : ' before you turn it on') : ''}. Are you sure you want to use it?`, 'risk-lead'));
+      card.append(findingList(summary));
+      if (summary.more) card.append(el('p', `And ${summary.more} more.`, 'risk-more'));
+      if (summary.reach.length) {
+        const reach = el('div', undefined, 'risk-reach');
+        reach.append(el('div', 'What it can reach', 'risk-reach-label'));
+        for (const line of summary.reach) reach.append(el('div', line));
+        card.append(reach);
+      }
     }
-    card.append(files);
+    if (Array.isArray(details.files) && details.files.length) {
+      const files = el('details', undefined, 'install-review-files');
+      files.append(el('summary', details.files.length === 1 ? 'Show the file' : `Show the ${details.files.length} files`));
+      for (const file of details.files) { files.append(el('div', file.path, 'risk-file-path')); files.append(el('pre', file.text)); }
+      card.append(files);
+    }
     const actions = el('div', undefined, 'modal-actions');
-    const close = el('button', scan.verdict === 'block' ? 'Close' : 'Cancel', 'ghost-btn');
-    close.type = 'button'; actions.append(close);
+    const blocked = summary.state === 'blocked';
+    const no = el('button', blocked ? 'Close' : "Don't use it", 'btn-primary risk-no');
+    no.type = 'button';
     const previous = document.activeElement;
     const finish = async (approved) => {
-      overlay.remove(); document.removeEventListener('keydown', key);
+      if (!overlay.isConnected) return;
+      overlay.remove(); document.removeEventListener('keydown', key, true);
       await api.answerReview({ id: details.id, approved });
-      previous?.focus(); reviewing = false; showReview();
+      previous?.focus?.(); reviewing = false; showReview();
     };
     const key = (event) => {
-      if (event.key === 'Escape') { event.preventDefault(); finish(false); }
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); finish(false); }
       if (event.key === 'Tab') {
         const buttons = [...card.querySelectorAll('button, summary')];
         const first = buttons[0], last = buttons[buttons.length - 1];
@@ -56,45 +103,64 @@
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
       }
     };
-    close.addEventListener('click', () => finish(false));
-    if (scan.verdict !== 'block') {
-      const install = el('button', scan.status === 'unscanned' || scan.verdict === 'review' ? 'Install after review' : 'Install', 'btn-primary');
-      install.type = 'button'; install.addEventListener('click', () => finish(true)); actions.append(install);
+    no.addEventListener('click', () => finish(false));
+    if (!blocked) {
+      const yes = el('button', 'Use it anyway', 'ghost-btn risk-yes');
+      yes.type = 'button'; yes.addEventListener('click', () => finish(true)); actions.append(yes);
     }
+    actions.append(no);
     card.append(actions); overlay.append(card); document.body.append(overlay);
-    document.addEventListener('keydown', key); close.focus();
+    document.addEventListener('keydown', key, true); no.focus();
   }
   api.onReview((details) => { reviews.push(details); showReview(); });
-  async function refreshItems() {
-    const kind = byId('pref-bundle-kind').value;
-    const items = await api.bundleItems(kind);
-    if (byId('pref-bundle-kind').value !== kind) return;
-    const select = byId('pref-bundle-name');
-    const previous = select.value;
-    select.replaceChildren(...items.map((item) => {
-      const option = el('option', item.name);
-      option.value = item.id;
-      return option;
-    }));
-    if (!items.length) select.append(el('option', 'No local items available'));
-    else if (items.some((item) => item.id === previous)) select.value = previous;
-    byId('pref-bundle-export').disabled = !items.length;
+
+  // Badges on flagged library items, and a plain note when nothing was checked.
+  const PAGES = [
+    { page: 'skills', list: '#skills-list', row: '.sk-row[data-name]', key: (r) => `skill:${r.dataset.name}`, slot: '.sk-row-label' },
+    { page: 'agents', list: '#ag-list', row: '.ag-row[data-id]', key: (r) => `agent:${r.dataset.id}`, slot: '.ag-name' },
+    { page: 'workflows', list: '#wf-grid', row: '.wf-card[data-id]', key: (r) => `workflow:${r.dataset.id}`, slot: '.wf-card-title' },
+    { page: 'mcp', list: '#mcp-installed', row: '.mcp-row[data-id]', key: (r) => `mcp:${r.dataset.id}`, slot: '.mr-name' },
+  ];
+  function badgeFor(item) {
+    const label = item.state === 'blocked' ? 'Blocked' : item.state === 'risky' ? 'Risky' : 'Not checked';
+    const badge = el('span', label, `risk-badge is-${item.state}`);
+    const lines = item.state === 'unchecked' ? [item.note]
+      : item.findings.map((f) => `${f.severity}: ${f.title}${f.where ? ` (${f.where})` : ''}`).concat(item.more ? [`And ${item.more} more`] : []);
+    if (item.approved) lines.push('You chose to use it anyway.');
+    badge.title = `Husk's security scanner\n${lines.join('\n')}`;
+    badge.dataset.riskSig = `${item.state}|${badge.title}`;
+    return badge;
   }
-  async function refresh() {
-    const config = await window.husk.config.get();
-    byId('pref-scanner-status').textContent = config.scannerPath || 'No scanner configured';
-    await refreshItems();
+  let painting = false;
+  function decorate() {
+    painting = true;
+    try {
+      for (const p of PAGES) {
+        const root = document.querySelector(`.page-${p.page}`);
+        if (!root) continue;
+        for (const row of document.querySelectorAll(`${p.list} ${p.row}`)) {
+          const item = lib.items[p.key(row)];
+          const old = row.querySelector('.risk-badge');
+          if (!item) { old?.remove(); continue; }
+          const badge = badgeFor(item);
+          if (old && old.dataset.riskSig === badge.dataset.riskSig) continue;
+          old?.remove();
+          row.querySelector(p.slot)?.append(badge);
+        }
+      }
+    } finally { painting = false; }
   }
-  const report = async (promise) => {
-    try { const result = await promise; if (result?.ok === false) toast(result.error || 'Could not complete that action', 'error'); else if (!result?.canceled) toast('Saved', 'success'); }
-    catch (err) { toast(err.message, 'error'); }
-    await refresh();
-  };
-  byId('pref-scanner-choose').addEventListener('click', () => report(api.chooseScanner()));
-  byId('pref-scanner-remove').addEventListener('click', () => report(api.removeScanner()));
-  byId('pref-bundle-import').addEventListener('click', () => report(api.importBundle()));
-  byId('pref-bundle-kind').addEventListener('change', () => refreshItems().catch((err) => toast(err.message, 'error')));
-  byId('pref-bundle-export').addEventListener('click', () => report(api.exportBundle({ kind: byId('pref-bundle-kind').value, id: byId('pref-bundle-name').value.trim() })));
-  document.querySelector('[data-prefs-section="foundation"]')?.addEventListener('click', refresh);
-  refresh().catch((err) => toast(err.message, 'error'));
+  let queued = false;
+  const schedule = () => { if (painting || queued) return; queued = true; requestAnimationFrame(() => { queued = false; decorate(); }); };
+  for (const p of PAGES) {
+    const node = document.querySelector(p.list);
+    if (node) new MutationObserver(schedule).observe(node, { childList: true, subtree: true });
+  }
+  async function loadLibrary() {
+    try { lib = await api.library(); schedule(); } catch (_) {}
+  }
+  api.onLibrary((snap) => { lib = snap; schedule(); });
+  document.querySelectorAll('.rail-item[data-page="skills"], .rail-item[data-page="agents"], .rail-item[data-page="workflows"], .rail-item[data-page="mcp"]')
+    .forEach((item) => item.addEventListener('click', loadLibrary));
+  loadLibrary();
 })();
