@@ -17,6 +17,11 @@
   let daily = { tokens: 0, dollars: 0 };
   let last = null;
   let lastSig = '';
+  const contextExceeded = new Set();
+  const compactions = new Map();
+  const contextSamples = new Map();
+  let sampleSequence = 0;
+  const sessionKeys = new Map();
   const unread = new Set();
   const ALERTS_KEY = 'husk.usageAlerts';
   const alerts = new Map();
@@ -71,22 +76,27 @@
   }
 
   const conf = () => (typeof cfg === 'object' && cfg) || {};
-  const agentOf = (tab) => String(tabAgentCommand(tab) || '').trim().split(/\s+/)[0] || 'agent';
+  const commandAgent = (tab) => String(tabAgentCommand(tab) || '').trim().split(/\s+/)[0].split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/i, '') || 'agent';
+  const agentOf = (tab) => tab?.connection === 'endpoint' ? `api:${tab.id}` : commandAgent(tab);
   const windowsOf = (agent) => { if (!plan.has(agent)) plan.set(agent, new Map()); return plan.get(agent); };
   const isReached = (agent) => Array.from(windowsOf(agent).values()).some((w) => w.reached && (!w.resetsAt || w.resetsAt > Date.now()));
 
   function readings(now) {
     const out = [];
-    for (const [agent, windows] of plan) out.push(...M.planReadings(agent, Array.from(windows.values())));
+    for (const [agent, windows] of plan) out.push(...M.planReadings(agent, Array.from(windows.values())).map(r => ({ ...r, agentKey: agent, detail: agent.startsWith('api:') ? 'API connection' : agent })));
     for (const tab of TABS.values()) {
       const u = tab.chatState && tab.chatState.usage;
-      if (!u || !(Number(u.size) > 0)) continue;
+      if ((!u || !(Number(u.size) > 0)) && !contextExceeded.has(tab.id)) continue;
       const id = `context:${tab.id}:${tab.chatState.sessionId || tab.agentId || tab.id}`;
+      const compacted = compactions.get(tab.id);
+      if (compacted?.complete && (contextSamples.get(tab.id) || 0) > compacted.sample && Number(u?.size) > 0 && Number(u.used) / Number(u.size) * 100 < M.normalizeThresholds({ close: conf().usageWarnPct, critical: conf().usageCriticalPct }).close) {
+        compactions.delete(tab.id); contextExceeded.delete(tab.id); alerts.delete(id); unread.delete(id); saveAlerts();
+      }
       const legacy = 'context:' + tab.id;
       if (!alerts.has(id) && alerts.has(legacy)) {
         alerts.set(id, alerts.get(legacy)); alerts.delete(legacy); saveAlerts();
       }
-      out.push({ id, kind: 'context', label: 'Context window', detail: displayTitle(tab), used: Number(u.used) || 0, limit: Number(u.size), unit: 'tokens', tabId: tab.id });
+      out.push({ id, kind: 'context', label: 'Context window', detail: displayTitle(tab), used: Number(u?.used) || 0, limit: Number(u?.size) || 0, reached: contextExceeded.has(tab.id), unit: 'tokens', tabId: tab.id });
     }
     const c = conf();
     out.push(...M.budgetReadings(M.dailyCounter(daily, now), { tokens: c.usageBudgetTokens, dollars: c.usageBudgetDollars }, now));
@@ -103,6 +113,7 @@
 
   function valueText(s) {
     if (s.inferred) return 'Inferred from an error message';
+    if (s.kind === 'context' && !s.limit) return 'The CLI reported that this conversation is full';
     if (s.unit === 'tokens') {
       const f = window.HuskChat && window.HuskChat._fmtTokens ? window.HuskChat._fmtTokens : String;
       return f(s.used) + ' / ' + f(s.limit);
@@ -159,14 +170,26 @@
     bell.setAttribute('aria-label', label);
   }
 
-  function chatTab(tabId) {
-    const tab = TABS.get(tabId) || TABS.get(activeTabId);
+  function chatTab(tabId, agent) {
+    const tab = tabId ? TABS.get(tabId) : [...TABS.values()].find(t => !t.exited && agentOf(t) === agent && t.mode === 'chat' && t.chat);
     return tab && tab.mode === 'chat' && tab.chat ? tab : null;
+  }
+  function otherVendors(tab) {
+    const current = commandAgent(tab);
+    return detectedAgents().filter(a => a.command !== current && !isReached(a.command));
   }
 
   function toastFor(s) {
-    const title = s.kind === 'context' ? 'Context is getting full' : s.inferred ? 'Possible limit' : s.state === 'reached' ? 'Limit reached' : 'Usage warning';
-    const msg = [s.label + (s.detail ? ' (' + s.detail + ')' : '') + ': ' + valueText(s), resetText(s)].filter(Boolean).join('. ');
+    const title = s.kind === 'context' ? s.state === 'reached' ? 'Conversation context is full' : 'Context is getting full' : s.inferred ? 'Possible limit' : s.state === 'reached' ? 'Limit reached' : 'Usage warning';
+    const explanation = s.kind === 'context' ? 'This is the conversation’s context window, not your subscription quota.' : s.kind === 'budget' ? 'This is your local Husk budget, not a provider limit.' : '';
+    const fmt = window.HuskChat && window.HuskChat._fmtTokens ? window.HuskChat._fmtTokens : String;
+    // A context reading says which conversation and how full, as a sentence.
+    const reading = s.kind === 'context' && s.unit === 'tokens' && s.limit
+      ? `${s.detail ? '“' + s.detail + '”' : 'This conversation'} has used ${fmt(s.used)} of its ${fmt(s.limit)} context window`
+      : s.label + (s.detail ? ' (' + s.detail + ')' : '') + ': ' + valueText(s);
+    const parts = s.kind === 'context' ? [reading, explanation, resetText(s)] : [explanation, reading, resetText(s)];
+    // Each part ends in exactly one period, whatever punctuation it came with.
+    const msg = parts.filter(Boolean).map((p) => p.replace(/[.\s]+$/, '')).join('. ') + '.';
     const card = notify(msg, { key: TOAST_KEY, kind: s.state === 'reached' ? 'error' : 'warn', title, ttl: 12000 });
     if (!card) return;
     const body = card.querySelector('.toast-body');
@@ -177,19 +200,36 @@
     const add = (label, fn) => {
       const b = el('button', 'toast-action', label);
       b.type = 'button';
-      b.addEventListener('click', () => { acknowledge(s.id); try { fn(); } catch (_) {} dismissNotif(card); });
+      b.addEventListener('click', () => { acknowledge(s.id); try { Promise.resolve(fn()).catch(err => toast(err.message || 'Could not complete that action.', 'error')); } catch (err) { toast(err.message || 'Could not complete that action.', 'error'); } dismissNotif(card); });
       actions.appendChild(b);
     };
-    const tab = chatTab(s.tabId);
-    if (typeof window.huskMoveDiscussion === 'function' && tab) {
-      add('Change vendor', () => {
+    const tab = s.kind === 'context' ? chatTab(s.tabId) : s.kind === 'plan' ? chatTab(null, s.agentKey || s.detail) : null;
+    const alternatives = tab ? otherVendors(tab) : [];
+    const choices = M.recoveryActions(s, {
+      canCompact: !!tab && window.huskCanCompact?.(tab),
+      busy: !!tab?.chat.isRunning(), canFresh: !!tab,
+      hasOtherVendor: alternatives.length > 0,
+      providerReached: s.kind === 'context' && !!tab && isReached(agentOf(tab)),
+    });
+    for (const action of choices) {
+      if (action === 'compact' || action === 'compact-after-reply') add(action === 'compact' ? 'Compact conversation' : 'Compact after reply', () => {
+        if (!TABS.has(tab.id)) return;
+        if (tab.id !== activeTabId) activateTab(tab.id);
+        setPage('chat'); window.huskCompactConversation(tab.id);
+      });
+      else if (action === 'fresh') add('New conversation', () => window.huskFreshConversation(tab.id));
+      else if (action === 'switch-vendor') add('Switch vendor', async () => {
+        if (!TABS.has(tab.id)) return;
+        await refreshAgentMenu();
+        if (!otherVendors(tab).length) { toast('No other available CLI was found.', 'error'); return; }
         if (tab.id !== activeTabId) activateTab(tab.id);
         setPage('chat');
         window.huskMoveDiscussion(tab.id, tab.chat.el.querySelector('.chat-move-discussion') || bell);
       });
+      else if (action === 'view-usage') add('View usage', () => { refresh(); paintPanel(); panel.hidden = false; bell.setAttribute('aria-expanded', 'true'); acknowledge(); });
+      else if (action === 'usage-settings') add('Usage settings', () => { closePanel(); openPrefs('usage'); });
+      else if (action === 'dismiss') add('Dismiss', () => {});
     }
-    if (tab) add('Continue with another model', () => { if (tab.id !== activeTabId) activateTab(tab.id); setPage('chat'); setTimeout(() => tab.chat.openModelMenu(), 0); });
-    add('Dismiss', () => {});
     const close = card.querySelector('.toast-close');
     if (close) close.onclick = () => acknowledge(s.id);
     body.appendChild(actions);
@@ -200,7 +240,7 @@
     const next = M.evaluate(readings(Date.now()), { close: c.usageWarnPct, critical: c.usageCriticalPct }, Date.now());
     // An autopilot run reports its own halt, so its budget never raises a toast.
     const crossings = updateAlerts(next);
-    const crossed = crossings.filter((s) => s.kind !== 'autopilot' && (s.kind !== 'plan' || s.detail === agentOf(TABS.get(activeTabId))));
+    const crossed = crossings.filter((s) => s.kind !== 'autopilot' && (s.kind !== 'plan' || (s.agentKey || s.detail) === agentOf(TABS.get(activeTabId))));
     last = next;
     const sig = JSON.stringify(next.sources.map((s) => [s.id, s.state, Math.round(s.pct), s.used, s.limit, s.resetsAt, s.detail]));
     if (sig !== lastSig) {
@@ -221,6 +261,20 @@
     if (!tab || !ev) return;
     const agent = agentOf(tab);
     const now = Date.now();
+    if (ev.type === 'session' && ev.sessionId) {
+      if (sessionKeys.has(tab.id) && sessionKeys.get(tab.id) !== ev.sessionId) { contextExceeded.delete(tab.id); compactions.delete(tab.id); }
+      sessionKeys.set(tab.id, ev.sessionId);
+    }
+    if (ev.type === 'compaction') {
+      if (ev.phase === 'started') compactions.set(tab.id, { sample: contextSamples.get(tab.id) || 0, complete: false });
+      else if (ev.phase === 'completed') {
+        const current = compactions.get(tab.id) || { sample: contextSamples.get(tab.id) || 0 };
+        compactions.set(tab.id, { ...current, complete: true });
+      } else compactions.delete(tab.id);
+      refresh(); return;
+    }
+    if (ev.type === 'usage') contextSamples.set(tab.id, ++sampleSequence);
+    if (ev.limitKind === 'context') { contextExceeded.add(tab.id); refresh(); return; }
     if (ev.type === 'limit') {
       const windows = windowsOf(agent);
       windows.delete('plan');

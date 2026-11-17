@@ -61,3 +61,17 @@ test('subscription prices are excluded while reported API estimates count', () =
   assert.equal(M.usageDelta(subscription, { type: 'turn_end', costUsd: 2 }).dollars, 0);
   assert.equal(M.usageDelta({}, { type: 'turn_end', costUsd: 0.02 }).dollars, 0.02);
 });
+
+test('context recovery compacts or opens a fresh conversation without suggesting vendors or models', () => {
+  assert.deepEqual(M.recoveryActions({ kind: 'context', state: 'critical' }, { canCompact: true, canFresh: true, hasOtherVendor: true }), ['compact', 'fresh', 'dismiss']);
+  assert.deepEqual(M.recoveryActions({ kind: 'context' }, { canCompact: true, canFresh: true, busy: true }), ['compact-after-reply', 'fresh', 'dismiss']);
+  assert.deepEqual(M.recoveryActions({ kind: 'context' }, { canFresh: true }), ['fresh', 'dismiss']);
+  assert.deepEqual(M.recoveryActions({ kind: 'context' }), ['dismiss']);
+});
+test('provider and local budget limits offer only actions that can help that resource', () => {
+  assert.deepEqual(M.recoveryActions({ kind: 'plan', state: 'reached' }), ['view-usage', 'dismiss']);
+  assert.deepEqual(M.recoveryActions({ kind: 'plan', state: 'reached' }, { hasOtherVendor: true }), ['view-usage', 'switch-vendor', 'dismiss']);
+  assert.deepEqual(M.recoveryActions({ kind: 'plan', state: 'close' }, { hasOtherVendor: true }), ['view-usage', 'dismiss']);
+  assert.deepEqual(M.recoveryActions({ kind: 'context' }, { providerReached: true, canCompact: true, canFresh: true }), ['view-usage', 'dismiss']);
+  assert.deepEqual(M.recoveryActions({ kind: 'budget', state: 'reached' }, { hasOtherVendor: true, canCompact: true }), ['usage-settings', 'dismiss']);
+});

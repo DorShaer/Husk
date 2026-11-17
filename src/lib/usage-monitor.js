@@ -192,6 +192,18 @@ const LIMIT_PHRASES = [
   /\btoo many requests\b/i,
 ];
 
+// Recovery choices follow the exhausted resource, not the user's plan name.
+function recoveryActions(source, options = {}) {
+  if (source.kind === 'context' && !options.providerReached) {
+    return [...(options.canCompact ? [options.busy ? 'compact-after-reply' : 'compact'] : []), ...(options.canFresh ? ['fresh'] : []), 'dismiss'];
+  }
+  if (source.kind === 'budget') return ['usage-settings', 'dismiss'];
+  if (source.kind === 'plan' || options.providerReached) {
+    return ['view-usage', ...(source.state === 'reached' || options.providerReached ? options.hasOtherVendor ? ['switch-vendor'] : [] : []), 'dismiss'];
+  }
+  return ['dismiss'];
+}
+
 function matchLimitPhrase(text) {
   const s = String(text == null ? '' : text);
   if (!s || s.length > 4000) return false;
@@ -204,6 +216,6 @@ function matchLimitPhrase(text) {
 })({
   STATES, DEFAULT_THRESHOLDS, normalizeThresholds, stateForPct, evaluate, crossings,
   dayKey, nextLocalMidnight, dailyCounter, addDaily, turnTokens, usageDelta, budgetReadings,
-  planReadings, planCacheFields, matchLimitPhrase,
+  planReadings, planCacheFields, matchLimitPhrase, recoveryActions,
 });
 })();
