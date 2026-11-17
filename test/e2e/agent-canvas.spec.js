@@ -1,10 +1,11 @@
 'use strict';
 
 // The spawn graph: the agent center drawn along the axis the list cannot show,
-// which agent started which. These checks pin the lineage read off the
-// transcripts, the layout that follows from it, the live current on branches
-// with work under them, an agent arriving mid-watch, the camera, and selection
-// shared with the list. Each state is photographed for visual review.
+// which agent started which. Branches grow from the chat to each agent, and each
+// agent carries a heartbeat of its real tool calls. These checks pin the lineage
+// read off the transcripts, the layout that follows from it, the heartbeat and
+// its source, an agent arriving mid-watch, the camera, and selection shared with
+// the list. Each state is photographed for visual review.
 
 const { test, expect, _electron: electron } = require('@playwright/test');
 const path = require('path');
@@ -66,6 +67,20 @@ function writeJob(homeDir, shortId, job) {
   fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ updatedAt: Date.now(), ...job }));
 }
 
+// A transcript with one tool call per entry of `minutes` (minutes ago), each
+// named `${tool} step N`, so the heartbeat has known calls to draw.
+function writeToolTranscript(homeDir, cwd, a, minutes, tool) {
+  const dir = path.join(homeDir, '.claude', 'projects', sanitize(cwd));
+  fs.mkdirSync(dir, { recursive: true });
+  const t = (m) => new Date(Date.now() - m * 60_000).toISOString();
+  const lines = [{ type: 'user', message: { role: 'user', content: `${a.name}.` }, timestamp: t(50), cwd, session_id: a.parent || a.sessionId }];
+  minutes.forEach((m, i) => lines.push({
+    type: 'assistant', timestamp: t(m),
+    message: { role: 'assistant', model: 'claude-opus-5', content: [{ type: 'tool_use', id: `t${i}`, name: tool, input: { pattern: `step ${i + 1}` } }] },
+  }));
+  fs.writeFileSync(path.join(dir, `${a.sessionId}.jsonl`), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+}
+
 // The list the fake CLI answers with. `parent` is a fixture-only field, so it is
 // dropped before writing: the app must recover lineage from the transcripts.
 function publish(agentsFile, fleet, cwd) {
@@ -79,7 +94,7 @@ function makeHome({ theme = 'midnight' } = {}) {
   const cfgDir = path.join(homeDir, '.config', 'husk');
   fs.mkdirSync(cfgDir, { recursive: true });
   fs.writeFileSync(path.join(cfgDir, 'config.json'), JSON.stringify({
-    firstRunDone: true, skipWelcome: true, agentCommand: 'claude', theme,
+    firstRunDone: true, skipWelcome: true, agentCommand: 'claude', resumeLastOnLaunch: false, theme,
   }));
   const cwd = path.join(homeDir, 'code', 'husk');
   fs.mkdirSync(cwd, { recursive: true });
@@ -129,9 +144,7 @@ test.afterEach(async () => {
   }
 });
 
-// The geometry checks below are about the tree shape, so they ask for it. The
-// center itself opens on the radial one, which has its own test.
-async function openCenter(app, { width = 1512, height = 950, topo = 'tree' } = {}) {
+async function openCenter(app, { width = 1512, height = 950 } = {}) {
   const win = await app.firstWindow({ timeout: 30_000 });
   await app.evaluate(({ BrowserWindow }, size) => {
     BrowserWindow.getAllWindows()[0].setBounds({ x: 0, y: 0, ...size });
@@ -139,7 +152,6 @@ async function openCenter(app, { width = 1512, height = 950, topo = 'tree' } = {
   await win.waitForLoadState('domcontentloaded');
   await win.waitForFunction(() => typeof openAgentMap === 'function', null, { timeout: 20_000 });
   await win.evaluate(() => openAgentMap());               // eslint-disable-line no-undef
-  await win.evaluate((t) => amSetTopo(t), topo);          // eslint-disable-line no-undef
   // The center opens on live work; these checks are about the whole fleet.
   await win.click('[data-am-filter="all"]');
   await win.waitForSelector('.am-node', { timeout: 20_000 });
@@ -181,46 +193,46 @@ test('the graph draws the fleet as a spawn tree, live where the work is', async 
   expect(await win.locator('.am-edge').count()).toBe(7);
 
   // Geometry is asserted against the layout the graph computed. A computed
-  // transform is read mid-transition and reports where a card is passing
-  // through, not where the tree put it.
+  // transform is read mid-transition and reports where a row is passing
+  // through, not where the layout put it.
   const at = await placesOf(win);
   const chat = at[`chat:${CHAT_SID}`];
 
-  // Generations read as rows: the chat is above everything it started, a
-  // grandchild sits below its parent, and the two it started share a row.
-  expect(chat.y).toBeLessThan(at['root-a'].y);
+  // The chat sits left of everything it started, every agent has a row of its
+  // own in reading order, and a generation indents under the one above it.
+  for (const [id, p] of Object.entries(at)) if (id !== `chat:${CHAT_SID}`) expect(p.x).toBeGreaterThan(chat.x);
+  expect(at['root-a'].x).toBe(at['root-b'].x);
+  expect(at['kid-a1'].x).toBeGreaterThan(at['root-a'].x);
+  expect(at['kid-a11'].x).toBeGreaterThan(at['kid-a1'].x);
   expect(at['kid-a1'].y).toBeGreaterThan(at['root-a'].y);
   expect(at['kid-a11'].y).toBeGreaterThan(at['kid-a1'].y);
-  expect(at['root-b'].y).toBe(at['root-a'].y);
+  const ys = Object.entries(at).filter(([id]) => id !== `chat:${CHAT_SID}`).map(([, p]) => p.y);
+  expect(new Set(ys).size).toBe(ys.length);
 
-  // A parent is centred over the span of its children, the chat included.
-  expect(at['root-a'].x).toBe((at['kid-a1'].x + at['kid-a2'].x) / 2);
-  expect(chat.x).toBe((at['root-b'].x + at['root-a'].x) / 2);
-
-  // Cards never land on each other. An only child sits under its parent by
-  // design, so the test is that no two cards share a position outright.
-  const cells = Object.values(at).map((p) => `${p.x}:${p.y}`);
-  expect(new Set(cells).size).toBe(cells.length);
-
-  // The current runs only along branches with work under them, and it runs the
-  // whole way: the chat down to root-a, root-a to its working child, and that
-  // child to the grandchild still waiting on a human. The finished branch under
-  // the same chat carries nothing.
+  // A branch is live while work runs at or under its tip: root-a, its working
+  // child, and the grandchild waiting on a human. The finished ones are not.
   const live = await win.$$eval('.am-edge.is-live', (els) => els.length);
   expect(live).toBe(3);
+  // Packets travel only the branches of agents working right now.
+  await expect(win.locator('.am-flow')).toHaveCount(2);
 
-  // State language matches the list: amber for waiting, green for running. The
-  // counts are about agents, so the chat holding them is excluded.
+  // State language matches the list. The counts are about agents, so the chat
+  // holding them is excluded.
   await expect(win.locator('.am-node:not(.is-holder).is-blocked')).toHaveCount(1);
   await expect(win.locator('.am-node:not(.is-holder).is-running')).toHaveCount(2);
   await expect(win.locator('.am-node:not(.is-holder).is-done')).toHaveCount(4);
   // A chat with work still in it is itself live.
-  await expect(win.locator('.am-node.is-chat')).toHaveClass(/is-running/);
+  await expect(win.locator('.am-node.is-chat')).toHaveClass(/is-live/);
 
-  // The source says how many agents ran under it, counting the whole forest;
-  // an agent carries its clock and nothing else on its rim.
-  await expect(win.locator('.am-node.is-chat .am-node-time')).toHaveText('7 agents');
-  await expect(win.locator('.am-node-kids')).toHaveCount(0);
+  // The source says how much of its fleet is live and how many agents ran under it.
+  await expect(win.locator('.am-node.is-chat .am-node-live')).toHaveText('3 live');
+  await expect(win.locator('.am-node.is-chat .am-node-count')).toContainText('7 agents');
+
+  // A row names its CLI and the model its transcript reports, then its clock.
+  await expect(win.locator('.am-node[data-am-id="root-a"] .am-node-time')).toContainText('claude · opus 5 ·');
+  // The one waiting on a human flatlines into a way to answer it.
+  await expect(win.locator('.am-node[data-am-id="kid-a11"] .am-node-act')).toBeVisible();
+  await expect(win.locator('.am-node[data-am-id="kid-a11"] .am-node-time')).toContainText('Waiting on you');
 
   await win.waitForTimeout(700);
   await shoot(win, 'graph-dark.png');
@@ -259,11 +271,11 @@ test('an agent spawned while you watch draws itself in', async () => {
   expect(await win.locator('.am-node').count()).toBe(9);
   expect(await win.locator('.am-edge').count()).toBe(8);
 
-  // The newcomer joins its parent's generation, beside the sibling it was
-  // spawned next to rather than on a row of its own.
+  // The newcomer joins its parent's generation, on a row of its own under the
+  // sibling that started before it.
   const place = await placesOf(win);
-  expect(place['kid-a12'].y).toBe(place['kid-a11'].y);
-  expect(place['kid-a12'].x).toBeGreaterThan(place['kid-a11'].x);
+  expect(place['kid-a12'].x).toBe(place['kid-a11'].x);
+  expect(place['kid-a12'].y).toBeGreaterThan(place['kid-a11'].y);
 
   // An agent that leaves the fleet leaves the picture, along with its edge.
   publish(env.agentsFile, grown.filter((a) => a.id !== 'kid-a12' && a.id !== 'kid-b2'), env.cwd);
@@ -275,9 +287,9 @@ test('an agent spawned while you watch draws itself in', async () => {
   // Enter opens whatever they land on.
   await win.locator('#am-cv-nodes').focus();
   const order = await win.evaluate(() => agentMap.view);   // eslint-disable-line no-undef
-  // A parent, then its branches in full, then its leaves. The chat that holds
+  // A parent, then everything it started, oldest first. The chat that holds
   // them is scenery and stays out of the walk.
-  expect(order).toEqual(['root-b', 'kid-b1', 'root-a', 'kid-a1', 'kid-a11', 'kid-a2']);
+  expect(order).toEqual(['root-b', 'kid-b1', 'root-a', 'kid-a2', 'kid-a1', 'kid-a11']);
   await win.keyboard.press('ArrowUp');
   await expect(win.locator('.am-node.is-selected')).toHaveAttribute('data-am-id', 'kid-a1');
   await win.keyboard.press('ArrowDown');
@@ -289,59 +301,79 @@ test('an agent spawned while you watch draws itself in', async () => {
   await app.close();
 });
 
-test('the radial shape throws the fleet onto rings around the source', async () => {
+// The heartbeat is drawn from the tool calls in each agent's own transcript.
+// Where there are none it says so instead of drawing a shape.
+test('every heartbeat is real tool calls, and an empty one says so', async () => {
   const env = makeHome();
+  const now = Date.now();
+  const mk = (id, n, name, state, startedMin, extra = {}) => ({
+    kind: 'background', id, sessionId: sid(n), name, cwd: env.cwd, state, status: state,
+    startedAt: now - startedMin * 60_000, parent: CHAT_SID, ...extra,
+  });
+  const busy = mk('busy', 60, 'Crawl the staging site', 'working', 50, { pid: 7001 });
+  const fresh = mk('fresh', 61, 'Map the routes', 'working', 1, { pid: 7002 });
+  const silent = mk('silent', 62, 'Read the logs', 'working', 3, { pid: 7003 });
+  const broke = mk('broke', 63, 'Replay the login', 'failed', 30);
+  const asks = mk('asks', 64, 'Push the fix', 'blocked', 20, { pid: 7004 });
+  const calls = [44, 40, 33, 33, 30, 21, 12, 7, 5, 2];
+  writeToolTranscript(env.homeDir, env.cwd, busy, calls, 'Grep');
+  writeToolTranscript(env.homeDir, env.cwd, fresh, [], '');
+  writeToolTranscript(env.homeDir, env.cwd, broke, [26, 25], 'Bash');
+  writeToolTranscript(env.homeDir, env.cwd, asks, [18, 14], 'Edit');
+  // `silent` leaves no transcript at all.
+  writeJob(env.homeDir, 'broke', { state: 'failed', detail: 'tool error' });
+  const fleet = [busy, fresh, silent, broke, asks];
+  publish(env.agentsFile, fleet, env.cwd);
+
   const app = await launch(env);
-  const win = await openCenter(app, { topo: 'radial' });
+  const win = await openCenter(app);
+  await expect(win.locator('.am-node:not(.is-root)')).toHaveCount(5, { timeout: 20_000 });
 
-  await expect(win.locator('[data-am-topo="radial"]')).toHaveClass(/is-active/);
+  // The source of the line: every tool call in the transcript, by its time.
+  const pulse = await win.evaluate(() => agentMap.rows.find((a) => a.id === 'busy').pulse);   // eslint-disable-line no-undef
+  expect(pulse.calls.length).toBe(calls.length);
+  expect(pulse.model).toBe('claude-opus-5');
+  const row = (id) => win.locator(`.am-node[data-am-id="${id}"]`);
+  await expect(row('busy').locator('.am-hb-ln')).toHaveCount(1);
+  await expect(row('busy').locator('.am-hb-tip')).toHaveCount(1);
+  // What it is doing now is its newest activity row.
+  await expect(row('busy').locator('.am-node-now')).toHaveText('Grep step 10');
 
-  const at = await win.evaluate(() => Object.fromEntries(agentMap.layout.map((n) => [n.a.id, {   // eslint-disable-line no-undef
-    depth: n.depth, r: Math.round(n.ring || 0),
-  }])));
-  // The chat that started the work holds the centre, and everything it started
-  // is out on a ring, one ring per generation, each further out than the last.
-  expect(at[`chat:${CHAT_SID}`].r).toBe(0);
-  expect(at['root-a'].r).toBe(at['root-b'].r);
-  expect(at['kid-a1'].r).toBeGreaterThan(at['root-a'].r);
-  expect(at['kid-a11'].r).toBeGreaterThan(at['kid-a1'].r);
-  // Siblings share their ring and never share a place on it.
-  expect(at['kid-a1'].r).toBe(at['kid-b1'].r);
-  const seats = Object.values(await win.evaluate(() => Object.fromEntries(agentMap.layout.map((n) => [n.a.id, `${Math.round(n.cx)}:${Math.round(n.cy)}`]))));   // eslint-disable-line no-undef
-  expect(new Set(seats).size).toBe(seats.length);
+  // No calls yet, and no transcript at all, are both a flat baseline in words.
+  await expect(row('fresh').locator('.am-hb.is-empty')).toHaveCount(1);
+  await expect(row('fresh').locator('.am-hb-ln')).toHaveCount(0);
+  await expect(row('fresh').locator('.am-node-now')).toHaveText('no activity yet');
+  await expect(row('silent').locator('.am-hb.is-empty')).toHaveCount(1);
+  // Listed as working but silent for minutes: open and quiet, and still.
+  await expect(row('silent').locator('.am-node-now')).toHaveText(/^quiet for \d+m$/);
+  await expect(row('silent')).toHaveClass(/is-idle/);
+  await expect(row('silent').locator('.am-hb-ping')).toHaveCount(0);
 
-  // A ring is a reading aid for a generation spread around the source, so it is
-  // drawn only where two or more nodes stand on it. Here that is the two roots
-  // and the four they started; the lone grandchild gets none, and one bezel
-  // closes the field.
-  expect(await win.locator('#am-cv-orbits circle').count()).toBe(3);
-  expect(await win.locator('#am-cv-orbits circle.is-rim').count()).toBe(1);
+  // A failure spikes where its work stopped and says why.
+  await expect(row('broke').locator('.am-hb-x')).toHaveCount(1);
+  await expect(row('broke').locator('.am-node-now')).toHaveText('Exited: tool error');
+  // Waiting on a human says what it waits for in place of a line, then Respond.
+  await expect(row('asks').locator('.am-hb')).toBeHidden();
+  await expect(row('asks').locator('.am-node-now')).toHaveText('Wants to edit step 2');
+  await expect(row('asks').locator('.am-node-act')).toBeVisible();
 
-  // Current runs only where work is.
-  expect(await win.locator('.am-flow').count()).toBe(3);
-
+  // The canvas has one shape and no shape control.
+  await expect(win.locator('#am-cv-topo')).toHaveCount(0);
   await win.waitForTimeout(700);
-  await shoot(win, 'graph-radial.png');
+  await shoot(win, 'graph-heartbeat.png');
 
-  // Selection reads the same on either shape.
-  await win.locator('.am-node[data-am-id="kid-a11"]').click();
-  await expect(win.locator('.am-node.is-selected')).toHaveAttribute('data-am-id', 'kid-a11');
-
-  // The shape is a preference, so the next open starts where this one left off.
-  await win.click('[data-am-topo="tree"]');
-  await expect(win.locator('#am-cv-orbits circle')).toHaveCount(0);
-  expect(await win.evaluate(() => localStorage.getItem('husk.agentTopo'))).toBe('tree');
-
+  await row('asks').locator('.am-node-act').click();
+  await expect(win.locator('#agent-map')).toBeHidden({ timeout: 10_000 });
   await app.close();
 });
 
 test('the source is drawn whole, on a field that is not empty', async () => {
   const env = makeHome();
   const app = await launch(env);
-  const win = await openCenter(app, { topo: 'radial' });
+  const win = await openCenter(app);
 
   // The plate under a name is a backdrop for words, so it never paints over the
-  // disc it belongs to. A plate that covers the source slices it in half.
+  // tile it belongs to. A plate that covers the source slices it in half.
   // Cards arrive with an entrance that scales them, so a hit test taken while
   // one is still running reads a disc that is not yet where it will be. Under a
   // loaded machine that lands mid-animation, which is what made this flake.
@@ -589,8 +621,9 @@ test('the topbar chip calls attention when an agent arrives behind your back', a
 });
 
 // The common case on a real machine: plenty of agents, none of them started by
-// another. A single row would be thousands of pixels wide, so they block up.
-test('agents that started nothing wrap into a block instead of one long row', async () => {
+// another. Each takes a row of its own, and a fleet too tall for the pane is
+// shown at a readable scale and scrolled rather than shrunk to dots.
+test('a wide flat fleet stacks into rows that never overlap', async () => {
   const env = makeHome();
   const now = Date.now();
   const flat = Array.from({ length: 18 }, (_, i) => ({
@@ -606,33 +639,27 @@ test('agents that started nothing wrap into a block instead of one long row', as
   const win = await openCenter(app);
   await expect(win.locator('.am-node')).toHaveCount(19, { timeout: 20_000 });
   await expect(win.locator('.am-node.is-project')).toHaveCount(1);
-  // A block deeper than one row is drawn as one region on a single stem: a
-  // line to each member would have to cross the row above it.
-  expect(await win.locator('.am-edge').count()).toBe(1);
-  await expect(win.locator('.am-block')).toHaveCount(1);
+  // One branch per agent, all from the one source.
+  expect(await win.locator('.am-edge').count()).toBe(18);
 
-  const place = Object.values(await placesOf(win));
-  const rows = new Set(place.map((p) => p.y));
-  const cols = new Set(place.map((p) => p.x));
-  expect(rows.size).toBeGreaterThan(1);
-  expect(cols.size).toBeLessThan(18);
-  // The block stays closer to the pane's own shape than to a line.
-  const w = Math.max(...place.map((p) => p.x)) - Math.min(...place.map((p) => p.x));
-  const h = Math.max(...place.map((p) => p.y)) - Math.min(...place.map((p) => p.y));
-  expect(w / Math.max(1, h)).toBeLessThan(4);
+  const place = Object.entries(await placesOf(win)).filter(([id]) => !id.startsWith('proj:')).map(([, p]) => p);
+  const ys = place.map((p) => p.y).sort((a, b) => a - b);
+  expect(new Set(ys).size).toBe(18);
+  const gaps = ys.slice(1).map((y, i) => y - ys[i]);
+  expect(Math.min(...gaps)).toBe(Math.max(...gaps));
+
+  const zoom = () => win.locator('#am-cv-zoom').textContent().then((t) => parseInt(t, 10));
+  expect(await zoom()).toBeGreaterThanOrEqual(90);
+  // A bare wheel scrolls the fleet.
+  const box = await win.locator('#am-canvas-pane').boundingBox();
+  await win.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  const camY = () => win.evaluate(() => Math.round(agentMap.cam.y));   // eslint-disable-line no-undef
+  const top = await camY();
+  await win.mouse.wheel(0, 300);
+  await expect.poll(camY).toBeLessThan(top);
 
   await win.waitForTimeout(900);
   await shoot(win, 'graph-no-lineage.png');
-
-  // Full screen spends the extra room on the graph itself rather than on empty
-  // margin, so the framing gets bigger and not merely wider. Polled: the refit
-  // waits for the card's own resize to finish, however long the machine takes.
-  const zoom = () => win.locator('#am-cv-zoom').textContent().then((t) => parseInt(t, 10));
-  const before = await zoom();
-  await win.click('#am-cv-expand');
-  await expect.poll(zoom, { timeout: 15_000 }).toBeGreaterThan(before);
-  await shoot(win, 'graph-no-lineage-full.png');
-
   await app.close();
 });
 
@@ -668,9 +695,11 @@ test('the graph holds in the light theme', async () => {
       inkLum: lum(cs.getPropertyValue('--cv-ink')),
       pageLum: lum(getComputedStyle(document.body).getPropertyValue('--bg')),
       states: ['run', 'wait', 'fail'].map((k) => cs.getPropertyValue(`--cv-${k}`).trim()),
-      lit: getComputedStyle(
-        document.querySelector('.am-node.is-running .am-node-halo'),
-      ).backgroundImage,
+      lit: [
+        getComputedStyle(document.querySelector('.am-node.is-running .am-node-glyph')).filter,
+        getComputedStyle(document.querySelector('.am-edge.is-live')).filter,
+        getComputedStyle(document.querySelector('.am-flow')).filter,
+      ].filter((f) => f !== 'none').join(' '),
     };
   });
   expect(field.pageLum, 'the page is on paper').toBeGreaterThan(0.6);
@@ -679,9 +708,9 @@ test('the graph holds in the light theme', async () => {
   // The three states are measured against whatever ground the theme handed the
   // field, so no theme can resolve two of them to one colour.
   expect(new Set(field.states).size, 'two states resolved to one colour').toBe(3);
-  // A live agent is marked by a ring that breathes. A bloom has no reading on
-  // paper, so no state is allowed to depend on one.
-  expect(field.lit, 'a state is drawn as light thrown onto the field').toBe('none');
+  // A live agent is marked by its packets and its heartbeat. A glow has no
+  // reading on paper, so no state is allowed to depend on one.
+  expect(field.lit, 'a state is drawn as light thrown onto the field').toBe('');
 
   await shoot(win, 'graph-light.png');
   await app.close();
@@ -712,39 +741,38 @@ test('every theme separates the three states on its own field', async () => {
   expect(light, 'paper took the dark field\'s colours unchanged').not.toEqual(dark);
 });
 
-// A connector has to meet the circles it joins: one that stops short of them
-// reads as floating rather than as a line between two agents. The endpoints are
-// read off the path data rather than the painted geometry, which is mid-morph
-// whenever the layout has just changed.
+// A branch has to meet the tiles it joins: one that stops short of them reads
+// as floating rather than as a line between two agents. The ribbon's own path
+// data is read back: its first pair of points straddles where it leaves, and
+// the pair at the turn straddles its tip.
 async function edgeEndpoints(win) {
   return win.evaluate(() => {
+    const B = window.HuskBranches;
     const at = new Map(agentMap.layout.map((n) => [n.a.id, n]));   // eslint-disable-line no-undef
-    const m = agentMap.card;                                        // eslint-disable-line no-undef
     const out = [];
     for (const [key, path] of agentMap.edgeEls) {                   // eslint-disable-line no-undef
-      const d = path.getAttribute('d') || '';
-      const head = d.match(/^M(-?[\d.]+),(-?[\d.]+)/);
-      const tail = d.match(/L(-?[\d.]+),(-?[\d.]+)\s*$/);
-      if (!head || !tail) { out.push({ key, unreadable: d }); continue; }
+      const nums = (path.getAttribute('d') || '').match(/-?[\d.]+/g) || [];
+      const pts = [];
+      for (let i = 0; i + 1 < nums.length; i += 2) pts.push([Number(nums[i]), Number(nums[i + 1])]);
       const [pid, cid] = key.split('>');
       const p = at.get(pid);
       const c = at.get(cid);
-      if (!p) { out.push({ key, orphan: true }); continue; }
-      const wantStart = [p.x + 132 / 2, p.y + (p.a.holder ? m.glyphLg : m.glyph)];
-      const got = {
+      if (!p || !c || pts.length < 4) { out.push({ key, orphan: true }); continue; }
+      const half = pts.length / 2;
+      const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      out.push({
         key,
-        start: [Number(head[1]), Number(head[2])],
-        end: [Number(tail[1]), Number(tail[2])],
-        wantStart,
-        wantEnd: c ? [c.x + 132 / 2, c.y] : null,
-      };
-      out.push(got);
+        start: mid(pts[0], pts[pts.length - 1]),
+        end: mid(pts[half - 1], pts[half]),
+        wantStart: p.root ? [B.G.STEM, p.cy] : [p.x + B.G.GLYPH / 2, p.y + B.G.GLYPH],
+        wantEnd: [c.x, c.y + B.G.GLYPH / 2],
+      });
     }
     return out;
   });
 }
 
-test('every connector meets the circle at each of its ends', async () => {
+test('every branch meets the tile at each of its ends', async () => {
   const env = makeHome();
   const now = Date.now();
   const fleet = makeFleet(now, env.cwd);
@@ -757,49 +785,44 @@ test('every connector meets the circle at each of its ends', async () => {
   await win.waitForTimeout(700);
 
   const edges = await edgeEndpoints(win);
-  expect(edges.length, 'the graph drew no edges to check').toBeGreaterThan(0);
+  expect(edges.length, 'the graph drew no edges to check').toBe(fleet.length);
   for (const e of edges) {
-    expect(e.unreadable, `edge ${e.key} had no readable path`).toBeUndefined();
-    expect(e.orphan, `edge ${e.key} had no parent in the layout`).toBeUndefined();
-    // Leaves the parent exactly on the rim of its circle.
-    expect(Math.abs(e.start[0] - e.wantStart[0]), `${e.key} starts off the circle's centre line`).toBeLessThan(1);
-    expect(Math.abs(e.start[1] - e.wantStart[1]), `${e.key} starts ${Math.round(e.start[1] - e.wantStart[1])}px off the circle`).toBeLessThan(1);
-    if (e.wantEnd) {
-      expect(Math.abs(e.end[0] - e.wantEnd[0]), `${e.key} arrives off the child's centre line`).toBeLessThan(1);
-      expect(Math.abs(e.end[1] - e.wantEnd[1]), `${e.key} stops ${Math.round(e.end[1] - e.wantEnd[1])}px short of the child`).toBeLessThan(1);
-    }
+    expect(e.orphan, `edge ${e.key} had no ends in the layout`).toBeUndefined();
+    expect(Math.abs(e.start[0] - e.wantStart[0]), `${e.key} leaves off its source`).toBeLessThan(1);
+    expect(Math.abs(e.start[1] - e.wantStart[1]), `${e.key} leaves ${Math.round(e.start[1] - e.wantStart[1])}px off its source`).toBeLessThan(1);
+    expect(Math.abs(e.end[0] - e.wantEnd[0]), `${e.key} stops short of the tile`).toBeLessThan(1);
+    expect(Math.abs(e.end[1] - e.wantEnd[1]), `${e.key} arrives off the tile's middle`).toBeLessThan(1);
   }
   await shoot(win, 'graph-connected.png');
   await app.close();
 });
 
-// The line passes behind the name on its way down, so the name is painted over
-// it and carries a halo. Without both, one of the two becomes unreadable.
-test('names stay legible over the connector running behind them', async () => {
+// Branches end at the tile, left of every name, and drop down the gap left of a
+// generation, so no line ever runs behind words.
+test('no branch runs behind a name', async () => {
   const env = makeHome();
-  const now = Date.now();
-  const fleet = makeFleet(now, env.cwd);
-  for (const a of fleet) writeTranscript(env.homeDir, env.cwd, a);
-  publish(env.agentsFile, fleet, env.cwd);
-
   const app = await launch(env);
   const win = await openCenter(app);
-  await expect(win.locator('.am-node')).toHaveCount(fleet.length + 1, { timeout: 20_000 });
+  await expect(win.locator('.am-node')).toHaveCount(8, { timeout: 20_000 });
 
-  const paint = await win.evaluate(() => {
-    const stage = document.querySelector('#am-cv-stage') || document.querySelector('#am-canvas-pane');
-    const kids = Array.from(stage.querySelectorAll('#am-cv-edges, #am-cv-nodes'));
-    const label = document.querySelector('.am-node-label');
-    return {
-      order: kids.map((k) => k.id),
-      shadow: label ? getComputedStyle(label).textShadow : '',
-      plated: !!(label && label.closest('.am-node-plate')),
-    };
+  const crossings = await win.evaluate(() => {
+    const B = window.HuskBranches;
+    const rows = agentMap.layout.filter((n) => !n.root);   // eslint-disable-line no-undef
+    const hits = [];
+    for (const n of rows) {
+      for (let i = 0; i <= 40; i += 1) {
+        const [x, y] = B.edgePoint(n.edge, i / 40);
+        for (const m of rows) {
+          if (x > m.tx && x < m.tx + m.tw && y > m.y && y < m.y + 30) hits.push(`${n.a.id} under ${m.a.id}`);
+        }
+      }
+    }
+    return [...new Set(hits)];
   });
-  expect(paint.order, 'the names are not painted over the connectors').toEqual(['am-cv-edges', 'am-cv-nodes']);
-  expect(paint.plated, 'the name is not grouped onto its own plate').toBe(true);
-  expect(paint.shadow, 'the name carries no halo to lift it off the connector').not.toBe('none');
+  expect(crossings).toEqual([]);
 
+  const order = await win.evaluate(() => Array.from(document.querySelector('#am-cv-stage').children).map((k) => k.id));
+  expect(order.indexOf('am-cv-edges'), 'the names are not painted over the branches').toBeLessThan(order.indexOf('am-cv-nodes'));
   await app.close();
 });
 
@@ -878,8 +901,8 @@ test('a single agent is still joined to what it runs under', async () => {
   expect(await win.locator('.am-edge').count(), 'the lone agent was left unattached to its project').toBe(1);
   const edges = await edgeEndpoints(win);
   for (const e of edges) {
-    expect(Math.abs(e.start[1] - e.wantStart[1]), `${e.key} does not meet the circle it leaves`).toBeLessThan(1);
-    if (e.wantEnd) expect(Math.abs(e.end[1] - e.wantEnd[1]), `${e.key} does not reach the circle it joins`).toBeLessThan(1);
+    expect(Math.abs(e.start[1] - e.wantStart[1]), `${e.key} does not leave its source`).toBeLessThan(1);
+    expect(Math.abs(e.end[1] - e.wantEnd[1]), `${e.key} does not reach the tile it joins`).toBeLessThan(1);
   }
   await shoot(win, 'graph-single-agent.png');
   await app.close();

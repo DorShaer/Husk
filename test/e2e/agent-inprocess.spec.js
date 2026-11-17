@@ -130,7 +130,7 @@ test('agents running inside a chat are counted and listed like any other', async
     await win.waitForFunction(() => typeof openAgentMap === 'function', null, { timeout: 20_000 });
 
     // The corner counts the two that are still working, and nothing else.
-    await win.waitForFunction(() => !document.querySelector('#topbar-agents').hidden, null, { timeout: 20_000 });
+    await win.waitForFunction(() => document.querySelector('#topbar-agents-count').textContent !== '', null, { timeout: 20_000 });
     await expect(win.locator('#topbar-agents-count')).toHaveText('2');
 
     await win.evaluate(() => openAgentMap());               // eslint-disable-line no-undef
@@ -186,9 +186,6 @@ test('the graph draws in-process agents as agents, not as what started them', as
     await win.evaluate(() => openAgentMap());
     await win.waitForFunction(() => agentMap.rows.length === 8, null, { timeout: 20_000 }); // eslint-disable-line no-undef
     await win.evaluate(() => amSetView('canvas'));                                          // eslint-disable-line no-undef
-    // Wrapping a fan-out into a block is how the tree shape gives a wide set of
-    // leaves a page to fit on, so this asks for that shape by name.
-    await win.evaluate(() => amSetTopo('tree'));                                            // eslint-disable-line no-undef
     await expect(win.locator('.am-node')).toHaveCount(9, { timeout: 20_000 });
 
     const cards = await win.evaluate(() => Array.from(document.querySelectorAll('.am-node'))
@@ -196,19 +193,18 @@ test('the graph draws in-process agents as agents, not as what started them', as
       .map((el) => ({
         running: el.classList.contains('is-running'),
         label: el.querySelector('.am-node-label').textContent,
-        time: el.querySelector('.am-node-time').textContent,
-        mark: el.querySelector('.am-node-mark path').getAttribute('d'),
+        time: el.querySelector('.am-node-clock').textContent,
+        mark: !!el.querySelector('.am-node-cli svg'),
       })));
     expect(cards.length, 'the chat is the only holder in this graph').toBe(8);
     for (const c of cards) {
       expect(c.running, `${c.label} lost the state it is in`).toBe(true);
-      expect(c.mark, `${c.label} drew no state mark`).toBeTruthy();
+      expect(c.mark, `${c.label} drew no CLI glyph`).toBe(true);
       expect(c.time, `${c.label} counts agents instead of its own elapsed time`).toMatch(/^\d+[smhd]/);
     }
 
-    // The words every card in the fan-out shares are said once, on the block.
-    await expect(win.locator('.am-block-cap')).toHaveText('hunt on brokencrystals');
-    expect(cards.map((c) => c.label).sort()).toEqual([...FANOUT].sort());
+    // Each row carries its own full name.
+    expect(cards.map((c) => c.label).sort()).toEqual(FANOUT.map((f) => `${f} hunt on brokencrystals`).sort());
 
     // And they are destinations: the arrows walk them like any other agent.
     const walk = await win.evaluate(() => agentMap.view.length);                            // eslint-disable-line no-undef

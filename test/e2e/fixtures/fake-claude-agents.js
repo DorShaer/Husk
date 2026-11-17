@@ -14,6 +14,12 @@ if (process.env.FAKE_AGENTS_ARGV) {
   try { fs.appendFileSync(process.env.FAKE_AGENTS_ARGV, args.join(' ') + '\n'); } catch (_) {}
 }
 
+// Chat view runs the CLI in stream-json mode; the stream fake answers that.
+if (args.includes('--input-format')) {
+  require('./fake-claude-stream.js');
+  return;
+}
+
 if (args[0] === 'agents' && args.includes('--json')) {
   let rows = [];
   try { rows = JSON.parse(fs.readFileSync(process.env.FAKE_AGENTS_FILE, 'utf8')); } catch (_) {}
@@ -38,6 +44,14 @@ if (args[0] === 'stop' || args[0] === 'rm') {
   if (args[0] === 'stop' && process.env.FAKE_STALE_STOP) {
     process.stderr.write(`couldn't confirm ${args[1] || ''} was stopped \u2014 the background service may be restarting. Try again in a moment.\n`);
     process.exit(1);
+  }
+  // With FAKE_STOP_LISTS set, a stopped agent lists as stopped from then on, the way the real one does.
+  if (args[0] === 'stop' && process.env.FAKE_STOP_LISTS) {
+    try {
+      const rows = JSON.parse(fs.readFileSync(process.env.FAKE_AGENTS_FILE, 'utf8'));
+      for (const r of rows) if (r && r.id === args[1]) { r.state = 'stopped'; delete r.pid; delete r.status; }
+      fs.writeFileSync(process.env.FAKE_AGENTS_FILE, JSON.stringify(rows));
+    } catch (_) {}
   }
   process.stdout.write((args[0] === 'stop' ? 'stopped ' : 'removed ') + (args[1] || '') + '\n');
   process.exit(0);

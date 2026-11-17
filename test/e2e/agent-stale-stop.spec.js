@@ -85,6 +85,8 @@ test('a stop the CLI cannot confirm offers deletion instead, in words without a 
     const end = win.locator('#am-d-end');
     await expect(end).toHaveText('Stop');
     await end.click();
+    await expect(win.locator('#confirm-title')).toHaveText('Stop this agent?');
+    await win.click('#confirm-ok');
 
     // One retry after the pause the CLI asks for, then the offer.
     await win.waitForFunction(() => !document.getElementById('confirm-modal').hidden, null, { timeout: 20_000 });
@@ -105,6 +107,8 @@ test('a stop the CLI cannot confirm offers deletion instead, in words without a 
 
     // Accepting removes the agent and says so.
     await end.click();
+    await expect(win.locator('#confirm-title')).toHaveText('Stop this agent?');
+    await win.click('#confirm-ok');
     await win.waitForFunction(() => !document.getElementById('confirm-modal').hidden, null, { timeout: 20_000 });
     await win.click('#confirm-ok');
     await expect(win.locator('#toast-stack')).toContainText('Deleted Run crawler for new pages', { timeout: 10_000 });
