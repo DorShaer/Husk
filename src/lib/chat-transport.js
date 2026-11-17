@@ -91,7 +91,7 @@ function untestedVersion(agentCommand, version) {
   const t = transportFor(agentCommand);
   const key = t === 'claude' ? 'claude' : agentBaseName(agentCommand);
   const row = TESTED[key];
-  const v = /\d+\.\d+(?:\.\d+)?/.exec(String(version || ''));
+  const v = /\d+\.\d+\.\d+|\d+\.\d+/.exec(String(version || ''));
   if (!row || !v) return null;
   if (cmpTo(v[0], row.min) >= 0 && cmpTo(v[0], row.max) <= 0) return null;
   return { cli: key, version: v[0], feature: row.feature, min: row.min, max: row.max };

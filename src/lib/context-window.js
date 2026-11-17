@@ -9,7 +9,7 @@
 // Google Gemini docs (2.x/3 = 1M); GitHub Copilot CLI docs (128K default).
 const MODEL_CONTEXT_WINDOWS = [
   [/^claude-3/, 200000],
-  [/^claude-(opus|sonnet|haiku)-4(-[015])?(-\d{8})?$/, 200000],
+  [/^claude-(opus|sonnet|haiku)-4(?:|-[015]|-\d{8}|-[015]-\d{8})$/, 200000],
   [/^claude-/, 1000000],
   [/^gpt-5/, 400000],
   [/^gpt-4\.1/, 1000000],
