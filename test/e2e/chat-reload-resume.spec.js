@@ -140,3 +140,24 @@ test('a tab whose session id was lost is still matched by its resume command', a
     await app.close();
   }
 });
+
+test('a replayed CLI error never appears as the selected model', async () => {
+  const env = makeHome();
+  const transcript = path.join(env.homeDir, '.claude/projects', sanitize(env.homeDir), env.sessionId + '.jsonl');
+  fs.appendFileSync(transcript, JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), message: { model: '<synthetic>', content: [{ type: 'text', text: 'Usage limit reached.' }] } }) + '\n');
+  const app = await electron.launch({ args: [path.join(REPO_ROOT, 'src/main.js'), '--no-sandbox'], env: { ...process.env, HOME: env.homeDir, USERPROFILE: env.homeDir, PATH: `${env.bin}${path.delimiter}${process.env.PATH}`, ELECTRON_DISABLE_SANDBOX: '1', HUSK_E2E: '1' } });
+  try {
+    const win = await app.firstWindow();
+    await win.waitForFunction(() => document.querySelector('.chat-pane.show .chat-item-user'));
+    await win.evaluate(() => document.querySelectorAll('.modal').forEach((m) => { m.hidden = true; }));
+    await expect(win.locator('.chat-pane.show .chat-input')).toBeEnabled();
+    await expect(win.locator('#tcs-model')).not.toHaveText('<synthetic>');
+    await expect(win.locator('.chat-pane.show .chat-model-btn')).not.toContainText('<synthetic>');
+    const history = await win.evaluate(({ sessionId, cwd }) => window.husk.chat.history({ agent: 'claude', sessionId, cwd }), { sessionId: env.sessionId, cwd: env.homeDir });
+    expect(history.ok).toBe(true);
+    expect(history.events.filter((e) => e.type === 'session').map((e) => e.model)).not.toContain('<synthetic>');
+    const data = await app.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0].capturePage()).toPNG().toString('base64'));
+    fs.mkdirSync('/tmp/husk-settings-redesign', { recursive: true });
+    fs.writeFileSync('/tmp/husk-settings-redesign/model-replay.png', Buffer.from(data, 'base64'));
+  } finally { await app.close(); fs.rmSync(env.homeDir, { recursive: true, force: true }); }
+});

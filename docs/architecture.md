@@ -14,7 +14,7 @@ The pieces, all under `src/lib/` and unit-tested with a fake child process:
 
 | File | Role |
 |------|------|
-| `jsonrpc-stdio.js` | Line framer shared by both protocols |
+| `jsonrpc-stdio.js` | Line framer for stdio protocols |
 | `acp-client.js` | ACP request / notification / server-request handling |
 | `claude-stream.js` | claude argv and stdin line encoders |
 | `chat-transport.js` | Which protocol a CLI speaks (aider: none; Codex: app-server) |
@@ -26,7 +26,7 @@ The pieces, all under `src/lib/` and unit-tested with a fake child process:
 
 `main.js` wires the runtime to the `chat:*` IPC channels and gives each chat tab a shadow entry in the session table (cwd plus the pinned claude session id) so the status panel resolves the same readouts as a terminal tab. In the renderer, `chat-ui.js` paints the thread incrementally from the reducer state and `chat-md.js` renders markdown without ever using innerHTML on agent text. End-to-end coverage drives the real main-process path against `test/e2e/fixtures/fake-acp-agent.js`, a deterministic ACP agent reached through a PATH shim.
 
-The Chat page's Changes canvas (`src/renderer/chat-canvas.js`) reads working-tree status and file diffs through the existing Git IPC handlers. At the start and end of each chat turn, the renderer compares status snapshots and adds a receipt for paths that changed during that interval. The canvas also reads the current branch's open pull request and check summaries through the GitHub IPC handlers; Fix and Explain send prompts to the active chat. It does not stage or commit files. Those actions stay on the Source page. Diff and GitHub values are rendered as text, and external check or pull-request links go through Husk's confirmation-gated URL bridge.
+The Chat page's Changes canvas (`src/renderer/chat-canvas.js`) reads working-tree status and file diffs through the existing Git IPC handlers. At the start and end of each chat turn, the renderer compares status snapshots and adds a receipt for paths that changed during that interval. For non-Git folders, `folder-changes.js` captures bounded in-memory file snapshots before sending a prompt and when the turn ends. It reports additions, edits and deletions and supplies line diffs without creating a repository. This comparison covers the last turn and is replaced by the next turn or app restart. The canvas offers Initialize Git with a folder confirmation; it creates no commit or remote. The canvas also reads the current branch's open pull request and check summaries through the GitHub IPC handlers; Fix and Explain send prompts to the active chat. It does not stage or commit files. Those actions stay on the Source page. Diff and GitHub values are rendered as text, and external check or pull-request links go through Husk's confirmation-gated URL bridge.
 
 ## Repo layout
 
@@ -61,18 +61,15 @@ husk/
 │       ├── styles.css
 │       ├── assets/            App-time assets (logo)
 │       └── vendor/            Bundled xterm.js + addons
-├── libs/
-│   └── lifeos/                Bundled LifeOS framework, third-party
 ├── installer/                 Source installers and packaging assets
 │   ├── install.sh             Source install, Linux / macOS
 │   ├── install.ps1            Source install, Windows
 │   ├── uninstall.sh           Removes the launcher, OS registration and data
 │   ├── husk-icon.png          Source for OS icons (1024x1024)
 │   ├── index.html             The dorshaer.github.io/Husk landing page
-│   ├── after-install.sh       deb / rpm post-install
-│   ├── after-remove.sh        deb / rpm post-remove
-│   ├── prompts/               Curated default Husk prompts (seed -> ~/.config/husk/prompts/)
-│   └── lib/                   verify.sh / verify.ps1 download-and-verify helpers
+│   ├── after-install.sh       Debian post-install
+│   ├── after-remove.sh        Debian post-remove
+│   └── prompts/               Curated default Husk prompts (seed -> ~/.config/husk/prompts/)
 ├── scripts/                   Installers served over the network, plus the dev launcher
 │   ├── install.sh             The Linux / macOS one-liner
 │   ├── install.ps1            The Windows one-liner
@@ -114,7 +111,7 @@ husk/
 
 - **Main process (`src/main.js`).** Owns OS-facing concerns: spawns terminal sessions inside `node-pty`, runs native chat transports over child-process stdio, owns IPC handlers, and reads or writes user data under `~/.agents/`, `~/.claude/`, `~/.kiro/`, `~/.config/husk/`, and `~/.local/share/husk/`. Single source of truth for the agent process tree.
 - **Preload (`src/preload.js`).** A small bridge. Exposes `window.husk` via Electron's `contextBridge`. The renderer never gets `require`, `process`, or Node globals.
-- **Renderer (`src/renderer/`).** Single-page Electron view. xterm.js terminal mounts on the Chat page; the rail navigates between Chat, Agents, Workflows, Autopilot, Projects, Prompts, Skills, MCP, Plugins, Files, Sessions. Preferences open as a modal, not a page. CSS lives in `styles.css`; vendored xterm in `vendor/`.
+- **Renderer (`src/renderer/`).** Single-page Electron view. xterm.js terminal mounts on the Chat page; the rail navigates between Chat, Terminal, Agents, Workflows, Autopilot, Projects, Prompts, Skills, MCP, Plugins, Brain, Files, Source, GitHub, Schedule, Artifacts, Sessions. Preferences is its own page. CSS lives in `styles.css`; vendored xterm in `vendor/`.
 
 Electron security baseline: `contextIsolation: true`, `nodeIntegration: false`. CSP restricts the renderer to its own origin (no remote scripts). DevTools is off in packaged builds (`devTools: !app.isPackaged`). External URL clicks pass through a confirm dialog before `shell.openExternal`. Full posture in [`../SECURITY.md`](../SECURITY.md).
 
@@ -137,7 +134,7 @@ The full `window.husk.*` API exposed through `src/preload.js`:
 | Namespace | What |
 |-----------|------|
 | `pty` | start / write / resize / restart, plus onData / onExit subscriptions |
-| `chat` | Chat view: transportFor / start / prompt (text and images) / cancel / permission / setModel / stop / list (live tabs with replay logs) / history (a past session's log as chat events), plus onEvent / onExit |
+| `chat` | Chat view: transportFor / start / prompt (text and images) / cancel / permission / setModel / compact / stop / list (live tabs with replay logs) / history (a past session's log as chat events) / handoff / handoffTo (move a tab to another CLI), plus onEvent / onExit |
 | `git` / `github` | Repository status, file diffs, and pull request/check data used by Source, GitHub, and the Chat Changes canvas |
 | `terminal` | defaults for the Terminal page's shell tabs |
 | `feedback` | url / open: prefilled GitHub issues for bug reports and feature requests |
@@ -147,7 +144,10 @@ The full `window.husk.*` API exposed through `src/preload.js`:
 | `stats` | location, time, weather, tool counts, learning sparkline, usage |
 | `skills` | list (shared, disabled and legacy skills) / read / toggle / create |
 | `sessions` | list / read / findClaudeId / delete |
-| `prds` | enumerate `~/.claude/MEMORY/WORK/<slug>/PRD.md` |
+| `brain` | graph / addNote / addRule / rule / addFiles / addImage / pin / remove / setEnabled (the Brain page's memory store) |
+| `schedules` | list / save / remove / runNow (the Schedule page) |
+| `bgAgents` | list / peek / openCommand / control (background agent roster) |
+| `background` | choose / remove / setDisplay (the app background image) |
 | `plugins` | list / catalog / run / files / readFile / writeFile / openFolder |
 | `prompts` | list / create / delete (Husk-managed prompt store) |
 | `projects` | list / create / setActive / clearActive / delete |
@@ -158,14 +158,16 @@ The full `window.husk.*` API exposed through `src/preload.js`:
 | `profiles` | list / create / update / delete / activate / deactivate / deactivateAll, plus generate / listImportableAgents / importAgents |
 | `repoAgents` | pickDir / scan / install agent files found in a repo |
 | `repoMcp` | pickDir / scan / build / install MCP servers found in a repo |
-| `autopilot` | start / startCollab / status / revert / apply / discard / history and the run event stream |
+| `autopilot` | start / startCollab / status / revert / apply / discard / history / billingMode and the run event stream |
+| `models` | list an agent's available models; `openai:models` lists a BYOK OpenAI-compatible endpoint's models |
+| `registry` | list / add / remove / fetch (workflow registry sources) |
 | `claudeTrust` | per-folder trust status / accept for the claude CLI |
-| `mcp` | catalog / list / add / update / clone / remove / toggle / health, all dispatched through the active agent's adapter |
+| `mcp` | catalog / list / add / update / clone / remove / toggle / health, all dispatched through the active agent's adapter, plus per-project selection (`projectMcp:get` / `set` / `clear`) exposed as projectGet / projectSet / projectClear |
 | `dialog` / `dialog2` | pickFile / pickDir |
 | `voice` | status / install / speak / stop / uninstall, plus progress events |
 | `urls` | openExternal (confirm-dialog gated) |
 | `updates` | get / check / download / install / openRelease, plus status events |
-| `ui` | zoomIn / zoomOut / zoomReset / zoomGet |
+| `ui` | setRouteState / takeReloadState (and sync variants), the `ui:*` IPC handlers in `main.js` that carry route and reload state across renderer reloads; zoom (zoomIn / zoomOut / zoomReset / zoomSet / zoomGet) also lives here but runs renderer-side through `webFrame` (`src/lib/ui-zoom.js`), not a main-process handler |
 
 ### MCP adapter pattern
 
@@ -193,7 +195,7 @@ Session history comes from each CLI's own local logs. For example, Claude stores
 | `~/.config/husk/skills-disabled/` | Disabled shared skills, kept outside native skill discovery paths |
 | `~/.claude/projects/` | Claude Code project transcripts, read for session history |
 | `~/.copilot/session-state/` | Copilot CLI event logs, read for session history |
-| `~/.claude/MEMORY/CONTEXT/` | Files dragged onto Husk for the current chat |
+| `~/.config/husk/context/` | Files attached through the context tray |
 | `~/.claude.json` | claude's user config; Husk writes `mcpServers` here at mode 0600 |
 | `~/.copilot/mcp-config.json` | copilot's MCP config; Husk writes here at mode 0600 when the active agent is copilot |
 | `~/.gemini/settings.json` | gemini's user settings; Husk touches only `mcpServers` and the disabled sidecar, mode 0600, when the active agent is gemini |
@@ -210,7 +212,7 @@ Session history comes from each CLI's own local logs. For example, Claude stores
 
 Artifact names follow `husk-v${version}-${os}-${arch}.${ext}` (configured under `build.{linux,mac,win}.artifactName` in `package.json`), so a release directory looks like `husk-v<version>-linux-x86_64.AppImage`, `husk-v<version>-mac-arm64.dmg`, `husk-v<version>-win-x64.exe`, etc.
 
-`libs/pai/` and `installer/` are shipped as `extraResources`, not inside the asar, so the main process can copy from `process.resourcesPath/pai/` and `process.resourcesPath/installer/prompts/` into `~/.claude/` and `~/.config/husk/prompts/` on first launch (`bootstrapPaiIfNeeded` and `bootstrapHuskPromptsIfNeeded` in `src/main.js`).
+Curated prompts and platform icons from `installer/` are shipped as `extraResources`, not inside the asar, so the main process can copy from `process.resourcesPath/installer/prompts/` into `~/.config/husk/prompts/` on first launch (`bootstrapHuskPromptsIfNeeded` in `src/main.js`).
 
 The release workflow in `.github/workflows/release.yml` builds for all three OSes on `git tag v*` push, then:
 - generates a `SHA256SUMS` over the release directory,
@@ -224,3 +226,13 @@ The release workflow in `.github/workflows/release.yml` builds for all three OSe
 - `app.requestSingleInstanceLock()`: a second `husk` invocation focuses the existing window instead of starting another process tree.
 - `killPtyTree()`: on window close or quit, SIGTERMs the PTY's process group, then SIGKILLs after 250 ms grace. Wired to `window-all-closed`, `before-quit`, `will-quit`, `SIGINT`, `SIGTERM`, `SIGHUP`, `exit`.
 - `run.sh` reaps stale Electron processes whose `--app-path` matches the local source dir, so a hard kill from the prior run does not pile up inotify watchers.
+
+## Preferences, recovery and help
+
+The Preferences view groups startup and history under Workspace, visual choices under Appearance, speech under Voice & recaps, usage controls under Usage & limits, optional API endpoints under Connections, and version information and guidance under About & help. The default chat CLI supplies new-chat defaults; each discussion retains its own selected vendor and connection.
+
+`config-store.js` validates configuration, replaces files atomically and retains a recovery copy. Chat runtime replay and main-process view snapshots preserve active threads and drafts through renderer reloads; a requested agent restart waits until its reply finishes. Apply compares the current file with the run's original snapshot before replacing changed content.
+
+`help-content.js` holds bundled documentation, shortcuts and troubleshooting topics. `help-ui.js` renders those topics offline, with native-menu, toolbar and Preferences entry points. Bundle sharing remains disabled for this release.
+
+Git capabilities are probed separately from repository state. An unavailable executable keeps plain-folder comparisons enabled and offers installation and recheck actions in Changes and Source. Existing but unreadable repository metadata remains an error rather than being treated as a new folder. Git initialization checks the folder, existing directory/file and bare repository markers, and duplicate requests before running; unsupported initial-branch flags on older Git use a separate HEAD setup step.

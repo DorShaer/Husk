@@ -94,10 +94,13 @@ test('a pasted snippet installs its new servers and reports only the collision',
   try {
     await win.evaluate((s) => window.husk.mcp.add(s), EXISTING);
 
-    const res = await win.evaluate(() => window.husk.mcp.addMany([
+    const installing = win.evaluate(() => window.husk.mcp.addMany([
       { id: 'filesystem', transport: 'stdio', command: 'node', args: ['/tmp/other-server.js'] },
       { id: 'brand-new', transport: 'stdio', command: 'npx', args: ['-y', 'thing'] },
     ]));
+
+    await win.getByRole('dialog', { name: 'Security check' }).getByRole('button', { name: 'Use it anyway' }).click();
+    const res = await installing;
 
     expect(res.results.filesystem.status, 'the collision was reported as installed').toBe('error');
     expect(res.results.filesystem.error).toMatch(/already exists/i);

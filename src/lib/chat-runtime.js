@@ -19,7 +19,7 @@ const {
 } = require('./chat-events');
 const { openaiTurn } = require('./openai-stream');
 const {
-  APP_SERVER_ARGS, codexModel, codexResumeId, codexInput, codexSession, normalizeCodexNotification, normalizeCodexApproval, codexDecision,
+  APP_SERVER_ARGS, codexModel, codexResumeId, codexInput, codexSession, normalizeCodexNotification, normalizeCodexApproval, codexDecision, normalizeCodexQuestion, codexQuestionResponse,
 } = require('./codex-app-server');
 
 const STDERR_KEEP = 2000;
@@ -35,12 +35,19 @@ const ALLOW_ALL = 'allow-all';
 // (an older build, a wrapper that ignores --acp) must fail the start instead
 // of leaving the tab on "Starting" forever.
 const HANDSHAKE_MS = 20000;
+// A start that timed out is tried once more after this pause, with twice the time.
+const RETRY_DELAY_MS = 1000;
 
-function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVersion, platform, comSpec, log, handshakeMs, controlTimeoutMs } = {}) {
+function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, recordPrompt, appVersion, platform, comSpec, log, handshakeMs, retryDelayMs, controlTimeoutMs, contextWindow } = {}) {
+  // Resolve a model's context-window size for the composer meter. Injected by the
+  // host, which owns the model table; without it the claude chip stays hidden.
+  const windowFor = typeof contextWindow === 'function' ? contextWindow : () => null;
   if (typeof spawn !== 'function') throw new TypeError('spawn is required');
   const sessions = new Map();
   const isWin = (platform || process.platform) === 'win32';
   const handshakeLimit = typeof handshakeMs === 'number' && handshakeMs > 0 ? handshakeMs : HANDSHAKE_MS;
+  const retryDelay = typeof retryDelayMs === 'number' && retryDelayMs >= 0 ? retryDelayMs : RETRY_DELAY_MS;
+  const startTokens = new Map();
   const note = typeof log === 'function' ? log : () => {};
   let permSeq = 0;
 
@@ -155,6 +162,11 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
     child.on('error', (e) => {
       note(`chat child error: ${e && e.message}`);
       send(s.tabId, { type: 'error', text: `Could not start ${s.exe}: ${e && e.message}` });
+      // A child that never spawned emits no exit, so the tab is told here.
+      if (child.pid !== undefined || s.exited) return;
+      s.exited = true;
+      if (sessions.get(s.tabId) === s) sessions.delete(s.tabId);
+      if (!s.stopped && !s.handshaking && typeof emitExit === 'function') emitExit(s.tabId, -1);
     });
     child.on('exit', (code, signal) => {
       s.framer.flush();
@@ -167,7 +179,8 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
       if (sessions.get(s.tabId) === s) sessions.delete(s.tabId);
       // A child Husk stopped or replaced on purpose (stop, restart in place)
       // exits quietly: reporting it would mark the tab dead under its successor.
-      if (s.stopped) return;
+      // One that dies mid-handshake is reported by the start result instead.
+      if (s.stopped || s.handshaking) return;
       const why = tailStderr(s);
       if (code !== 0 && code !== null && why) send(s.tabId, { type: 'error', text: why });
       if (typeof emitExit === 'function') emitExit(s.tabId, code === null ? (signal || -1) : code);
@@ -191,13 +204,32 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
 
   // claudeSessionId pins claude's transcript to a known id (the same trick
   // spawnPty uses) so the status panel can find this tab's .jsonl by name.
-  async function start({ tabId, command, cwd, claudeSessionId, keepLog, openai } = {}) {
+  // A failed handshake: auth goes to sign-in, anything else carries what Husk
+  // expected so the thread can offer Retry and the terminal view.
+  function failure(error, auth, e, cli, expected) {
+    const timeout = !!(e && e.code === 'HANDSHAKE_TIMEOUT');
+    return auth ? { ok: false, error, auth: true } : { ok: false, error, auth: false, timeout, compat: { cli, expected, reason: timeout ? 'timeout' : 'refused' } };
+  }
+
+  // A handshake that times out is tried once more; one stopped meanwhile is not.
+  async function start(opts = {}) {
+    const token = {};
+    if (opts.tabId) startTokens.set(opts.tabId, token);
+    const first = await startOnce(opts, handshakeLimit);
+    if (!first || !first.timeout) return first;
+    send(opts.tabId, { type: 'status', text: 'No answer yet. Trying once more.' });
+    await new Promise((r) => { const t = setTimeout(r, retryDelay); token.wake = () => { clearTimeout(t); r(); }; });
+    if (startTokens.get(opts.tabId) !== token) return Object.assign({}, first, { timeout: false });
+    return startOnce(opts, handshakeLimit * 2);
+  }
+
+  async function startOnce({ tabId, command, cwd, claudeSessionId, keepLog, openai } = {}, limit) {
     if (!tabId) return { ok: false, error: 'tabId required' };
     // Bring your own key, native: an OpenAI-compatible endpoint (a vendor, or a
     // local Ollama). No child process; prompts stream over HTTP and surface as
     // the same events the claude transport emits.
     if (openai && openai.baseUrl && openai.model) {
-      if (sessions.has(tabId)) await stop({ tabId });
+      if (sessions.has(tabId)) await halt({ tabId });
       const s = {
         tabId, transport: 'openai', exe: 'openai', command: String(command || '').trim(), cwd: cwd || null,
         child: null, framer: null, acp: null, sessionId: 'openai-' + Date.now().toString(36),
@@ -213,12 +245,16 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
     }
     const transport = transportFor(command);
     if (!transport) return { ok: false, error: `${String(command || '').split(/\s+/)[0] || 'agent'} has no chat protocol yet` };
-    if (sessions.has(tabId)) await stop({ tabId });
+    if (sessions.has(tabId)) await halt({ tabId });
 
     const env = typeof buildEnv === 'function' ? buildEnv(transport) : Object.assign({}, process.env);
     const tokens = String(command || 'claude').trim().split(/\s+/).filter(Boolean);
     const exeName = tokens[0] || 'claude';
     const exe = typeof resolveExe === 'function' ? resolveExe(exeName, env.PATH) : exeName;
+    // The resolver hands a bare name back only when it found nothing to run.
+    if (typeof resolveExe === 'function' && exe === exeName && !/[\\/]/.test(exeName)) {
+      return { ok: false, missing: true, cli: exeName, error: `${exeName} was not found on this computer` };
+    }
     const flags = userFlags(command);
 
     const s = {
@@ -244,15 +280,16 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
       });
       s.framer = createFramer((msg) => s.acp.receive(msg), (raw) => note(`acp non-json line: ${raw.slice(0, 200)}`));
       sessions.set(tabId, s);
+      s.handshaking = true;
       wireChild(s);
       try {
         let timer = null;
         const expiry = new Promise((_, reject) => {
           timer = setTimeout(() => {
-            const err = new Error(`${exeName} did not answer the ACP handshake within ${Math.round(handshakeLimit / 1000)}s. It may not support ${transport === 'acp' ? (acpArgs(command) || []).join(' ') : 'this mode'} in this version.`);
+            const err = new Error(`${exeName} did not answer the ACP handshake within ${Math.round(limit / 1000)}s. It may not support ${(acpArgs(command) || []).join(' ')} in this version.`);
             err.code = 'HANDSHAKE_TIMEOUT';
             reject(err);
-          }, handshakeLimit);
+          }, limit);
           if (timer && timer.unref) timer.unref();
         });
         const handshake = (async () => {
@@ -262,6 +299,7 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
         const res = await Promise.race([handshake, expiry]);
         clearTimeout(timer);
         s.sessionId = res && res.sessionId ? String(res.sessionId) : null;
+        s.handshaking = false;
         send(tabId, normalizeAcpSession(res));
       } catch (e) {
         const detail = tailStderr(s) || (e && e.message) || 'ACP handshake failed';
@@ -269,27 +307,41 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
         // in ACP terms, or its own login error on stderr). The result says
         // so, and the host opens the CLI's own sign-in.
         const authy = /auth|login|sign in|credential|unauthori|not logged/i.test(detail) || (e && e.code === -32000);
-        await stop({ tabId });
-        return { ok: false, error: detail, auth: authy };
+        await halt({ tabId });
+        return failure(detail, authy, e, exeName, `an ACP answer to ${[exeName].concat(acpArgs(command) || []).join(' ')}`);
       }
       return { ok: true, transport, sessionId: s.sessionId };
     }
 
     if (transport === 'codex') {
       try { s.child = spawnChild(exe, APP_SERVER_ARGS.slice(), cwd, env); } catch (e) { return { ok: false, error: e.message }; }
+      const requests = new Map();
       s.acp = createAcpClient({
         send: (msg) => writeLine(s, msg),
         onNotification: (method, params) => {
+          if (method === 'serverRequest/resolved') {
+            const id = requests.get(String(params.requestId));
+            if (id && s.pendingPerms.has(id)) {
+              requests.delete(String(params.requestId));
+              s.pendingPerms.delete(id);
+              send(tabId, { type: 'permission_resolved', requestId: id });
+            }
+          }
           if (method === 'turn/started' && params.turn) codexTurn(s, params.turn.id);
-          if (method === 'turn/completed') { s.turnOpen = false; s.turnId = null; s.cancelWanted = false; }
+          if (method === 'turn/completed') { s.turnOpen = false; s.turnId = null; s.cancelWanted = false; s.compacting = false; }
           send(tabId, normalizeCodexNotification(method, params));
         },
-        onRequest: (method, params) => {
+        onRequest: (method, params, serverId) => {
           const requestId = 'p' + (++permSeq);
-          const card = normalizeCodexApproval(requestId, method, params);
+          const question = method === 'item/tool/requestUserInput';
+          const card = question ? normalizeCodexQuestion(requestId, params) : normalizeCodexApproval(requestId, method, params);
           if (!card) return undefined;
+          requests.set(String(serverId), requestId);
           return new Promise((resolve) => {
-            s.pendingPerms.set(requestId, (optionId) => resolve(codexDecision(optionId)));
+            s.pendingPerms.set(requestId, (optionId, answers) => {
+              requests.delete(String(serverId));
+              resolve(question ? codexQuestionResponse(params, optionId, answers) : codexDecision(optionId));
+            });
             offer(s, tabId, card);
           });
         },
@@ -297,15 +349,20 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
       s.framer = createFramer((msg) => s.acp.receive(msg), (raw) => note(`codex non-json line: ${raw.slice(0, 200)}`));
       s.codexModel = codexModel(command);
       sessions.set(tabId, s);
+      s.handshaking = true;
       wireChild(s);
       try {
         let timer = null;
         const expiry = new Promise((_, reject) => {
-          timer = setTimeout(() => reject(new Error(`${exeName} did not answer the app-server handshake within ${Math.round(handshakeLimit / 1000)}s. It may not support app-server in this version.`)), handshakeLimit);
+          timer = setTimeout(() => {
+            const err = new Error(`${exeName} did not answer the app-server handshake within ${Math.round(limit / 1000)}s. It may not support app-server in this version.`);
+            err.code = 'HANDSHAKE_TIMEOUT';
+            reject(err);
+          }, limit);
           if (timer && timer.unref) timer.unref();
         });
         const handshake = (async () => {
-          await s.acp.request('initialize', { clientInfo: { name: 'husk', title: 'Husk', version: String(appVersion || '0.0.0') }, capabilities: null });
+          await s.acp.request('initialize', { clientInfo: { name: 'husk', title: 'Husk', version: String(appVersion || '0.0.0') }, capabilities: { experimentalApi: true } });
           s.acp.notify('initialized');
           // The model list only feeds the picker; a CLI without it still chats.
           const models = await s.acp.request('model/list', {}).catch(() => null);
@@ -319,12 +376,13 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
         s.codexModel = null;
         const ev = codexSession(res.thread, res.models);
         s.sessionId = ev.sessionId || null;
+        s.handshaking = false;
         send(tabId, ev);
       } catch (e) {
         const detail = (e && e.message) || tailStderr(s) || 'app-server handshake failed';
         const authy = /auth|login|sign in|credential|unauthori|not logged/i.test(detail);
-        await stop({ tabId });
-        return { ok: false, error: detail, auth: authy };
+        await halt({ tabId });
+        return failure(detail, authy, e, exeName, `an app-server answer to ${exeName} ${APP_SERVER_ARGS.join(' ')}`);
       }
       return { ok: true, transport, sessionId: s.sessionId };
     }
@@ -342,6 +400,8 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
     if (pinned) s.sessionId = pinned;
     else { const named = commandSessionId(command); if (named) s.sessionId = named; }
     try { s.child = spawnChild(exe, args, cwd, env); } catch (e) { return { ok: false, error: e.message }; }
+    let reportedCost = flags.some((f) => /^--resume(?:=|$)/.test(f)) ? null : 0;
+    let costSession = s.sessionId;
     s.framer = createFramer((ev) => {
       // Replies to Husk's own control requests. initialize carries claude's own
       // model list, the same one its /model menu shows; set_model answers here.
@@ -356,6 +416,9 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
         if (waiter) { s.ctlWaiters.delete(rid); waiter(ev.response); }
         return;
       }
+      // A subagent's messages share this stream; its result reaches the thread
+      // through the parent's tool card, so its text, model and usage stay out.
+      if (ev && ev.parent_tool_use_id && !isPermissionRequest(ev)) return;
       if (isPermissionRequest(ev)) {
         const r = ev.request || {};
         // The card says "for this session", so every rule handed back is
@@ -365,12 +428,48 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
           : [];
         s.permInputs.set(String(ev.request_id), { input: r.input || {}, suggestions });
       }
+      // Claude never reports a context-window size, unlike codex. Derive the
+      // composer meter from each assistant message's own usage: one model call,
+      // so prompt + cache is the live occupancy, always within the window. The
+      // result event is skipped on purpose; its usage is the turn total summed
+      // across every internal tool-use call, which overshoots the window. Same
+      // used = prompt + cache figure the status panel reads from the transcript.
+      if (ev && ev.message && typeof ev.message.model === 'string' && ev.message.model && ev.message.model !== '<synthetic>') s.model = ev.message.model;
+      const cu = ev && ev.message && ev.message.usage;
+      if (cu) {
+        const used = (cu.input_tokens || 0) + (cu.cache_creation_input_tokens || 0) + (cu.cache_read_input_tokens || 0);
+        const size = used > 0 ? (windowFor(s.model || '', s.cwd, used) || 0) : 0;
+        if (used > 0 && size > 0) send(tabId, { type: 'usage', used, size });
+      }
       const events = normalizeClaudeEvent(ev);
       for (const ne of events) {
-        if (ne.type === 'session' && ne.sessionId) s.sessionId = ne.sessionId;
-        if (ne.type === 'turn_end') s.turnOpen = false;
+        if (ne.type === 'session' && ne.sessionId) {
+          if (costSession && costSession !== ne.sessionId) reportedCost = 0;
+          costSession = ne.sessionId;
+          s.sessionId = ne.sessionId;
+        }
+        if (ne.type === 'turn_end') {
+          s.turnOpen = false;
+          if (Number.isFinite(ne.costUsd) && ne.costUsd >= 0) {
+            const total = ne.costUsd;
+            ne.costUsd = reportedCost === null ? undefined : Math.max(0, total - reportedCost);
+            reportedCost = Math.max(reportedCost || 0, total);
+          }
+        }
       }
-      for (const ne of events) { if (ne && ne.type === 'permission') offer(s, tabId, ne); else send(tabId, ne); }
+      // The CLI reports an API failure twice: as a synthetic assistant message and
+      // again as the failed result. Hold synthetic text until the turn ends and
+      // drop it when the failure carries the same words.
+      const synthetic = ev && ev.type === 'assistant' && ev.message && ev.message.model === '<synthetic>';
+      for (const ne of events) {
+        if (synthetic && ne && ne.type === 'text_final') { (s.heldSynthetic = s.heldSynthetic || []).push(ne); continue; }
+        if (ne && ne.type === 'turn_end' && s.heldSynthetic) {
+          const failure = ne.isError && ne.text ? ne.text.trim() : '';
+          for (const held of s.heldSynthetic) if (!failure || held.text.trim() !== failure) send(tabId, held);
+          s.heldSynthetic = null;
+        }
+        if (ne && ne.type === 'permission') offer(s, tabId, ne); else send(tabId, ne);
+      }
     }, (raw) => note(`claude non-json line: ${raw.slice(0, 200)}`));
     sessions.set(tabId, s);
     wireChild(s);
@@ -402,17 +501,23 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
   // context is reference text Husk adds for the agent alone (what the Brain
   // recalled). It rides ahead of the prompt on the wire and stays out of the
   // replay log, so the thread shows what the user typed.
-  async function prompt({ tabId, text, images, context, at } = {}) {
+  async function prompt({ tabId, text, images, context, notice, at } = {}) {
     const s = sessions.get(tabId);
     if (!s) return { ok: false, error: 'no chat session' };
     const body = String(text || '');
     const pics = cleanImages(images);
     if (!body.trim() && !pics.length) return { ok: false, error: 'empty prompt' };
+    if (s.exited) return { ok: false, error: 'agent exited' };
+    if ((s.transport === 'acp' || s.transport === 'codex') && !s.sessionId) return { ok: false, error: 'session not ready' };
     const wire = context && body.trim() ? String(context) + '\n\n' + body : body;
     const sentAt = Number.isFinite(Number(at)) && Number(at) > 0 ? Number(at) : Date.now();
     // The renderer paints the user's bubble itself before calling here, so the
     // log takes it directly rather than echoing it back.
-    record(s, Object.assign({ type: 'user', text: body, at: sentAt }, pics.length ? { images: pics.map((p) => ({ mimeType: p.mimeType })) } : {}));
+    const userEvent = Object.assign({ type: 'user', text: body, at: sentAt }, pics.length ? { images: pics.map((p) => ({ mimeType: p.mimeType })) } : {});
+    record(s, userEvent);
+    try { if (typeof recordPrompt === 'function') recordPrompt(tabId, userEvent); } catch (_) {}
+    // A quiet line under the prompt, in the thread and the replay log.
+    if (notice) send(tabId, { type: 'status', text: String(notice) });
     if (s.transport === 'openai') {
       s.messages.push({ role: 'user', content: wire });
       s.turnOpen = true;
@@ -464,6 +569,30 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
     return { ok: writeLine(s, encodeUserMessage(wire, pics)) };
   }
 
+  async function compact({ tabId } = {}) {
+    const s = sessions.get(tabId);
+    if (!s || s.exited) return { ok: false, code: 'not-ready', error: 'This chat is no longer running.' };
+    if (s.turnOpen || s.compacting) return { ok: false, code: 'busy', error: 'Wait for the current reply to finish before compacting.' };
+    if (s.transport === 'codex' && !s.compactUnsupported) {
+      if (!s.sessionId) return { ok: false, error: 'This conversation is not ready yet.' };
+      s.compacting = true; s.turnOpen = true;
+      send(tabId, [{ type: 'turn_start' }, { type: 'compaction', phase: 'started' }, { type: 'status', text: 'Compacting conversation...' }]);
+      try {
+        await s.acp.request('thread/compact/start', { threadId: s.sessionId });
+        return { ok: true };
+      } catch (err) {
+        s.compacting = false; s.turnOpen = false;
+        if (err && (err.code === -32601 || /unknown method|method not found/i.test(err.message || ''))) s.compactUnsupported = true;
+        const error = s.compactUnsupported ? 'This Codex version does not support compaction here. Update Codex or start a new conversation.' : (err && err.message) || 'Could not compact this conversation.';
+        send(tabId, [{ type: 'compaction', phase: 'failed' }, { type: 'status', text: error }, { type: 'turn_end', isError: true, text: error }]);
+        return { ok: false, code: s.compactUnsupported ? 'unsupported' : 'failed', error };
+      }
+    }
+    const commands = [...s.log].reverse().find(e => Array.isArray(e.commands))?.commands || [];
+    if (['claude', 'acp'].includes(s.transport) && commands.some(c => String(c.name || c).replace(/^\//, '') === 'compact')) return prompt({ tabId, text: '/compact' });
+    return { ok: false, code: 'unsupported', error: 'This CLI does not advertise compaction in this chat.' };
+  }
+
   // A turn Husk answered itself (a slash command run through the CLI's own
   // non-interactive form). It is logged like any other, so a reload keeps it.
   function local({ tabId, text, reply, isError } = {}) {
@@ -508,7 +637,7 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
       const resolve = s.pendingPerms.get(id);
       if (!resolve) return { ok: false, error: 'unknown permission request' };
       s.pendingPerms.delete(id);
-      resolve(answer === null || answer === undefined ? null : String(answer));
+      resolve(answer === null || answer === undefined ? null : String(answer), answers);
     } else {
       const perm = s.permInputs.get(id);
       if (perm === undefined) return { ok: false, error: 'unknown permission request' };
@@ -552,7 +681,7 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
       return { ok: true, transport: 'codex', model: id };
     }
     // claude takes set_model on its control channel and applies it from the
-    // next turn, with no restart (verified on claude 2.1.310).
+    // next turn; a CLI that does not answer is restarted under the model below.
     const live = await new Promise((resolve) => {
       const rid = 'sm-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
       const timer = setTimeout(() => { if (s.ctlWaiters) s.ctlWaiters.delete(rid); resolve(null); }, typeof controlTimeoutMs === 'number' ? controlTimeoutMs : 10000);
@@ -604,6 +733,13 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
   }
 
   async function stop({ tabId } = {}) {
+    const pending = startTokens.get(tabId);
+    startTokens.delete(tabId);
+    if (pending && pending.wake) pending.wake();
+    return halt({ tabId });
+  }
+
+  async function halt({ tabId } = {}) {
     const s = sessions.get(tabId);
     if (!s) return { ok: true };
     s.stopped = true;
@@ -638,7 +774,7 @@ function createChatRuntime({ spawn, buildEnv, resolveExe, emit, emitExit, appVer
     return out;
   }
 
-  return { start, prompt, local, cancel, permission, allowAll, setModel, stop, stopAll, info, list, size: () => sessions.size };
+  return { start, prompt, compact, local, cancel, permission, allowAll, setModel, stop, stopAll, info, list, size: () => sessions.size };
 }
 
 module.exports = { createChatRuntime };

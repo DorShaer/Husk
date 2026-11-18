@@ -109,7 +109,7 @@ function createAcpClient({ send, onUpdate, onPermission, onNotification, onReque
 
     // Any other server request goes to the caller, which answers by returning
     // a promise of the result; undefined means it has no answer for the method.
-    const answer = typeof onRequest === 'function' ? onRequest(msg.method, msg.params || {}) : undefined;
+    const answer = typeof onRequest === 'function' ? onRequest(msg.method, msg.params || {}, msg.id) : undefined;
     if (answer !== undefined) {
       Promise.resolve(answer)
         .then((result) => reply(msg.id, result))

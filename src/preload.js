@@ -14,7 +14,7 @@ const { parseUnifiedDiff } = require('./lib/unified-diff');
 const { parseLogRecords } = require('./lib/git-refs');
 const { attribute } = require('./lib/change-attribution');
 const { stripControls, hasControls, chatFileRef } = require('./lib/terminal-safe');
-const { agentState, isLive: agentIsLive } = require('./lib/agent-state');
+const { agentState, isLive: agentIsLive, ACTIVE_MS: AGENT_ACTIVE_MS } = require('./lib/agent-state');
 const { transportFor: chatTransportFor, commandSessionId: chatCommandSessionId } = require('./lib/chat-transport');
 const { emptyThread: chatEmptyThread, reduceThread: chatReduceThread } = require('./lib/chat-events');
 
@@ -53,6 +53,7 @@ try {
       document.body.dataset.theme = boot.theme;
       document.body.dataset.mode = boot.mode;
       if (boot.accent) document.body.dataset.accent = boot.accent;
+      for (const [name, value] of Object.entries(boot.accentVars || {})) document.body.style.setProperty(name, value);
       return true;
     };
     if (!stamp()) {
@@ -69,6 +70,19 @@ try {
 } catch (_) { /* the renderer still applies the theme from config on load */ }
 
 contextBridge.exposeInMainWorld('husk', {
+  diag: { longtask: (info) => ipcRenderer.send('diag:longtask', info) },
+  foundation: {
+    chooseScanner: () => ipcRenderer.invoke('scanner:choose'),
+    removeScanner: () => ipcRenderer.invoke('scanner:remove'),
+    importBundle: () => ipcRenderer.invoke('bundles:import'),
+    bundleItems: (kind) => ipcRenderer.invoke('bundles:items', { kind }),
+    exportBundle: (item) => ipcRenderer.invoke('bundles:export', item),
+    onReview: (fn) => ipcRenderer.on('installReview:request', (_event, details) => fn(details)),
+    answerReview: (answer) => ipcRenderer.invoke('installReview:answer', answer),
+    library: () => ipcRenderer.invoke('scanner:library'),
+    onLibrary: (fn) => ipcRenderer.on('scanner:libraryUpdated', (_event, snap) => fn(snap)),
+  },
+
   pty: {
     // sessionId threads through every channel so multiple PTYs run in
     // parallel; when omitted the main process targets the active session.
@@ -104,9 +118,14 @@ contextBridge.exposeInMainWorld('husk', {
     // Past session log as chat events, for resuming into Chat view with the
     // conversation shown. { agent, sessionId, cwd } -> { ok, agent, events, error? }
     history: (opts) => ipcRenderer.invoke('chat:history', opts || {}),
+    // A discussion as text for another CLI. { tabId } | { agent, sessionId, cwd }
+    // -> { ok, mode, context, from, turns, error? }
+    handoff: (src) => ipcRenderer.invoke('chat:handoff', src || {}),
+    handoffTo: (opts) => ipcRenderer.invoke('chat:handoffTo', opts || {}),
     // { tabId, text, images? [{ mimeType, data (base64) }] } -> { ok, error? }
     prompt: (opts) => ipcRenderer.invoke('chat:prompt', opts || {}),
     // { tabId } -> { ok }
+    compact: (opts) => ipcRenderer.invoke('chat:compact', opts || {}),
     cancel: (opts) => ipcRenderer.invoke('chat:cancel', opts || {}),
     // { tabId, requestId, optionId } -> { ok }
     permission: (opts) => ipcRenderer.invoke('chat:permission', opts || {}),
@@ -180,6 +199,7 @@ contextBridge.exposeInMainWorld('husk', {
     disambiguateTitles: (items) => { try { return sessionView.disambiguateTitles(items); } catch (_) { return []; } },
     sessionCwd: (s) => { try { return sessionView.sessionCwd(s); } catch (_) { return ''; } },
     basename: (p) => { try { return sessionView.basename(p); } catch (_) { return ''; } },
+    agentLabel: (v) => { try { return sessionView.agentLabel(v); } catch (_) { return 'Agent'; } },
     inCurrentProject: (s, cwd) => { try { return sessionView.inCurrentProject(s, cwd); } catch (_) { return false; } },
     threadKey: (s, names) => { try { return sessionView.threadKey(s, names); } catch (_) { return ''; } },
     formatWhen: (ms, now) => { try { return sessionView.formatWhen(ms, now); } catch (_) { return { label: '', title: '' }; } },
@@ -189,12 +209,18 @@ contextBridge.exposeInMainWorld('husk', {
   },
   config: {
     get: () => ipcRenderer.invoke('config:get'),
+    recovery: () => ipcRenderer.invoke('config:recovery'),
     set: (partial) => ipcRenderer.invoke('config:set', partial),
   },
   models: {
     list: (opts) => ipcRenderer.invoke('models:list', opts || {}),   // opts.command targets a specific vendor
   },
   stats: { get: () => ipcRenderer.invoke('stats:get') },
+  // Plan windows and the user's daily count, for the usage bell.
+  usage: {
+    get: () => ipcRenderer.invoke('usage:get'),
+    onDaily: (cb) => ipcRenderer.on('usage:daily', (_e, p) => cb(p)),
+  },
   skills: {
     list: () => ipcRenderer.invoke('skills:list'),
     read: (mdPath) => ipcRenderer.invoke('skills:read', mdPath),
@@ -203,8 +229,6 @@ contextBridge.exposeInMainWorld('husk', {
   },
   sessions: {
     list: (opts) => ipcRenderer.invoke('sessions:list', opts || {}),
-    read: (prdPath) => ipcRenderer.invoke('sessions:read', prdPath),
-    findClaudeId: (payload) => ipcRenderer.invoke('sessions:findClaudeId', payload),
     resolveLiveTitle: (payload) => ipcRenderer.invoke('sessions:resolveLiveTitle', payload),
     rename: (payload) => ipcRenderer.invoke('sessions:rename', payload),
     resumeCommand: (payload) => ipcRenderer.invoke('sessions:resumeCommand', payload),
@@ -214,7 +238,7 @@ contextBridge.exposeInMainWorld('husk', {
   // `agents` below, which detects which agent CLIs are installed, and from the
   // Agents page, which edits reusable agent definitions.
   auth: {
-    status: () => ipcRenderer.invoke('auth:status'),
+    status: (opts) => ipcRenderer.invoke('auth:status', opts || {}),
   },
   bgAgents: {
     list: (payload) => ipcRenderer.invoke('bgAgents:list', payload || {}),
@@ -223,7 +247,6 @@ contextBridge.exposeInMainWorld('husk', {
     stop: (id) => ipcRenderer.invoke('bgAgents:control', { action: 'stop', id }),
     remove: (id) => ipcRenderer.invoke('bgAgents:control', { action: 'remove', id }),
   },
-  prds: { list: () => ipcRenderer.invoke('prds:list') },
   plugins: {
     list: () => ipcRenderer.invoke('plugins:list'),
     catalog: () => ipcRenderer.invoke('plugins:catalog'),
@@ -260,6 +283,8 @@ contextBridge.exposeInMainWorld('husk', {
     dropFile: (payload) => ipcRenderer.invoke('fs:dropFile', payload),
     listDir: (dir, showHidden) => ipcRenderer.invoke('fs:listDir', { dir, showHidden }),
     home: () => ipcRenderer.invoke('fs:home'),
+    checkFolder: (dir) => ipcRenderer.invoke('fs:checkFolder', dir),
+    recreateFolder: (dir) => ipcRenderer.invoke('fs:recreateFolder', dir),
     indexFiles: (root, showHidden) => ipcRenderer.invoke('fs:indexFiles', { root, showHidden }),
     readFile: (root, rel) => ipcRenderer.invoke('fs:readFile', { root, rel }),
     writeFile: (opts) => ipcRenderer.invoke('fs:writeFile', opts || {}),
@@ -275,6 +300,7 @@ contextBridge.exposeInMainWorld('husk', {
     repo: (root) => ipcRenderer.invoke('git:repo', { root }),
     status: (root) => ipcRenderer.invoke('git:status', { root }),
     diff: (root, opts) => ipcRenderer.invoke('git:diff', Object.assign({ root }, opts || {})),
+    image: (root, rel) => ipcRenderer.invoke('git:image', { root, rel }),
     stage: (root, paths) => ipcRenderer.invoke('git:stage', { root, paths }),
     unstage: (root, paths) => ipcRenderer.invoke('git:unstage', { root, paths }),
     hunk: (root, opts) => ipcRenderer.invoke('git:hunk', Object.assign({ root }, opts || {})),
@@ -289,10 +315,17 @@ contextBridge.exposeInMainWorld('husk', {
     show: (root, sha) => ipcRenderer.invoke('git:show', { root, sha }),
     fetch: (root, remote) => ipcRenderer.invoke('git:fetch', { root, remote }),
     openRemote: (root, opts) => ipcRenderer.invoke('git:openRemote', Object.assign({ root }, opts || {})),
+    available: (refresh = false) => ipcRenderer.invoke('git:available', { refresh }),
     init: (root, confirm) => ipcRenderer.invoke('git:init', { root, confirm }),
     watch: (root) => ipcRenderer.invoke('git:watch', { root }),
     unwatch: (root) => ipcRenderer.invoke('git:unwatch', { root }),
     onChanged: (cb) => ipcRenderer.on('git:changed', (_e, p) => cb(p)),
+  },
+  folderChanges: {
+    begin: (root) => ipcRenderer.invoke('folderChanges:begin', { root }),
+    finish: (root, id) => ipcRenderer.invoke('folderChanges:finish', { root, id }),
+    status: (root) => ipcRenderer.invoke('folderChanges:status', { root }),
+    diff: (root, rel) => ipcRenderer.invoke('folderChanges:diff', { root, rel }),
   },
   context: {
     list: () => ipcRenderer.invoke('context:list'),
@@ -301,6 +334,8 @@ contextBridge.exposeInMainWorld('husk', {
   agents: {
     state: (state, opts) => { try { return agentState(state, opts || {}); } catch (_) { return 'done'; } },
     isLive: (state) => { try { return agentIsLive(state); } catch (_) { return false; } },
+    // How long work may go without writing before it no longer reads as working.
+    activeMs: AGENT_ACTIVE_MS,
     detect: () => ipcRenderer.invoke('agents:detect'),
     install: (id) => ipcRenderer.invoke('agents:install', { id }),
     authCommand: (command, verb) => ipcRenderer.invoke('agents:authCommand', { command, verb }),
@@ -319,10 +354,20 @@ contextBridge.exposeInMainWorld('husk', {
   // The Brain: what Husk remembers and recalls into a prompt (src/lib/brain.js).
   // graph -> { ok, scope, scopeName, enabled, nodes, edges }. onActivity fires
   // with { kind: 'recall'|'capture'|'learn'|'idle', ids, busy } as it works.
+  // The background image. choose opens the system picker in main; every call
+  // resolves to { ok, background: { hash, ext, dim, blur } | null, error? }.
+  background: {
+    choose: () => ipcRenderer.invoke('background:choose'),
+    remove: () => ipcRenderer.invoke('background:remove'),
+    setDisplay: (display) => ipcRenderer.invoke('background:setDisplay', display || {}),
+  },
   brain: {
     graph: (opts) => ipcRenderer.invoke('brain:graph', opts || {}),
     addNote: (opts) => ipcRenderer.invoke('brain:addNote', opts || {}),
+    addRule: (opts) => ipcRenderer.invoke('brain:addRule', opts || {}),
+    rule: (id, patch) => ipcRenderer.invoke('brain:rule', Object.assign({}, patch, { id })),
     addFiles: (opts) => ipcRenderer.invoke('brain:addFiles', opts || {}),
+    addImage: (opts) => ipcRenderer.invoke('brain:addImage', opts || {}),
     remove: (id) => ipcRenderer.invoke('brain:remove', { id }),
     pin: (id, pinned) => ipcRenderer.invoke('brain:pin', { id, pinned }),
     setEnabled: (on) => ipcRenderer.invoke('brain:setEnabled', { on }),
@@ -465,13 +510,12 @@ contextBridge.exposeInMainWorld('husk', {
     liveDiff: (opts) => ipcRenderer.invoke('autopilot:liveDiff', opts || {}),
     history: (opts) => ipcRenderer.invoke('autopilot:history', opts || {}),
     deleteRun: (opts) => ipcRenderer.invoke('autopilot:deleteRun', opts || {}),
+    applyCheck: (opts) => ipcRenderer.invoke('autopilot:applyCheck', opts || {}),
     applyRun: (opts) => ipcRenderer.invoke('autopilot:applyRun', opts || {}),
     discardRun: (opts) => ipcRenderer.invoke('autopilot:discardRun', opts || {}),
     retained: () => ipcRenderer.invoke('autopilot:retained'),
     receipt: (opts) => ipcRenderer.invoke('autopilot:receipt', opts || {}),
     transcript: (opts) => ipcRenderer.invoke('autopilot:transcript', opts || {}),
-    race: () => ipcRenderer.invoke('autopilot:race'),
-    applyWinner: (opts) => ipcRenderer.invoke('autopilot:applyWinner', opts || {}),
     fileDiff: (opts) => ipcRenderer.invoke('autopilot:fileDiff', opts || {}),
     reportTokens: (n, runId) => ipcRenderer.invoke('autopilot:reportTokens', { tokens: n, runId: runId || undefined }),
     onStarted: (cb) => ipcRenderer.on('autopilot:started', (_e, payload) => cb(payload)),
@@ -539,11 +583,14 @@ contextBridge.exposeInMainWorld('husk', {
     // The View menu's zoom items arrive here, so they take the same path as
     // the keyboard: one readout, one terminal refit, and the level is saved.
     onZoomCommand: (cb) => ipcRenderer.on('ui:zoom-command', (_e, dir) => cb(dir)),
+    onMenuCommand: (cb) => ipcRenderer.on('menu:command', (_e, cmd, arg) => cb(cmd, arg)),
     zoomGet: () => webFrame.getZoomLevel(),
     // Husk's base zoom level, so the renderer can label it as 100%.
     zoomBase: HUSK_BASE_ZOOM,
     setRouteState: (state) => ipcRenderer.invoke('ui:setRouteState', state || {}),
     takeReloadState: () => ipcRenderer.invoke('ui:takeReloadState'),
+    saveReloadStateSync: (state) => ipcRenderer.sendSync('ui:saveReloadStateSync', state),
+    takeReloadStateSync: () => ipcRenderer.sendSync('ui:takeReloadStateSync'),
   },
   shortcuts: {
     // Main-process shortcuts are forwarded into the renderer, which owns the

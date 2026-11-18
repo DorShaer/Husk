@@ -58,7 +58,6 @@ function seed(dir, over) {
   const now = new Date().toISOString();
   return {
     agentCommand: 'node -e "setInterval(function(){},1000)"',
-    paiEnabled: false,
     voice: { enabled: false },
     projects: [{ id: 'p-fixture', name: 'Fixture', path: dir, addedAt: now, lastUsedAt: now }],
     activeProjectId: 'p-fixture',

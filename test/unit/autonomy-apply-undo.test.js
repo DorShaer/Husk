@@ -193,3 +193,16 @@ test('an encrypted scoped undo round-trips through decrypt', () => {
   assert.equal(rev.ok, true);
   assert.equal(read(ws, 'src/a.js'), 'original a');
 });
+
+test('a later partial Apply keeps the first undo state and adds newly applied files', () => {
+  write(ws, 'first.txt', 'original first');
+  write(ws, 'later.txt', 'original later');
+  assert.equal(Snapshot.captureSnapshot(ws, storage, SID, { paths: ['first.txt'], keepEarlier: true }).ok, true);
+  write(ws, 'first.txt', 'applied first');
+  assert.equal(Snapshot.captureSnapshot(ws, storage, SID, { paths: ['first.txt', 'later.txt'], keepEarlier: true }).ok, true);
+  write(ws, 'first.txt', 'applied again');
+  write(ws, 'later.txt', 'applied later');
+  assert.equal(Snapshot.restoreFromSnapshot(ws, storage, SID).ok, true);
+  assert.equal(read(ws, 'first.txt'), 'original first');
+  assert.equal(read(ws, 'later.txt'), 'original later');
+});

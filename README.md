@@ -35,6 +35,11 @@ CLI agents are powerful and free. But they live in a black-on-black terminal tha
 
 <br /><br />
 
+<img src="docs/images/husk-brain.png" alt="Brain page with saved memories and the connections between them" width="900" />
+<br /><sub><i>Save notes, teach Husk from text files, or let it keep a short record after a chat. Before your next message it brings back only the memories that fit, and the Synapses view shows how they connect.</i></sub>
+
+<br /><br />
+
 <img src="docs/images/husk-agents.png" alt="Agents page" width="450" />
 <img src="docs/images/husk-workflows.png" alt="Workflows hub" width="450" />
 <br /><sub><i>Curate the agent personas active for the next session. Start a multi-step automation from a ready-made topology, or build your own in the graph editor.</i></sub>
@@ -134,7 +139,7 @@ Prefer to grab an installer by hand? Pull the latest for your OS from the [relea
 | macOS | `husk-v<version>-mac-arm64.dmg` (Apple Silicon) or `husk-v<version>-mac-x64.dmg` (Intel); drag to Applications |
 | Windows | `husk-v<version>-win-x64.exe` (NSIS installer) |
 
-No Node, no npm, no `git clone`. Husk bundles its own Electron runtime and copies the agent reasoning layer into `~/.claude/` on first launch.
+No Node, no npm, no `git clone`. Husk bundles its own Electron runtime.
 
 > **macOS first launch (unsigned builds).** The .dmg ships unsigned today. Drag Husk to Applications, try to open it, click **Cancel** on the Gatekeeper prompt, then open **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**. A second prompt confirms and Husk launches normally from then on. Faster path if you live in the terminal: `xattr -dr com.apple.quarantine /Applications/Husk.app`. Apple Developer ID signing is on the roadmap.
 
@@ -160,7 +165,7 @@ cd husk
 ./installer/install.sh
 ```
 
-`install.sh` runs `npm install`, rebuilds `node-pty` for Electron's Node ABI, registers Husk with your OS (`.desktop` on Linux, `.app` bundle in `~/Applications` on macOS), and bootstraps LifeOS into `~/.claude/`.
+`install.sh` runs `npm install`, rebuilds `node-pty` for Electron's Node ABI, registers Husk with your OS (`.desktop` on Linux, `.app` bundle in `~/Applications` on macOS).
 
 For pure dev mode without system registration:
 
@@ -184,38 +189,40 @@ a cleanup path such as `~/.local/share/husk`, the uninstaller skips that path.
 ## Usage
 
 1. Launch Husk from your applications menu, or run `husk` from a terminal after installing.
-2. On first run, Husk asks for the agent's name (default: Husk) and the agent command (default: `claude`). Both are saved to `~/.config/husk/config.json` and can be edited later in Preferences.
+2. On first run, connect your CLIs and choose your workspace and appearance. Preferences > Workspace contains the default chat CLI and startup options. Voice & recaps contains the assistant name.
 3. Start chatting. Agents with a machine protocol (Claude over stream-json; Copilot, Gemini and Kiro over the Agent Client Protocol; Codex over its app-server) open as a **native chat**. Aider opens in the agent's own terminal, a real PTY where slash commands, stdin and ctrl-c all work. You can pin every agent to the terminal view in Preferences (Chat view).
    - **The thread.** Replies stream as markdown. A thought folds under `Thinking`. Each tool call is one line you can open into its input, output and diff (Formatted or Raw). A permission request becomes a card with the agent's own choices. A live row at the foot of the thread says when the agent is thinking or running a tool. When a turn changes files, open the Changes canvas to inspect the working-tree diff, pull request and checks beside the conversation.
-   - **Sessions.** The column beside the thread lists every past session, grouped by folder, project and day, with its live state. Click one to reopen it with its history. A cold start reopens your newest session (set `resumeLastOnLaunch: false` in config to start empty instead). Chat tabs survive a reload.
+   - **Sessions.** The column beside the thread lists every past session, grouped by folder, project and day, with its live state. Click one to reopen it with its history. A cold start reopens your newest session. Change this in Preferences > Workspace > Reopen the most recent conversation. Chat tabs survive a reload.
    - **The composer.** `/` lists every command the agent offers; scroll, or keep typing to narrow. `@` completes a file path. Up and Down recall earlier prompts. Alt+Backspace and Alt+Delete remove a word. Paste or drop an image and it goes with your next message.
    - **While it works.** Enter queues your next message and sends it when the agent is free. Up on an empty field takes the last queued message back, to edit or to delete. **Edit and resend** under a reply rewrites that prompt and replaces everything after it.
    - **Models.** The model chip in the composer, or `/model`, lists the models your CLI itself offers and switches in place, without restarting the session. Type any other id the CLI accepts.
-   - **Help.** The help button at the top right and the Help menu open a prefilled GitHub issue to report a bug or request a feature.
-4. Drag files onto the window to share them with the agent, or use **Attach** in the composer and **Add context** in the page head.
-5. Switch pages with the rail or `Alt+1..6`. Open the command palette with `Cmd/Ctrl+K`.
+   - **Help.** The help button and native Help menu open the bundled documentation, keyboard shortcuts and troubleshooting guide, even offline. They also link to the repository and prefilled bug reports or feature requests.
+4. Drag files onto the window to share them with the agent, or use **Attach** in the composer.
+5. Switch pages with the rail or `Alt+1..7`. Open the command palette with `Cmd/Ctrl+Shift+K`. Outside terminals, `Cmd/Ctrl+K` also works.
 6. If a chat starts agents that keep working on their own, the topbar says how many are running and how many are waiting on you. Click it or press `Alt+A` to pick one and continue its conversation.
 
 ### Pages
 
-- **Chat**: the conversation as a native thread, with a Sessions column beside it (or the CLI's own terminal when Preferences says so, or the CLI has no chat protocol). Open the Changes canvas to inspect the working-tree diff, the branch's pull request, and its checks beside the conversation. Drag-drop files and images; the status panel folds out on the right and its width is yours to drag. Split the view to run two chats side by side (`Ctrl+\`).
+- **Chat**: the conversation as a native thread, with a Sessions column beside it (or the CLI's own terminal when Preferences says so, or the CLI has no chat protocol). Open the Changes canvas to inspect the working-tree diff, the branch's pull request, and its checks beside the conversation. Drag-drop files and images; the status panel folds out on the right. Drag the edges of the navigation sidebar, Sessions column, and status panel to resize them; widths are remembered, and double-click resets them. Split the view to run two chats side by side (`Ctrl+\`). Chat actions copies the chat ID or resume command. Move discussion can also continue in a specific destination chat ID. The New menu lists installed CLIs; the composer's CLI and folder chips switch the conversation context, with an option to carry its history into the new session.
 - **Terminal**: a real shell in your project, in tabs, pinned in the rail above the tool selector.
+- **Brain**: what Husk remembers. Save notes, teach it from text files, or let it capture a short record after a chat; the memories that fit are recalled into your next message. Mark a note as a rule to send it with unrelated chat prompts too. Rules default to global scope, can be limited to a workspace, and are included when a terminal session starts. The Rules tab shows disabled rules and rules held back by the prompt budget. Every memory can be pinned, edited, or removed, and the Synapses view shows how they connect.
 - **Agents**: pick which agent personas activate for the next session. Multiple can be active at once; import from any local CLI's agent dir, or install an agent pack from a local repo folder or a repo URL (e.g. `https://github.com/dev/agent-repo`).
 - **Workflows**: a visual graph editor for chained steps with conditional branching and AI-decided routing.
 - **Projects**: switch the agent cwd between known project directories (so Claude's "remember this folder" trust prompts work).
 - **Autopilot**: hand the agent a goal and walk away. Solo runs one agent; Team splits the goal across collaborating parallel runs. Each run executes in its own git worktree with a dedicated PTY, an independent time/token/dollar budget, a hash-chained audit log, and an optional pre-run snapshot for one-click revert. A swarm bar shows every active run.
+  Models lets you assign a vendor and model independently to Simple tasks, Complex tasks, Planner, and Integrator. A job can override the worker vendor/model without changing planner or integrator settings. Each job type runs only on the CLI you choose for it; a job type with no CLI chosen does not run until you pick one. A CLI without a picked model uses its own default. Routing is captured when work starts so later settings changes do not redirect queued jobs. See [multi-vendor routing](docs/multi-vendor-routing.md).
 - **Prompts**: local-only prompt library; one click sends a saved prompt into the agent.
 - **Skills**: install and manage Agent Skills in the shared `~/.agents/skills/` library. Husk exposes them through each agent's native skill location, so one skill can be used across agents.
 - **MCP**: install / toggle / health-check Model Context Protocol servers. Clone one to start a variant from its settings.
 - **Plugins**: browse and manage Husk plugins.
 - **Source**: read the working-tree diff, stage a file or an individual change, and commit, on the branch you are on.
 - **Files**: drag-drop file context, with a tree view of your working directory.
-- **Schedule**: run a workflow or an autopilot goal on a recurrence, every so often, daily, or on a chosen weekday.
+- **Schedule**: run a workflow on a recurrence, every so often, daily, or on a chosen weekday.
 - **Artifacts**: a ledger of every workflow and autopilot run with its outcome, time, tokens and cost, and the per step detail.
 - **GitHub**: the open pull requests and issues for the current project, with their checks, labels and review state, filtered as you type.
 - **Sessions**: resume any prior agent session from its JSONL log. Group the roster into folders you name. Agents a chat started are grouped under that chat rather than listed beside it.
 
-A command palette (`Cmd/Ctrl+K`) searches chats, projects, workflows, agents, prompts and skills from anywhere. Preferences is its own page (agent command, name, chat view, theme, accent, voice, recap, sidebar defaults, and an About entry that reports the version and checks for updates), opened from the rail.
+A command palette (`Cmd/Ctrl+Shift+K`, or `Cmd/Ctrl+K` outside terminals) searches chats, projects, workflows, agents, prompts and skills from anywhere. Preferences is its own page, opened from the rail, grouping settings into Workspace, Appearance, Voice & recaps, Usage & limits, Connections, and About & help (the About group reports the version and checks for updates).
 
 ## Architecture
 
@@ -243,10 +250,6 @@ husk/
 │       ├── styles.css
 │       ├── assets/
 │       └── vendor/            Bundled xterm.js + addons
-├── installer/                 OS install assets + verify helpers
-│   └── lib/                   Download-and-verify (verify.sh, verify.ps1)
-├── libs/
-│   └── lifeos/                Bundled LifeOS framework, third-party
 ├── test/                      Unit tests (node:test) + Electron smoke
 │   ├── unit/                  node:test unit suite (500+ tests)
 │   └── e2e/                   Playwright smoke (real Electron boot)
@@ -282,29 +285,23 @@ husk/
 - `src/lib/` holds the pure helpers: shell-quote, path-confine, pty-spawn, user-path, agent-md, workflow-graph, the `mcp/` per-agent adapters, the `autonomy/` Autopilot safety modules, and about twenty more (see `docs/architecture.md`). Each is small, with no Electron / fs / spawn coupling, and unit-tested. New IPC handler logic should land here.
 - `src/preload.js` exposes a narrow `window.husk` API to the renderer through `contextBridge`. The renderer never gets Node access.
 - `src/renderer/` is the renderer: a single-page Electron view with rail navigation, the native chat thread (`chat-ui.js`, `chat-md.js`) beside an embedded xterm, a status panel, and the Chat / Terminal / Agents / Workflows / Autopilot / Projects / Prompts / Skills / MCP / Plugins / Source / Files / Schedule / Artifacts / GitHub / Sessions surfaces plus Preferences.
-- `libs/lifeos/` is the bundled LifeOS framework, copied into `~/.claude/` on first install. It contains the system prompt, Algorithm phase machine, agents, commands, hooks, the identity scaffold and curated skills. Husk exposes enabled skills through the shared Agent Skills library. An install that already has the older `~/.claude/PAI/` layout is left alone rather than given a second framework beside it.
-- `installer/` holds OS install assets and the SHA-256 download verifier (`verify.sh`, `verify.ps1`).
 - `installer/` holds the source installers (`install.sh`, `install.ps1`, `uninstall.sh`) alongside the packaging assets they use. `scripts/` holds the published one-line installers and the dev launcher (`run.sh`). The repo root stays free of loose scripts.
 
 ### Updating what we vendor
 
 ```bash
-./scripts/update-vendor.sh            # framework + dependencies, every gate
+./scripts/update-vendor.sh            # dependencies, every gate
 ./scripts/update-vendor.sh --fast     # skip the package build and the e2e run
 ./scripts/update-vendor.sh --commit   # commit once everything passes
 ```
 
-Refreshes `libs/lifeos/` from the latest upstream release and the npm tree
-within the ranges `package.json` already allows, then refuses to leave anything
+Refreshes the npm tree within the ranges `package.json` already allows, then refuses to leave anything
 staged unless it passes:
 
-- **Privacy.** The whole vendored tree, plus every line the run added elsewhere,
-  is searched for identifiers belonging to the machine running it: home
-  directory, username, hostname, git name and email. Those are read from the
-  environment at run time and never written to a file, because hard-coding them
-  is the thing being guarded against. The framework is always taken from the
-  published release tarball, never from a local `~/.claude`, which is where a
-  maintainer's own notes and answered templates live.
+- **Privacy.** Every line the run added is searched for identifiers belonging
+  to the machine running it: home directory, username, hostname, git name and
+  email. Those are read from the environment at run time and never written to a
+  file, because hard-coding them is the thing being guarded against.
 - **Secrets and CVEs.** gitleaks over full history and trivy over the manifests,
   both pinned to the versions CI uses so a local pass means a CI pass.
 - **Package size.** Builds the `.deb` and fails below the 100 MiB ceiling that
@@ -312,15 +309,11 @@ staged unless it passes:
 - **Tests.** Unit always, end-to-end unless `--fast`.
 
 A failing gate restores the working tree, so a bad run leaves nothing behind.
-Local corrections to vendored files (a dependency range moved off an
-unpatchable version, say) live in `VENDOR_FIXUPS` inside the script and are
-re-applied after each refresh, since re-vendoring would otherwise revert them
-silently.
 
 ### Testing
 
 ```bash
-npm test         # node:test unit suite (500+ tests), well under a second
+npm test         # node:test unit suite
 npm run test:e2e # Playwright smoke that boots real Electron
 npm run test:all # both
 ```
@@ -336,13 +329,16 @@ CI runs both jobs on every push to `main`, `development`, and `dev/**`, and on e
 
 ## Configuration
 
-All settings live in `~/.config/husk/config.json` and are editable from the Preferences page:
+Preferences groups settings into Workspace, Appearance, Voice & recaps, Usage & limits, Connections, and About & help. Search finds individual settings. Most preferences are stored in `~/.config/husk/config.json`; supported API keys use the operating system keychain.
 
-- **Agent command** (`claude`, `copilot`, `codex`, `aider`, `gemini`, `kiro`, or any binary on `$PATH`) and **agent name**
+- **Default chat CLI** in Workspace chooses the starting CLI. The New chat menu still lets you choose a different installed CLI for each discussion. **Agent name** lives in Voice & recaps.
 - **Active agent profiles**: one or more agent personas applied to the next session
 - **Chat view** (`chatView`: `chat` or `terminal`): how a new chat opens, native chat or the agent's own terminal. Chat is the default for CLIs with a protocol
 - **Active project**: drives the agent's working directory so per-folder trust prompts work
-- **Theme** (11 themes: Light, the default for a new install with the indigo accent, Sepia, Ember, Midnight, Dark, Tokyo Night, Catppuccin, Rose Pine, Gruvbox, Nord, Dracula) and **accent color** (orange / cyan / indigo / emerald / rose)
+- **Theme and accent color**: 21 themes, 5 of them light. The dark set is Dark, Midnight, Tokyo Night, Catppuccin, Rose Pine, Gruvbox, Nord, Dracula, Ember, Solarized Dark, One Dark, Monokai, Everforest, Kanagawa, Eclipse, and High contrast dark. The light set is Light, Sepia, Solarized Light, High contrast light, and Glass (clear glass plates, frosted and transparent panes with lit edges, on a cool silver field). Pick a built-in accent or a custom color.
+- **Background image**: open Preferences → Appearance and use the first card to choose a local PNG, JPEG or WebP. Husk checks its byte and pixel limits, re-encodes it in a sandboxed helper, and stores a private copy without the source path. The image appears behind the interface, with a preview and adjustable dim and blur.
+- **Usage**: a bell shows context, plan and daily budget readings when available. Warnings have configurable thresholds. An optional daily-budget confirmation asks before sending.
+- **Transcript retention**: keep local chat history for continuation between CLIs, with a default retention of 30 days.
 - **Voice** (enable, voice model, speaking rate)
 - **Show recap line** (when off, suppresses end-of-response summaries)
 - **Reopen the last session on launch** (`resumeLastOnLaunch`, on by default)
@@ -350,7 +346,7 @@ All settings live in `~/.config/husk/config.json` and are editable from the Pref
 
 ## Privacy
 
-Husk runs entirely on your machine. No telemetry. No analytics. The only network calls are made by the agent CLI itself when it talks to its model provider, and by the optional voice installer when it downloads Piper and a voice model from their public release.
+Husk stores your data on your machine. No telemetry. No analytics. Network requests support configured integrations such as GitHub, updates, voice downloads and plan-usage readings, alongside each agent CLI's model calls. Usage preferences can disable direct plan-usage requests and rely on events reported by the CLI. Transcript storage, background processing and bundle staging run locally; a configured external scanner runs on the staged files.
 
 ## License
 
@@ -358,6 +354,7 @@ Husk is source-available under the [Elastic License 2.0](LICENSE). You can use i
 
 ## Credits
 
-Husk's reasoning, thinking format, and Algorithm phase machine come from [LifeOS](https://github.com/danielmiessler/LifeOS) (formerly PAI) and Telos by **Daniel Miessler**. If you find Husk useful go show him some love.
-
 The terminal embedding uses [`xterm.js`](https://github.com/xtermjs/xterm.js) plus [`node-pty`](https://github.com/microsoft/node-pty). On Linux the PTY is established through `script(1)` so `claude --resume` gets its controlling terminal. Voice is via [Piper TTS](https://github.com/rhasspy/piper). The workflow editor uses [Drawflow](https://github.com/jerosoler/Drawflow).
+
+
+More detail: [chat continuation, Brain rules and usage](docs/chat-continuation.md) and [installation and updates](docs/installation.md).

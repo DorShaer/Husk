@@ -25,12 +25,14 @@
 //   { type: 'plan', entries: [{ content, status, priority }] }
 //   { type: 'commands', commands: [{ name, description }] }
 //   { type: 'title', title }                     agent-chosen session title
-//   { type: 'usage', used, size }                context window tokens used / size
+//   { type: 'usage', used, size, total? }        context window tokens used / size; total is the session's running token count
 //   { type: 'billing', plan }                    'subscription' when the CLI reports plan windows
+//   { type: 'limit', rejected, window?, resetsAt?, windows: [{ window, pct, resetsAt, warning }] }   plan windows the CLI reports
 //   { type: 'mode', modeId }
 //   { type: 'turn_end', stopReason, isError?, durationMs?, costUsd?, usage? }
 //   { type: 'status', text }
 //   { type: 'truncate', key }                   drop the item with this key and everything after it
+//   { type: 'expire', text? }                   open approvals expire and running tools stop (the agent is gone)
 //   { type: 'error', text }
 //   { type: 'changes', files: [{ path, status, adds, dels }], adds, dels }   working-tree files that moved during the turn
 //   { type: 'pr', number, title, url, checks: { total, failed, pending, state } }   the branch's pull request
@@ -42,6 +44,10 @@
 const TOOL_STATUS = { pending: 'running', in_progress: 'running', completed: 'done', failed: 'error' };
 
 function str(v) { return v === null || v === undefined ? '' : String(v); }
+function modelValue(value) {
+  const model = typeof value === 'string' ? value.trim() : '';
+  return model && !/^<.*>$/.test(model) ? model : '';
+}
 
 // ─── ACP ─────────────────────────────────────────────────────────────────────
 
@@ -260,7 +266,10 @@ function normalizeClaudeEvent(ev) {
     case 'rate_limit_event': {
       const info = ev.rate_limit_info || {};
       const kind = str(info.rateLimitType);
-      return kind === 'five_hour' || kind === 'seven_day' || info.unifiedWindows ? [{ type: 'billing', plan: 'subscription' }] : [];
+      const out = kind === 'five_hour' || kind === 'seven_day' || info.unifiedWindows ? [{ type: 'billing', plan: 'subscription' }] : [];
+      const limit = parseRateLimitInfo(info);
+      if (limit) out.push(limit);
+      return out;
     }
     case 'result':
       return [{
@@ -275,6 +284,34 @@ function normalizeClaudeEvent(ev) {
     default:
       return [];
   }
+}
+
+// parseRateLimitInfo reads a rate_limit_info object into a limit event, or
+// null when it carries nothing usable. Field names and units follow the CLI's
+// own schema for the event: utilization is a fraction of the window, resetsAt
+// is epoch seconds, and only the top-level status says a request was refused.
+//   { type: 'limit', rejected, window?, windows: [{ window: 'short' | 'weekly', pct, resetsAt, warning }] }
+const LIMIT_WINDOWS = { five_hour: 'short', seven_day: 'weekly', seven_day_opus: 'weekly', seven_day_sonnet: 'weekly' };
+function parseRateLimitInfo(info) {
+  if (!info || typeof info !== 'object') return null;
+  const ms = (sec) => (typeof sec === 'number' && isFinite(sec) && sec > 0 ? Math.round(sec * 1000) : 0);
+  const byWindow = new Map();
+  const put = (name, w, status) => {
+    if (!name || typeof w.utilization !== 'number' || !isFinite(w.utilization) || w.utilization < 0) return;
+    byWindow.set(name, { window: name, pct: w.utilization * 100, resetsAt: ms(w.resetsAt), warning: status === 'allowed_warning' || status === 'rejected' });
+  };
+  const uw = info.unifiedWindows && typeof info.unifiedWindows === 'object' ? info.unifiedWindows : {};
+  for (const key of ['five_hour', 'seven_day']) {
+    if (uw[key] && typeof uw[key] === 'object') put(LIMIT_WINDOWS[key], uw[key], uw[key].status);
+  }
+  const top = LIMIT_WINDOWS[str(info.rateLimitType)];
+  if (top && !byWindow.has(top)) put(top, info, info.status);
+  const rejected = info.status === 'rejected';
+  if (!byWindow.size && !rejected) return null;
+  const ev = { type: 'limit', rejected, windows: Array.from(byWindow.values()) };
+  if (top) ev.window = top;
+  if (rejected && ms(info.resetsAt)) ev.resetsAt = ms(info.resetsAt);
+  return ev;
 }
 
 function kindForTool(name) {
@@ -345,7 +382,7 @@ function reduceThread(state, event) {
     case 'session':
       return Object.assign({}, s, {
         sessionId: event.sessionId || s.sessionId,
-        model: event.model || s.model,
+        model: modelValue(event.model) || modelValue(s.model) || null,
         commands: Array.isArray(event.commands) ? event.commands : s.commands,
         modes: event.modes || s.modes,
         models: event.models || s.models,
@@ -403,7 +440,7 @@ function reduceThread(state, event) {
       }
       const next = appendItem(base, {
         kind: 'permission', requestId: event.requestId, toolCallId: event.toolCallId, title: event.title,
-        detail: event.detail, input: event.input, options: event.options || [], decision: null,
+        detail: event.detail, input: event.input, options: event.options || [], decision: null, nonBlocking: !!event.nonBlocking,
       });
       return Object.assign({}, next, { pending: next.pending.concat([event.requestId]) });
     }
@@ -442,11 +479,25 @@ function reduceThread(state, event) {
       // is billed per turn, so the figure would only alarm; it is dropped.
       const costUsd = s.billing === 'subscription' ? undefined : event.costUsd;
       const meta = { kind: 'meta', stopReason: event.stopReason, isError: !!event.isError, durationMs: event.durationMs, costUsd, text: event.text };
-      return appendItem(closed, meta, { turnOpen: false, pending: [] });
+      const pending = s.pending.filter((id) => s.items.some((it) => it.kind === 'permission' && it.requestId === id && it.nonBlocking));
+      return appendItem(closed, meta, { turnOpen: false, pending });
     }
     // Edit and resend: the thread is cut from the edited prompt onward so the
     // new prompt takes its place. The agent's own memory of the old exchange
     // is not rewound; this is the view, and the reply that follows.
+    // The agent behind the thread is gone: open approval cards can never be
+    // answered and running tool calls never finish, so both settle.
+    case 'expire': {
+      const why = str(event.text) || 'Expired';
+      let touched = false;
+      const items = s.items.map((it) => {
+        if (it.kind === 'permission' && !it.decision && !it.expired) { touched = true; return Object.assign({}, it, { expired: why }); }
+        if (it.kind === 'tool' && it.status !== 'done' && it.status !== 'error' && it.status !== 'stopped') { touched = true; return Object.assign({}, it, { status: 'stopped' }); }
+        return it;
+      });
+      const closed = closeOpen(touched ? withItems(s, items) : s);
+      return Object.assign({}, closed, { turnOpen: false, pending: [] });
+    }
     case 'truncate': {
       const idx = s.items.findIndex((it) => it.key === event.key);
       if (idx === -1) return s;
@@ -455,7 +506,7 @@ function reduceThread(state, event) {
     case 'changes': {
       const files = Array.isArray(event.files) ? event.files : [];
       if (!files.length) return s;
-      return appendItem(s, { kind: 'changes', files, adds: event.adds || 0, dels: event.dels || 0 });
+      return appendItem(s, { kind: 'changes', files, adds: event.adds || 0, dels: event.dels || 0, ...(event.partial ? { partial: true } : {}) });
     }
     // One card per pull request: a later read of the same number updates the
     // card in place, so the thread carries its current state once.
@@ -491,7 +542,7 @@ function findLastIndex(arr, pred) {
   if (typeof window !== 'undefined') window.HuskChatEvents = exports;
 })({
   normalizeAcpUpdate, normalizeAcpPermission, normalizeAcpSession,
-  normalizeClaudeEvent, toolDetail, kindForTool,
-  emptyThread, reduceThread,
+  normalizeClaudeEvent, parseRateLimitInfo, toolDetail, kindForTool,
+  emptyThread, reduceThread, modelValue,
 });
 })();

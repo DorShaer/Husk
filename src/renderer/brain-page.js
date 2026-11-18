@@ -40,6 +40,26 @@
     handed: new Set(), touching: new Set(), pos: new Map(), made: '',
     all: (() => { try { return localStorage.getItem('husk.brain.all') !== '0'; } catch (_) { return true; } })(),
   };
+  const labelOf = (n) => (n.rule ? 'Rule' : KIND_LABEL[n.kind]);
+  // Where a rule applies and whether it goes out with a message here.
+  function ruleState(n) {
+    const d = state.data;
+    const reach = !n.scope ? 'all workspaces' : n.scope === d.scope ? 'this workspace' : (n.scope.split(/[\\/]/).pop() || 'another workspace');
+    const sending = !n.ruleOn ? 'off' : (d.rulesHeld || []).includes(n.id) ? 'over budget, not sent' : 'on';
+    return `${reach} · ${sending}`;
+  }
+  // Every rule says how it is kept: Husk rewrites the reply, or the agent is asked.
+  const RULE_MODE = {
+    enforced: ['Enforced', "Husk rewrites the agent's replies in the chat view. Costs no tokens"],
+    asked: ['Asked', 'Sent to the agent with each message; the agent decides'],
+  };
+  function ruleBadge(n) {
+    const mode = n.enforced ? 'enforced' : 'asked';
+    const b = h('span', 'br-badge', RULE_MODE[mode][0]);
+    b.dataset.mode = mode;
+    b.title = RULE_MODE[mode][1];
+    return b;
+  }
   const isEdge = (e, pick) => !!pick && ((e.a === pick.a && e.b === pick.b) || (e.a === pick.b && e.b === pick.a));
 
   // ─── Data ─────────────────────────────────────────────────────────────────
@@ -478,6 +498,11 @@
     const held = d.nodes.length - chunks;
     const linked = new Set();
     for (const e of d.edges) if (e.kind === 'synapse') { linked.add(e.a); linked.add(e.b); }
+    const rules = d.nodes.filter((n) => n.rule);
+    const rulesOn = rules.filter((n) => n.ruleOn).length;
+    const rulesHeld = (d.rulesHeld || []).length;
+    const rulesEnforced = rules.filter((n) => n.enforced).length;
+    const dec = d.decisions || { kept: 0, limit: 0 };
     const rate = st.prompts ? Math.round((st.recalled / st.prompts) * 100) : 0;
     // A thin bar beside a figure: the split by kind, in the colours of the dots.
     const split = () => {
@@ -507,11 +532,15 @@
           chunks ? 'from ' + plural(kinds.file, 'file', 'files') : 'No files learned yet'],
         ['Connections', compact(synapses), 'Pairs of memories that share rare words. Select a memory to explore its connections',
           synapses ? `${linked.size} of ${d.nodes.length} linked` : 'None found yet'],
+        ['Rules', compact(rules.length), 'Instructions sent with each chat message and at terminal session start',
+          rules.length ? `${rulesOn} on${rulesEnforced ? ` · ${rulesEnforced} enforced` : ''}${rulesHeld ? ` · ${rulesHeld} not sent` : ''}` : 'None set'],
+        ['Decisions', compact(dec.kept), `Finished chat turns kept, across all workspaces. Past ${dec.limit} the oldest unpinned one is dropped; pin one to keep it`,
+          `of ${dec.limit} kept${dec.kept >= dec.limit ? ' · oldest dropped first' : ''}`],
       ]],
       ['What the Brain has done', [
         ['Prompts seen', compact(st.prompts), 'Prompts the Brain looked at, across all workspaces',
           st.prompts ? `${compact(st.recalled)} woke a memory` : 'None yet'],
-        ['Hit rate', st.prompts ? rate + '%' : '–', 'Share of those prompts that woke at least one memory',
+        ['Hit rate', st.prompts ? rate + '%' : '-', 'Share of those prompts that woke at least one memory',
           st.prompts ? 'of prompts seen' : 'No prompts yet', meter(rate)],
         ['Tokens added', st.chars ? '~' + compact(Math.round(st.chars / 4)) : '0', 'Rough size, in tokens, of everything recalled into prompts so far',
           st.chars && st.recalled ? `~${compact(Math.round(st.chars / 4 / st.recalled))} per recall` : 'Nothing yet'],
@@ -521,6 +550,7 @@
       const grp = h('div', 'br-stat-group');
       grp.setAttribute('role', 'group');
       grp.setAttribute('aria-label', name);
+      grp.style.flexGrow = String(tiles.length);
       for (const [label, value, title, sub, mark] of tiles) {
         const t = h('div', 'br-stat');
         t.title = `${title}. ${sub}.`;
@@ -556,6 +586,9 @@
     if (empty) empty.hidden = !!state.selected || !!state.edge;
     const count = byId('br-tab-activity-count');
     if (count) count.textContent = d.log.length ? String(d.log.length) : '';
+    const ruleCount = byId('br-tab-rules-count');
+    const ruleTotal = d.nodes.filter((n) => n.rule).length;
+    if (ruleCount) ruleCount.textContent = ruleTotal ? String(ruleTotal) : '';
     paintStats();
     paintTab();
     paintDetail();
@@ -576,8 +609,10 @@
   function paintList() {
     const list = byId('br-list');
     if (!list) return;
-    const q = state.query.trim().toLowerCase();
+    const onlyRules = state.tab === 'rules';
+    const q = onlyRules ? '' : state.query.trim().toLowerCase();
     const rows = state.data.nodes
+      .filter((n) => !onlyRules || n.rule)
       .filter((n) => n.kind !== 'chunk')
       // Finished chat turns are the chat's own record; they live in the network
       // and the Activity tab. A pinned turn is kept in the list.
@@ -586,9 +621,12 @@
       .sort((a, b) => (b.pinned - a.pinned) || (b.createdAt - a.createdAt));
     list.replaceChildren();
     if (!rows.length) {
-      list.appendChild(h('div', 'br-list-empty', q ? 'Nothing matches that search.' : 'Nothing remembered yet.'));
+      list.appendChild(h('div', 'br-list-empty', q ? 'Nothing matches that search.'
+        : onlyRules ? 'No rules yet. A rule is an instruction sent with every message.' : 'Nothing remembered yet.'));
       return;
     }
+    const held = onlyRules ? (state.data.rulesHeld || []).length : 0;
+    if (held) list.appendChild(h('div', 'br-detail-meta br-rules-held', `${plural(held, 'rule is', 'rules are')} over the budget of 12 rules and 800 characters, and not being sent. Pin a rule to send it first.`));
     for (const n of rows) {
       const row = h('button', 'br-row' + (n.id === state.selected ? ' is-selected' : ''));
       row.type = 'button';
@@ -599,7 +637,8 @@
       copy.appendChild(h('span', 'br-row-title', n.title || KIND_LABEL[n.kind]));
       copy.appendChild(h('span', 'br-row-preview', n.text || n.source || KIND_LABEL[n.kind]));
       row.appendChild(copy);
-      row.appendChild(h('span', 'br-row-meta', n.pinned ? 'pinned' : (n.hits ? `${n.hits}×` : KIND_LABEL[n.kind].toLowerCase())));
+      if (n.rule) row.appendChild(ruleBadge(n));
+      row.appendChild(h('span', 'br-row-meta', onlyRules ? ruleState(n) : n.rule ? 'rule' : n.pinned ? 'pinned' : (n.hits ? `${n.hits}×` : KIND_LABEL[n.kind].toLowerCase())));
       row.addEventListener('click', () => select(n.id));
       list.appendChild(row);
     }
@@ -655,23 +694,70 @@
     box.replaceChildren();
     if (line) { paintEdgeDetail(box, line); return; }
     if (!n) return;
-    box.appendChild(h('div', 'section-label', KIND_LABEL[n.kind]));
+    box.appendChild(h('div', 'section-label', labelOf(n)));
     box.appendChild(h('div', 'br-detail-title', n.title));
+    if (n.image && n.image.hash && n.image.ext) {
+      const img = h('img', 'br-detail-image');
+      img.src = `husk-bg://image/${n.image.hash}.${n.image.ext}`;
+      img.alt = n.title || 'image';
+      img.loading = 'lazy';
+      box.appendChild(img);
+    }
     const parts = n.kind === 'file' ? state.data.nodes.filter((c) => c.parent === n.id) : [];
     box.appendChild(h('div', 'br-detail-text', n.kind === 'file' ? n.source : n.text));
+    if (n.rule) box.appendChild(ruleBadge(n));
     const meta = [
-      n.scope ? 'this workspace' : 'all workspaces',
-      n.hits ? `recalled ${plural(n.hits, 'time', 'times')}` : 'not recalled yet',
+      n.rule ? ruleState(n) : n.scope ? 'this workspace' : 'all workspaces',
+      n.enforced ? 'applied to replies in the chat view; the terminal view and files an agent writes are not rewritten'
+        : n.rule ? 'sent with every message' : n.hits ? `recalled ${plural(n.hits, 'time', 'times')}` : 'not recalled yet',
       'added ' + new Date(n.createdAt).toLocaleDateString(),
     ];
     box.appendChild(h('div', 'br-detail-meta', meta.join(' · ')));
+    // A typed rule that a builtin can keep exactly is offered as one, never switched silently.
+    const sug = state.suggest && state.suggest.id === n.id && n.rule && !n.enforced ? state.suggest : null;
+    if (sug) {
+      const offer = h('div', 'br-suggest');
+      offer.appendChild(h('span', 'br-detail-meta', `Enforce this exactly? ${sug.label}. Husk rewrites the reply itself, at no token cost.`));
+      const yes = h('button', 'btn-primary', 'Enforce');
+      yes.type = 'button';
+      yes.addEventListener('click', async () => {
+        const res = await call(() => api.rule(n.id, { check: sug.check }));
+        if (res && !res.ok) say(res.error || 'That could not be changed.');
+        state.suggest = null;
+        load();
+      });
+      const no = h('button', 'ghost-btn', 'Keep asking');
+      no.type = 'button';
+      no.addEventListener('click', () => { state.suggest = null; paintDetail(); });
+      offer.append(yes, no);
+      box.appendChild(offer);
+    }
     const acts = h('div', 'br-detail-acts');
     if (n.kind !== 'chunk') {
       const pin = h('button', 'ghost-btn', n.pinned ? 'Unpin' : 'Pin');
       pin.type = 'button';
-      pin.title = 'A pinned memory wins ties when a prompt could wake several';
+      pin.title = n.rule ? 'Pinned rules are sent first when there are more than fit' : 'A pinned memory wins ties when a prompt could wake several';
       pin.addEventListener('click', async () => { await call(() => api.pin(n.id, !n.pinned)); load(); });
       acts.appendChild(pin);
+    }
+    const act = (label, title, patch) => {
+      const b = h('button', 'ghost-btn', label);
+      b.type = 'button';
+      b.title = title;
+      b.addEventListener('click', async () => {
+        const res = await call(() => api.rule(n.id, patch));
+        if (res && !res.ok) say(res.error || 'That could not be changed.');
+        load();
+      });
+      acts.appendChild(b);
+    };
+    if (n.rule) {
+      act(n.ruleOn ? 'Turn off' : 'Turn on', n.ruleOn ? 'Keep the rule, stop sending it' : 'Send this rule with every message', { on: !n.ruleOn });
+      act(n.scope ? 'Use in all workspaces' : 'Limit to this workspace', n.scope ? 'Send this rule in every workspace' : 'Send this rule only in the open workspace', { workspace: !n.scope });
+      if (n.enforced) act('Ask the agent instead', 'Send it as an instruction each turn instead of rewriting replies', { check: null });
+      act('Stop using as a rule', 'Keep it as a note that is recalled only when a prompt matches it', { rule: false });
+    } else if (n.kind === 'note') {
+      act('Make this a rule', 'Send this note with every message as an instruction to follow, in all workspaces', { rule: true });
     }
     const drop = h('button', 'ghost-btn br-forget', n.kind === 'chunk' ? 'Forget this file' : 'Forget');
     drop.type = 'button';
@@ -736,14 +822,14 @@
   function selectEdge(e) {
     if (isEdge(e, state.edge)) {
       state.edge = null;
-      if (state.tab === 'memories') paintList();
+      if (state.tab !== 'activity') paintList();
       paintDetail();
       paintNetwork();
       return;
     }
     state.selected = null;
     state.edge = { a: e.a, b: e.b };
-    if (state.tab === 'memories') paintList();
+    if (state.tab !== 'activity') paintList();
     paintDetail();
     paintNetwork();
   }
@@ -752,7 +838,7 @@
   function select(id) {
     state.edge = null;
     state.selected = id || null;
-    if (state.tab === 'memories') paintList();
+    if (state.tab !== 'activity') paintList();
     paintDetail();
     paintNetwork();
   }
@@ -831,15 +917,60 @@
 
     const form = byId('br-note-form');
     const text = byId('br-note-text');
-    byId('br-add-note').addEventListener('click', () => { form.hidden = false; text.focus(); });
+    const noteHint = text.placeholder;
+    // One form writes a note or a rule; a rule is short and applies everywhere unless limited.
+    const openForm = (rule) => {
+      state.ruleForm = rule;
+      byId('br-enforce-form').hidden = true;
+      text.maxLength = rule ? 300 : 4000;
+      text.placeholder = rule ? 'An instruction to follow in every reply, such as: answer in British English' : noteHint;
+      byId('br-note-reach').textContent = rule ? 'This workspace only' : 'All workspaces';
+      byId('br-note-global').checked = false;
+      form.querySelector('button[type="submit"]').textContent = rule ? 'Add rule' : 'Remember';
+      form.hidden = false;
+      text.focus();
+    };
+    byId('br-add-note').addEventListener('click', () => openForm(false));
+    byId('br-add-rule').addEventListener('click', () => openForm(true));
     byId('br-note-cancel').addEventListener('click', () => { form.hidden = true; text.value = ''; });
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      const res = await call(() => api.addNote({ text: text.value, global: byId('br-note-global').checked }));
+      const limited = byId('br-note-global').checked;
+      const res = await call(() => (state.ruleForm ? api.addRule({ text: text.value, workspace: limited }) : api.addNote({ text: text.value, global: limited })));
       if (!res) return;
-      if (!res.ok) { say(res.error || 'That note could not be saved.'); return; }
+      if (!res.ok) { say(res.error || 'That could not be saved.'); return; }
+      if (state.ruleForm) state.tab = 'rules';
+      state.suggest = res.suggest ? { id: res.node.id, check: res.suggest, label: res.suggestLabel } : null;
       form.hidden = true;
       text.value = '';
+      await load();
+      select(res.node.id);
+    });
+
+    // An enforced rule is picked from the builtins, never read out of free text.
+    const enf = byId('br-enforce-form');
+    const kind = byId('br-enf-kind');
+    const syncKind = () => { byId('br-enf-term-fields').hidden = kind.value !== 'replace-term'; };
+    kind.addEventListener('change', syncKind);
+    byId('br-add-enforced').addEventListener('click', () => {
+      form.hidden = true;
+      enf.hidden = false;
+      syncKind();
+      kind.focus();
+    });
+    byId('br-enf-cancel').addEventListener('click', () => { enf.hidden = true; });
+    enf.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const params = kind.value === 'replace-term' ? {
+        term: byId('br-enf-term').value, replacement: byId('br-enf-replacement').value,
+        caseSensitive: byId('br-enf-case').checked, inCode: byId('br-enf-code').checked,
+      } : {};
+      const res = await call(() => api.addRule({ check: { builtin: kind.value, params }, workspace: byId('br-enf-workspace').checked }));
+      if (!res) return;
+      if (!res.ok) { say(res.error || 'That could not be saved.'); return; }
+      enf.hidden = true;
+      enf.reset();
+      state.tab = 'rules';
       await load();
       select(res.node.id);
     });
@@ -851,6 +982,20 @@
       if (res.added.length) say(`Learned ${plural(res.added.length, 'file', 'files')}${bad ? `. Skipped ${bad}` : ''}`);
       else if (bad) say(`Skipped ${bad}`);
       await load();
+    });
+
+    byId('br-add-image').addEventListener('click', async () => {
+      // Any text typed in the note box rides along as the caption, the words the
+      // image is recalled by. The picker takes the file itself.
+      const captionEl = byId('br-note-text');
+      const caption = (captionEl && !byId('br-note-form').hidden) ? captionEl.value : '';
+      const res = await call(() => api.addImage({ global: false, caption }));
+      if (!res || res.canceled) return;
+      if (!res.ok) { say(res.error || 'That image could not be used.'); return; }
+      byId('br-note-form').hidden = true;
+      if (captionEl) captionEl.value = '';
+      await load();
+      select(res.id);
     });
   }
 

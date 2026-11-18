@@ -233,14 +233,14 @@ test('the source picker stays away when the catalog already chose the file', asy
 
 // ─── Registries ────────────────────────────────────────────────────────────
 
-test('a registry list starts with the shipped catalog and takes additions', async () => {
+test('a registry list starts empty and takes explicit additions', async () => {
   const app = await launch();
   const win = await ready(app);
 
   const first = await win.evaluate(() => window.husk.registry.list());
   expect(first.ok).toBe(true);
-  expect(first.registries.length).toBe(1);
-  expect(first.registries[0].url).toBe(first.defaultUrl);
+  expect(first.registries).toEqual([]);
+  expect(first.defaultUrl).toBe('');
 
   const added = await win.evaluate(() => window.husk.registry.add('https://mine.example/index.json'));
   expect(added.ok).toBe(true);
@@ -260,7 +260,7 @@ test('a registry URL that is not https is refused rather than stored', async () 
     expect(r.code).toBe('bad-registry-url');
   }
   const list = await win.evaluate(() => window.husk.registry.list());
-  expect(list.registries.length).toBe(1);
+  expect(list.registries.length).toBe(0);
   await app.close();
 });
 

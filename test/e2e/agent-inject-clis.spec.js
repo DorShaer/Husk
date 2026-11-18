@@ -35,7 +35,6 @@ function makeEnv(cliName) {
   fs.writeFileSync(path.join(home, '.config', 'husk', 'config.json'), JSON.stringify({
     agentCommand: exe,
     agentCwd: project,
-    paiEnabled: false,
     voice: { enabled: false },
     firstRunDone: true,
     skipWelcome: true,
@@ -84,6 +83,29 @@ test('codex gets Husk directives via AGENTS.md in the project', async () => {
   expect(text).toContain('HUSK-SESSION');         // managed block markers
   expect(text).toContain('Husk');                  // identity
   expect(text).toContain('\u{1F5E3}');             // speech-balloon recap line
+});
+
+test('the rules in reach of the project land in its instructions file', async () => {
+  const env = makeEnv('codex');
+  const rule = (id, text, extra) => Object.assign({ id, kind: 'note', title: text, text, scope: '', createdAt: 1, rule: true }, extra);
+  fs.writeFileSync(path.join(env.home, '.config', 'husk', 'brain.json'), JSON.stringify({ nodes: [
+    rule('r1', 'Answer in British English'),
+    rule('r2', 'Use tabs in this project', { scope: fs.realpathSync(env.project) }),
+    rule('r3', 'Only for the other project', { scope: path.join(env.home, 'elsewhere') }),
+    rule('r4', 'Switched off for now', { ruleOff: true }),
+    { id: 'n1', kind: 'note', title: 'A plain note', text: 'A plain note', scope: '', createdAt: 1 },
+  ] }));
+  await spawnAgent(env);
+
+  const text = fs.readFileSync(path.join(env.project, 'AGENTS.md'), 'utf8');
+  expect(text).toContain('Standing rules from the user');
+  expect(text).toContain('- Answer in British English');
+  expect(text).toContain('- Use tabs in this project');
+  expect(text).not.toContain('Only for the other project');
+  expect(text).not.toContain('Switched off for now');
+  expect(text).not.toContain('A plain note');
+  expect(text).toContain('\u{1F5E3}');
+  expect(text.split('HUSK-SESSION:END').length).toBe(2);
 });
 
 test('aider gets Husk directives via a --read file', async () => {

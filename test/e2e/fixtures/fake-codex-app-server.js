@@ -17,7 +17,7 @@ if (process.argv[2] !== 'app-server') {
       try { fs.appendFileSync(process.env.HUSK_CANVAS_TERMINAL_LOG, chunk); } catch (_) {}
     });
   } else {
-    process.stdout.write('fake codex 0.0.1\n');
+    process.stdout.write('fake codex 0.168.0\n');
     process.exit(0);
   }
 }
@@ -38,6 +38,22 @@ function ask(method, params) {
 
 async function playTurn(turnId, prompt) {
   note('turn/started', { threadId: THREAD, turn: { id: turnId, status: 'inProgress' } });
+  if (prompt.startsWith('questions:')) {
+    const response = ask('item/tool/requestUserInput', {
+      threadId: THREAD, turnId, itemId: 'question-' + turnId, isBlocking: false,
+      questions: [
+        { id: 'panel', header: 'Panel', question: 'Which left panel should be resizable?', isOther: true, options: [{ label: 'Navigation sidebar', description: 'Chat, Agents and Brain' }, { label: 'Sessions list', description: 'The list beside the chat' }, { label: 'Both', description: 'Resize both panels' }] },
+        { id: 'note', header: 'Details', question: 'Any other details?', options: null },
+      ],
+    });
+    note('item/agentMessage/delta', { threadId: THREAD, turnId, itemId: 'progress-' + turnId, delta: 'I can keep checking the layout while you choose.' });
+    note('turn/completed', { threadId: THREAD, turn: { id: turnId, status: 'completed' } });
+    const answer = await response;
+    note('turn/started', { threadId: THREAD, turn: { id: turnId + '-reply', status: 'inProgress' } });
+    note('item/agentMessage/delta', { threadId: THREAD, turnId: turnId + '-reply', itemId: 'answer-' + turnId, delta: 'Question reply: ' + JSON.stringify(answer) });
+    note('turn/completed', { threadId: THREAD, turn: { id: turnId + '-reply', status: 'completed' } });
+    return;
+  }
   note('item/started', { threadId: THREAD, turnId, item: { type: 'agentMessage', id: 'm1', text: '' } });
   for (const delta of ['Running ', 'the **command**.']) note('item/agentMessage/delta', { threadId: THREAD, turnId, itemId: 'm1', delta });
   note('item/completed', { threadId: THREAD, turnId, item: { type: 'agentMessage', id: 'm1', text: 'Running the **command**.' } });
@@ -53,13 +69,14 @@ async function playTurn(turnId, prompt) {
   note('item/completed', { threadId: THREAD, turnId, item: { ...exec, status: ok ? 'completed' : 'declined', exitCode: ok ? 0 : null, aggregatedOutput: ok ? 'hi\n' : null } });
   note('thread/tokenUsage/updated', { threadId: THREAD, turnId, tokenUsage: { total: { totalTokens: 20000 }, last: { totalTokens: 20000 }, modelContextWindow: 200000 } });
   note('item/started', { threadId: THREAD, turnId, item: { type: 'agentMessage', id: 'm2', text: '' } });
-  const closing = process.env.HUSK_E2E_REPLY || `decision was ${answer && answer.decision} brain=${/Husk Brain/.test(prompt) ? 'yes' : 'no'}`;
+  const closing = process.env.HUSK_E2E_REPLY || `decision was ${answer && answer.decision} brain=${/Husk Brain/.test(prompt) ? 'yes' : 'no'} rules=${/^\[Husk Brain rules:/.test(prompt) ? 'yes' : 'no'}`;
   note('item/agentMessage/delta', { threadId: THREAD, turnId, itemId: 'm2', delta: closing });
   note('item/completed', { threadId: THREAD, turnId, item: { type: 'agentMessage', id: 'm2', text: closing } });
   note('turn/completed', { threadId: THREAD, turn: { id: turnId, status: 'completed', error: null, durationMs: 1200 } });
 }
 
 function handle(msg) {
+  if (msg.method && process.env.FAKE_CODEX_REQUEST_LOG) require('node:fs').appendFileSync(process.env.FAKE_CODEX_REQUEST_LOG, JSON.stringify(msg) + '\n');
   if (msg.id !== undefined && !msg.method) {
     const done = waiting.get(msg.id);
     if (done) { waiting.delete(msg.id); done(msg.result); }
@@ -75,6 +92,19 @@ function handle(msg) {
       send({ id: msg.id, result: { thread: { id: THREAD }, model: 'gpt-fake' } });
       break;
     case 'thread/start': send({ id: msg.id, result: { thread: { id: THREAD }, model: (msg.params && msg.params.model) || 'gpt-fake' } }); break;
+    case 'thread/compact/start': {
+      if (process.env.FAKE_CODEX_NO_COMPACT === '1') { send({ id: msg.id, error: { code: -32601, message: 'unknown method thread/compact/start' } }); break; }
+      send({ id: msg.id, result: {} });
+      const turnId = 'compact-' + (++turnSeq);
+      note('turn/started', { threadId: THREAD, turn: { id: turnId, status: 'inProgress' } });
+      note('item/started', { threadId: THREAD, turnId, item: { id: turnId, type: 'contextCompaction' } });
+      setTimeout(() => {
+        note('thread/tokenUsage/updated', { threadId: THREAD, tokenUsage: { last: { totalTokens: 5000 }, total: { totalTokens: 50000 }, modelContextWindow: 128000 } });
+        note('item/completed', { threadId: THREAD, turnId, item: { id: turnId, type: 'contextCompaction' } });
+        note('turn/completed', { threadId: THREAD, turn: { id: turnId, status: 'completed' } });
+      }, 100);
+      break;
+    }
     case 'turn/start': {
       const turnId = 'turn-' + (++turnSeq);
       send({ id: msg.id, result: { turn: { id: turnId, status: 'inProgress' } } });

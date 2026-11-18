@@ -165,6 +165,12 @@
         el('div', { class: 'es-msg' }, 'Reading the catalog...')));
       return;
     }
+    if (state.status === 'empty') {
+      host.appendChild(el('div', { class: 'empty-state' },
+        el('div', { class: 'es-msg' }, 'No workflow catalog connected'),
+        el('div', { class: 'wfm-state-detail' }, 'Use Registries to add a catalog URL from a publisher you trust. You can also import a workflow file.')));
+      return;
+    }
     if (state.status === 'error') {
       const e = state.error || {};
       host.appendChild(el('div', { class: 'empty-state' },
@@ -213,7 +219,7 @@
   async function load({ force = false } = {}) {
     await loadRegistries();
     if (!state.activeUrl) {
-      state.status = 'error';
+      state.status = 'empty';
       state.index = null;
       state.error = { message: 'No registry is configured', detail: 'Add one from the Registries button.' };
       paint();

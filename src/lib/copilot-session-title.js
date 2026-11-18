@@ -80,8 +80,22 @@ function deriveCopilotSessionTitleFromEventsText(text) {
   };
 }
 
+// Every user turn in an event log, in order, without injected context.
+function copilotUserMessages(text) {
+  const out = [];
+  for (const line of String(text || '').split('\n')) {
+    if (line.indexOf('"user') === -1) continue;
+    let event;
+    try { event = JSON.parse(line); } catch (_) { continue; }
+    const type = String((event && event.type) || '');
+    if (type === 'user.message' || type === 'user' || /^user[._-]/.test(type)) out.push(withoutContext(userTextFromEvent(event)));
+  }
+  return out;
+}
+
 module.exports = {
   collapseTitle,
+  copilotUserMessages,
   deriveCopilotSessionTitleFromEventsText,
   textFromContent,
 };

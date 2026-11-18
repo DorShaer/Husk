@@ -18,10 +18,16 @@
 
 const fs = require('fs');
 const path = require('path');
+const { settle } = require('./agent-state');
+const { isSystemTurn, isSyntheticPrompt } = require('./transcript-replay');
+const { withoutContext } = require('./brain');
 
 const AGENT_FILE = /^agent-(.+)\.jsonl$/;
 const RUN_DIR = /^wf_[A-Za-z0-9._-]+$/;
 const TOOL_RESULT = /"tool_use_id":"([A-Za-z0-9_-]+)"/g;
+const NOTIFIED = /<tool-use-id>([A-Za-z0-9_-]+)<\/tool-use-id>/g;
+const SPAWN_TOOLS = new Set(['Agent', 'Task']);
+const PROMPT_CHARS = 280;
 
 // How long an agent with no completion record can sit silent before it reads as
 // finished. Only agents whose spawn left no tool call to match against fall back
@@ -43,22 +49,91 @@ function listDir(dir) {
   try { return fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return []; }
 }
 
-// The tool calls a parent has already answered. A subagent spawned by a Task
-// call is over the moment its `tool_use_id` comes back as a result, which is
-// exact where a timer is a guess.
-//
-// The scan is forward-only: each pass reads the bytes appended since the last
-// one and keeps the trailing partial line, so a multi-megabyte transcript is
-// read once however often the fleet is polled.
-function resolvedToolUses(transcript, cache) {
-  if (!transcript) return new Set();
+// What a parent transcript says about the agents it spawned, folded from its
+// lines: tool calls answered for good (`done`), background agents whose
+// completion notice arrived (`notified`), the prompts a person typed, and which
+// prompt each Agent/Task call was made under (`spawn`, tool_use id -> index).
+function emptyIndex() {
+  return { done: new Set(), notified: new Set(), prompts: [], spawn: new Map() };
+}
+
+function clipPrompt(text) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  return t.length > PROMPT_CHARS ? `${t.slice(0, PROMPT_CHARS - 1)}…` : t;
+}
+
+// The words a person typed, or '' for anything the CLI or Husk wrote on their behalf.
+function humanText(o) {
+  if (!o || o.type !== 'user' || o.isMeta || o.isSidechain || !o.message) return '';
+  const c = o.message.content;
+  let text = '';
+  if (typeof c === 'string') text = c;
+  else if (Array.isArray(c)) {
+    if (c.some((p) => p && p.type === 'tool_result')) return '';
+    text = c.filter((p) => p && p.type === 'text' && !isSyntheticPrompt(p.text)).map((p) => String(p.text || '')).join('\n');
+  }
+  if (isSystemTurn(o, text) || /^\s*\[Request interrupted/.test(text)) return '';
+  return withoutContext(text).trim();
+}
+
+// Pure: fold whole transcript lines into an index.
+function indexLines(idx, text) {
+  let m = null;
+  for (const line of String(text || '').split('\n')) {
+    if (!line) continue;
+    if (line.includes('"tool_use_id":"')) {
+      // A background launch answers its call at once; that receipt is not the end.
+      if (!line.includes('"async_launched"')) {
+        TOOL_RESULT.lastIndex = 0;
+        while ((m = TOOL_RESULT.exec(line)) !== null) idx.done.add(m[1]);
+      }
+      continue;
+    }
+    if (line.includes('<tool-use-id>') && (line.includes('task-notification') || line.includes('"queue-operation"'))) {
+      NOTIFIED.lastIndex = 0;
+      while ((m = NOTIFIED.exec(line)) !== null) idx.notified.add(m[1]);
+    }
+    const user = line.includes('"type":"user"');
+    const spawn = !user && line.includes('"tool_use"') && /"name":"(?:Agent|Task)"/.test(line);
+    if (!user && !spawn) continue;
+    let o = null;
+    try { o = JSON.parse(line); } catch (_) { continue; }
+    if (user) {
+      const t = humanText(o);
+      if (t) idx.prompts.push({ key: String(o.uuid || `p${idx.prompts.length}`), at: Date.parse(o.timestamp) || 0, text: clipPrompt(t) });
+      continue;
+    }
+    const parts = o && o.message && Array.isArray(o.message.content) ? o.message.content : [];
+    for (const p of parts) {
+      if (p && p.type === 'tool_use' && SPAWN_TOOLS.has(p.name) && p.id) idx.spawn.set(String(p.id), idx.prompts.length - 1);
+    }
+  }
+  return idx;
+}
+
+// The prompt an agent was spawned under. Exact when its tool call is in the
+// index; otherwise the last prompt typed before it started.
+function promptFor(idx, { toolUseId = '', startedAt = 0 } = {}) {
+  if (!idx) return null;
+  const at = toolUseId && idx.spawn.has(toolUseId) ? idx.spawn.get(toolUseId) : undefined;
+  if (at !== undefined) return at >= 0 ? { ...idx.prompts[at], link: 'exact' } : null;
+  let best = null;
+  for (const p of idx.prompts) if (p.at && p.at <= startedAt) best = p;
+  return best ? { ...best, link: 'time' } : null;
+}
+
+// The index of one transcript, read forward-only: each pass reads the bytes
+// appended since the last one and keeps the trailing partial line, so a
+// multi-megabyte transcript is read once however often the fleet is polled.
+function transcriptIndex(transcript, cache) {
+  if (!transcript) return emptyIndex();
   let ent = cache.get(transcript);
-  if (!ent) { ent = { off: 0, rest: '', ids: new Set() }; cache.set(transcript, ent); capCache(cache); }
+  if (!ent) { ent = { off: 0, rest: '', idx: emptyIndex() }; cache.set(transcript, ent); capCache(cache); }
   const st = statOf(transcript);
-  if (!st) return ent.ids;
+  if (!st) return ent.idx;
   // A file that shrank was replaced, so the offset it was read to means nothing.
-  if (st.size < ent.off) { ent.off = 0; ent.rest = ''; ent.ids = new Set(); }
-  if (st.size === ent.off) return ent.ids;
+  if (st.size < ent.off) { ent.off = 0; ent.rest = ''; ent.idx = emptyIndex(); }
+  if (st.size === ent.off) return ent.idx;
   let fd = null;
   try {
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- the agent's own transcript, named by the scan
@@ -70,16 +145,29 @@ function resolvedToolUses(transcript, cache) {
     const cut = text.lastIndexOf('\n');
     ent.rest = cut === -1 ? text : text.slice(cut + 1);
     ent.off = st.size;
-    const whole = cut === -1 ? '' : text.slice(0, cut);
-    let m = null;
-    TOOL_RESULT.lastIndex = 0;
-    while ((m = TOOL_RESULT.exec(whole)) !== null) ent.ids.add(m[1]);
+    indexLines(ent.idx, cut === -1 ? '' : text.slice(0, cut));
   } catch (_) {
-    return ent.ids;
+    return ent.idx;
   } finally {
     if (fd !== null) { try { fs.closeSync(fd); } catch (_) {} }
   }
-  return ent.ids;
+  return ent.idx;
+}
+
+function resolvedToolUses(transcript, cache) {
+  return transcriptIndex(transcript, cache).done;
+}
+
+// Where an in-process agent stands. Over when its parent process has exited, its
+// metadata says finished, or its spawner's transcript holds the completion for
+// its call; a spawn with no call behind it ends after IDLE_MS of silence. Work
+// still in flight is working while it writes and idle once it goes quiet.
+function subagentState({ alive, meta = {}, idx, mtime = 0, now = Date.now() }) {
+  if (!alive || meta.finished === true) return 'done';
+  const id = typeof meta.toolUseId === 'string' ? meta.toolUseId : '';
+  if (id) { if (idx && (idx.done.has(id) || idx.notified.has(id))) return 'done'; }
+  else if (now - mtime >= IDLE_MS) return 'done';
+  return settle('working', mtime, now);
 }
 
 // Which agents a workflow run has started and which have handed back a result.
@@ -179,10 +267,12 @@ function runNode({ runId, name, parentSessionId, cwd, fleet, now }) {
   let startedAt = now;
   let updatedAt = 0;
   let running = false;
+  let working = false;
   for (const a of fleet) {
     if (a.startedAt && a.startedAt < startedAt) startedAt = a.startedAt;
     if (a.updatedAt > updatedAt) updatedAt = a.updatedAt;
     if (a.running) running = true;
+    if (a.state === 'working') working = true;
   }
   return {
     id: `wf-${runId}`,
@@ -201,7 +291,7 @@ function runNode({ runId, name, parentSessionId, cwd, fleet, now }) {
     running,
     attachable: false,
     held: false,
-    state: running ? 'working' : 'done',
+    state: working ? 'working' : (running ? 'quiet' : 'done'),
     status: '',
     detail: '',
     intent: '',
@@ -214,9 +304,10 @@ function runNode({ runId, name, parentSessionId, cwd, fleet, now }) {
   };
 }
 
-function agentRow({ file, dir, id, parentSessionId, cwd, runId, runName, running, now, heads }) {
+function agentRow({ file, dir, id, parentSessionId, cwd, runId, runName, state, now, heads, prompt = null }) {
   const meta = readJson(path.join(dir, `agent-${id}.meta.json`)) || {};
   const st = statOf(file);
+  const running = state !== 'done';
   const startedAt = st ? Math.round(st.birthtimeMs || st.ctimeMs || st.mtimeMs) : now;
   const updatedAt = st ? Math.round(st.mtimeMs) : now;
   return {
@@ -230,6 +321,8 @@ function agentRow({ file, dir, id, parentSessionId, cwd, runId, runName, running
     sessionId: '',
     parentSessionId,
     runId: runId || '',
+    // The agent that spawned this one inside the same chat, by its file id.
+    parentAgentId: typeof meta.parentAgentId === 'string' ? meta.parentAgentId : '',
     teamName: typeof meta.teamName === 'string' ? meta.teamName : '',
     agentType: typeof meta.agentType === 'string' ? meta.agentType : '',
     name: agentName(meta, id, runName, promptHead(file, heads)),
@@ -239,7 +332,7 @@ function agentRow({ file, dir, id, parentSessionId, cwd, runId, runName, running
     // or resumed on their own.
     attachable: false,
     held: false,
-    state: running ? 'working' : 'done',
+    state,
     status: '',
     detail: '',
     intent: typeof meta.description === 'string' ? meta.description.replace(/\s+/g, ' ').trim().slice(0, 400) : '',
@@ -249,6 +342,7 @@ function agentRow({ file, dir, id, parentSessionId, cwd, runId, runName, running
     updatedAt,
     hasTranscript: !!st,
     transcript: file,
+    prompt,
   };
 }
 
@@ -260,7 +354,7 @@ function scanParent({ dir, sessionId, cwd, alive, transcript }, { cache, now, he
   const rows = [];
   const entries = listDir(base);
   if (!entries.length) return rows;
-  const resolved = alive ? resolvedToolUses(transcript, cache) : null;
+  const chat = transcriptIndex(transcript, cache);
 
   for (const ent of entries) {
     if (!ent.isFile()) continue;
@@ -269,19 +363,21 @@ function scanParent({ dir, sessionId, cwd, alive, transcript }, { cache, now, he
     const id = m[1];
     const file = path.join(base, ent.name);
     const meta = readJson(path.join(base, `agent-${id}.meta.json`)) || {};
-    let running = false;
-    if (alive) {
-      const toolUseId = typeof meta.toolUseId === 'string' ? meta.toolUseId : '';
-      // A spawn with a tool call behind it is answered exactly. One without
-      // (a forked skill, a named teammate) is judged by whether it is still
-      // writing.
-      if (toolUseId) running = !resolved.has(toolUseId);
-      else {
-        const st = statOf(file);
-        running = !!st && (now - st.mtimeMs) < IDLE_MS;
-      }
-    }
-    rows.push(agentRow({ file, dir: base, id, parentSessionId: sessionId, cwd, runId: '', running, now, heads }));
+    const st = statOf(file);
+    const startedAt = st ? Math.round(st.birthtimeMs || st.ctimeMs || st.mtimeMs) : now;
+    // A nested agent's call and its answer live in the transcript of the agent that spawned it.
+    const parentAgentId = typeof meta.parentAgentId === 'string' && /^[A-Za-z0-9_-]+$/.test(meta.parentAgentId) ? meta.parentAgentId : '';
+    const idx = parentAgentId ? transcriptIndex(path.join(base, `agent-${parentAgentId}.jsonl`), cache) : chat;
+    const state = subagentState({ alive, meta, idx, mtime: st ? st.mtimeMs : 0, now });
+    const prompt = parentAgentId ? null : promptFor(chat, { toolUseId: typeof meta.toolUseId === 'string' ? meta.toolUseId : '', startedAt });
+    rows.push(agentRow({ file, dir: base, id, parentSessionId: sessionId, cwd, runId: '', state, now, heads, prompt }));
+  }
+  // A nested agent answers to the prompt its top ancestor was spawned under.
+  const byId = new Map(rows.map((r) => [r.agentId, r]));
+  for (const r of rows) {
+    let top = r;
+    for (let hop = 0; hop < 8 && top.parentAgentId && byId.has(top.parentAgentId); hop += 1) top = byId.get(top.parentAgentId);
+    if (!r.prompt && top.prompt) r.prompt = top.prompt;
   }
 
   const runsDir = path.join(base, 'workflows');
@@ -296,8 +392,11 @@ function scanParent({ dir, sessionId, cwd, alive, transcript }, { cache, now, he
       const m = AGENT_FILE.exec(ent.name);
       if (!m) continue;
       const id = m[1];
+      const file = path.join(runPath, ent.name);
+      const st = statOf(file);
+      const state = alive && started.has(id) && !done.has(id) ? settle('working', st ? st.mtimeMs : 0, now) : 'done';
       fleet.push(agentRow({
-        file: path.join(runPath, ent.name),
+        file,
         dir: runPath,
         id,
         // A workflow fleet hangs off the run that fanned it out, not off the
@@ -306,20 +405,22 @@ function scanParent({ dir, sessionId, cwd, alive, transcript }, { cache, now, he
         cwd,
         runId: run.name,
         runName: runNames.get(run.name) || '',
-        running: alive && started.has(id) && !done.has(id),
+        state,
         now,
         heads,
       }));
     }
     if (!fleet.length) continue;
-    rows.push(runNode({
+    const node = runNode({
       runId: run.name,
       name: runNames.get(run.name) || run.name,
       parentSessionId: sessionId,
       cwd,
       fleet,
       now,
-    }));
+    });
+    node.prompt = promptFor(chat, { startedAt: node.startedAt });
+    rows.push(node);
     rows.push(...fleet);
   }
   return rows;
@@ -422,4 +523,5 @@ function describe(rows, { bytes = 64 * 1024 } = {}) {
 module.exports = {
   scanParent, retainLastBatch, describe, batchKey, resolvedToolUses, runProgress,
   agentName, promptTitle, promptHead, runKey, IDLE_MS,
+  transcriptIndex, indexLines, emptyIndex, promptFor, subagentState, humanText,
 };

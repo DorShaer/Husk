@@ -1,7 +1,7 @@
 'use strict';
 
 // MCP install-from-repo helpers. Pure / fs-only logic that can be unit
-// tested without spinning up Electron, mirroring src/lib/pai-state.js.
+// tested without spinning up Electron.
 //
 // What a "repo of MCP servers" looks like, the layout we scan for:
 //

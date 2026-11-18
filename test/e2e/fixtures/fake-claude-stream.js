@@ -22,6 +22,7 @@ const say = (o) => { try { process.stdout.write(JSON.stringify(o) + '\n'); } cat
 say({ type: 'system', subtype: 'init', session_id: sessionId, model: 'claude-test', slash_commands: ['model', 'help'] });
 
 let buf = '';
+let pendingPermission = null;
 process.stdin.on('data', (d) => {
   buf += d.toString();
   let nl;
@@ -33,9 +34,20 @@ process.stdin.on('data', (d) => {
       say({ type: 'control_response', response: { request_id: msg.request_id, subtype: 'success', response: {} } });
       continue;
     }
+    if (msg.type === 'control_response' && pendingPermission && msg.response?.request_id === pendingPermission) {
+      pendingPermission = null;
+      say({ type: 'result', subtype: 'success', result: 'Permission answered' });
+      continue;
+    }
     if (msg.type === 'user') {
       const content = msg.message && msg.message.content;
       const text = typeof content === 'string' ? content : Array.isArray(content) ? (content.find((b) => b.type === 'text') || {}).text || '' : '';
+      if (text.startsWith('WAIT_PERMISSION')) {
+        pendingPermission = 'request-test';
+        say({ type: 'assistant', message: { model: 'claude-test', content: [{ type: 'tool_use', id: 'tool-test', name: 'Edit', input: { file_path: 'example.txt' } }] } });
+        say({ type: 'control_request', request_id: pendingPermission, request: { subtype: 'can_use_tool', tool_name: 'Edit', tool_use_id: 'tool-test', input: { file_path: 'example.txt' } } });
+        continue;
+      }
       say({ type: 'assistant', message: { model: 'claude-test', content: [{ type: 'text', text: `Echo: ${text}` }] } });
       say({ type: 'result', subtype: 'success', result: `Echo: ${text}`, usage: { input_tokens: 5, output_tokens: 5 } });
     }

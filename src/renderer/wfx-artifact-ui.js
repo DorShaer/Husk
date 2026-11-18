@@ -573,7 +573,7 @@
     if (record.precision === 'range' && record.durationRange) {
       const [minHead, minUnit] = durationParts(record.durationRange.min);
       const [maxHead, maxUnit] = durationParts(record.durationRange.max);
-      const value = [minHead, unit(minUnit), ' – ', maxHead, unit(maxUnit)];
+      const value = [minHead, unit(minUnit), ' to ', maxHead, unit(maxUnit)];
       if (!inline) value.push(qualifier(sampleNote(record.runs)));
       return figure({
         isThin: true,
@@ -716,6 +716,10 @@
     }
   }
 
+  function limitCopy(ms) {
+    return ms >= 60000 ? `${Math.round(ms / 60000)} min` : `${Math.round(ms / 1000)} s`;
+  }
+
   function stepSummary(node, index) {
     const model = (typeof node.model === 'string' && node.model) ? node.model : null;
     const agent = (typeof node.agentCommand === 'string' && node.agentCommand) ? node.agentCommand : '';
@@ -724,6 +728,9 @@
     // advance either side of it.
     const meta = model ? `${agent} · ${model} ·` : `${agent} ·`;
     const pass = PASS_CONTEXT_COPY[node.passContext] || PASS_CONTEXT_COPY.none;
+    const limit = Number.isFinite(node.timeoutMs)
+      ? ` · ${limitCopy(node.timeoutMs)} time limit${Number.isFinite(node.timeoutRequestedMs) ? ` (the file asked for ${limitCopy(node.timeoutRequestedMs)})` : ''}`
+      : '';
     return el('summary', null,
       el('span', { class: 'wfx-step-n' }, String(index + 1).padStart(2, '0')),
       el('span', { class: 'wfx-step-b' },
@@ -731,7 +738,8 @@
         el('span', { class: 'wfx-step-sub' },
           el('span', { class: 'wfx-step-meta' }, meta),
           ' ',
-          el('span', { class: 'wfx-step-pc' }, pass))),
+          el('span', { class: 'wfx-step-pc' }, pass),
+          limit ? el('span', { class: 'wfx-step-limit' }, limit) : null)),
       icon('chevron') || el('span', { class: 'wfx-step-c' }));
   }
 

@@ -234,9 +234,9 @@ test('withCopilotContextDir: adds the Husk context tray for copilot', () => {
   const args = withCopilotContextDir({
     agentExe: '/home/user/.local/bin/copilot',
     agentArgs: ['--model', 'gpt-5.5'],
-    contextDir: '/home/user/.claude/MEMORY/CONTEXT',
+    contextDir: '/home/user/.config/husk/context',
   });
-  assert.deepEqual(args, ['--model', 'gpt-5.5', '--add-dir', '/home/user/.claude/MEMORY/CONTEXT']);
+  assert.deepEqual(args, ['--model', 'gpt-5.5', '--add-dir', '/home/user/.config/husk/context']);
 });
 
 test('withCopilotContextDir: does not duplicate an existing context dir', () => {

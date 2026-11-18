@@ -27,7 +27,7 @@ function boot(agentCommand = 'claude') {
   fs.mkdirSync(promptsDir, { recursive: true });
   fs.mkdirSync(skillsDir, { recursive: true });
   fs.writeFileSync(path.join(cfgDir, 'config.json'), JSON.stringify({
-    firstRunDone: true, skipWelcome: true, agentCommand, paiEnabled: false,
+    firstRunDone: true, skipWelcome: true, agentCommand,
   }));
   // Backdated well past the recency window: this stands for a library that has
   // been there a while, so only what a test installs itself counts as new.
@@ -406,6 +406,10 @@ test('a skill you already have can be imported from disk', async () => {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [p] });
     }, src);
     await win.click('#btn-skills-import');
+    // No scanner is connected, so the import says so and waits for an answer.
+    const check = win.getByRole('dialog', { name: 'Security check' });
+    await expect(check).toContainText('This skill was not checked');
+    await check.getByRole('button', { name: 'Use it anyway' }).click();
     await expect.poll(
       () => fs.existsSync(path.join(skillsDir, 'handover', 'SKILL.md')),
       { timeout: 10_000 },

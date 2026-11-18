@@ -40,6 +40,28 @@ function modelArgsFor(agentBaseName, tier, overrides = {}) {
   return [entry.flag, clean];
 }
 
+// One job's model on one CLI. A user-picked id carries seenAt, the time a
+// catalog listed it; once a fresh catalog (catalog.live) no longer lists it the
+// job runs on the CLI default and notice says so, so a stale id never fails a run.
+function resolveModel(agentBaseName, tier, overrides = {}, catalog = null) {
+  const base = String(agentBaseName || '').toLowerCase();
+  if (!isRouted(base, overrides || {})) return { args: [], model: '', state: 'unrouted', notice: '' };
+  const args = modelArgsFor(base, tier, overrides || {});
+  const model = args[1];
+  const entry = overrides && overrides[base];
+  const picked = !!(entry && entry.seenAt && String((tier === 'cheap' ? entry.cheap : entry.smart) || '').trim() === model);
+  const live = catalog && Array.isArray(catalog.live) && catalog.live.length ? catalog.live : null;
+  if (picked && live && !live.includes(model)) {
+    return { args: [], model: '', state: 'stale', notice: `${model} is no longer in ${base}'s model list, so this job runs on ${base}'s default model.` };
+  }
+  return { args, model, state: 'routed', notice: '' };
+}
+
+// Routed means both tiers resolve to a model; anything less is Not routed.
+function isRouted(agentBaseName, overrides = {}) {
+  return modelArgsFor(agentBaseName, 'cheap', overrides).length > 0 && modelArgsFor(agentBaseName, 'smart', overrides).length > 0;
+}
+
 function isExplicitModelValueUsable(value) {
   const raw = String(value || '').trim();
   if (!raw || raw.length > 90) return false;
@@ -104,4 +126,4 @@ function normalizeTier(t) {
   return t === 'cheap' ? 'cheap' : 'smart';
 }
 
-module.exports = { DEFAULT_VENDOR_MODELS, modelArgsFor, classifyTier, normalizeTier, isTrivialFileTask };
+module.exports = { DEFAULT_VENDOR_MODELS, modelArgsFor, resolveModel, isRouted, classifyTier, normalizeTier, isTrivialFileTask, isExplicitModelValueUsable };

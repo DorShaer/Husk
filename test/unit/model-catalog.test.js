@@ -253,3 +253,8 @@ test('isModelValueUsable rejects CLI status/auth output', () => {
   assert.equal(isModelValueUsable('gpt-5.5', 'copilot'), true);
   assert.equal(isModelValueUsable('claude-sonnet-5', 'copilot'), true);
 });
+
+test('catalog normalization retains provider descriptions without adding empty metadata', () => {
+  const { uniqueModels } = require('../../src/lib/model-catalog');
+  assert.deepEqual(uniqueModels([{ value: 'gpt-fixture', label: 'GPT Fixture', description: 'A model description.' }, { value: 'gpt-fixture', label: 'Duplicate' }, { value: 'plain-model', label: 'Plain' }]), [{ value: 'gpt-fixture', label: 'GPT Fixture', description: 'A model description.' }, { value: 'plain-model', label: 'Plain' }]);
+});

@@ -22,7 +22,7 @@ function fakeChild() {
   return child;
 }
 
-function harness() {
+function harness(options = {}) {
   const spawned = [];
   const events = [];
   const exits = [];
@@ -36,6 +36,7 @@ function harness() {
     appVersion: '2.12.0',
     platform: 'win32',
     controlTimeoutMs: 50,
+    recordPrompt: options.recordPrompt,
   });
   return { rt, spawned, events, exits, children };
 }
@@ -169,6 +170,59 @@ test('claude start spawns stream-json argv and prompt writes a user line', async
   assert.equal(events[1].ev.type, 'text');
 });
 
+test('claude turns per-turn token usage into a context-window meter', async () => {
+  const events = [];
+  const children = [];
+  const rt = createChatRuntime({
+    spawn: () => { const c = fakeChild(); children.push(c); return c; },
+    buildEnv: () => ({ PATH: '/bin' }),
+    resolveExe: (name) => '/abs/' + name,
+    emit: (tabId, ev) => events.push({ tabId, ev }),
+    emitExit: () => {},
+    appVersion: '2.12.0',
+    platform: 'win32',
+    contextWindow: (model) => /opus/.test(model) ? 1000000 : 200000,
+  });
+  await rt.start({ tabId: 't2', command: 'claude', cwd: '/w' });
+  const c = children[0];
+  // An assistant message carries the model and the prompt + cache token counts.
+  c.feed({ type: 'assistant', message: { model: 'claude-opus-4-8', usage: { input_tokens: 1000, cache_read_input_tokens: 50000, cache_creation_input_tokens: 2000 } } });
+  const usage = events.find((e) => e.ev.type === 'usage');
+  assert.ok(usage, 'a usage event is emitted');
+  assert.equal(usage.ev.used, 53000);
+  assert.equal(usage.ev.size, 1000000);
+  // The result event carries the turn total summed across every internal
+  // tool-use call, which overshoots the window; it must not drive the meter.
+  const before = events.filter((e) => e.ev.type === 'usage').length;
+  c.feed({ type: 'result', subtype: 'success', usage: { input_tokens: 2000, cache_read_input_tokens: 6000000, cache_creation_input_tokens: 0 } });
+  assert.equal(events.filter((e) => e.ev.type === 'usage').length, before, 'result does not emit a usage event');
+});
+
+test('claude subagent messages drive neither the meter, the model nor the thread', async () => {
+  const events = [];
+  const children = [];
+  const rt = createChatRuntime({
+    spawn: () => { const c = fakeChild(); children.push(c); return c; },
+    buildEnv: () => ({ PATH: '/bin' }),
+    resolveExe: (name) => '/abs/' + name,
+    emit: (tabId, ev) => events.push({ tabId, ev }),
+    emitExit: () => {},
+    appVersion: '2.12.0',
+    platform: 'win32',
+    contextWindow: (model) => /opus/.test(model) ? 1000000 : 200000,
+  });
+  await rt.start({ tabId: 't3', command: 'claude', cwd: '/w' });
+  const c = children[0];
+  const usage = (n) => ({ input_tokens: 2, cache_read_input_tokens: n - 2 });
+  c.feed({ type: 'assistant', parent_tool_use_id: null, message: { model: 'claude-opus-5-5', content: [{ type: 'text', text: 'main' }], usage: usage(380000) } });
+  c.feed({ type: 'assistant', parent_tool_use_id: 'toolu_1', message: { model: 'claude-haiku-5-5', content: [{ type: 'text', text: 'sub says hi' }], usage: usage(41000) } });
+  c.feed({ type: 'stream_event', parent_tool_use_id: 'toolu_1', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'sub delta' } } });
+  c.feed({ type: 'assistant', parent_tool_use_id: null, message: { model: 'claude-opus-5-5', content: [{ type: 'text', text: 'main again' }], usage: usage(381000) } });
+  assert.deepEqual(events.filter((e) => e.ev.type === 'usage').map((e) => e.ev.used), [380000, 381000]);
+  assert.deepEqual(events.filter((e) => e.ev.type === 'usage').map((e) => e.ev.size), [1000000, 1000000]);
+  assert.ok(!JSON.stringify(events).includes('sub says hi') && !JSON.stringify(events).includes('sub delta'));
+});
+
 test('claude permission round-trips the captured input and clears on result', async () => {
   const { rt, children, events } = harness();
   await rt.start({ tabId: 't2', command: 'claude', cwd: '/w' });
@@ -189,6 +243,32 @@ test('claude permission round-trips the captured input and clears on result', as
   c.feed({ type: 'result', subtype: 'success', is_error: false, duration_ms: 5 });
   assert.equal(rt.info('t2').turnOpen, false);
   assert.equal(events[events.length - 1].ev.type, 'turn_end');
+});
+
+test('claude API failure is shown once, not as assistant text and again as the error', async () => {
+  const { rt, children, events } = harness();
+  await rt.start({ tabId: 't2', command: 'claude', cwd: '/w' });
+  const c = children[0];
+  await rt.prompt({ tabId: 't2', text: 'go' });
+  const msg = 'API Error: request flagged. Request ID: req_1';
+  c.feed({ type: 'assistant', message: { model: '<synthetic>', content: [{ type: 'text', text: msg }] } });
+  c.feed({ type: 'result', subtype: 'success', is_error: true, result: msg });
+  const shown = events.filter((e) => e.ev.type === 'text_final' || (e.ev.type === 'turn_end' && e.ev.text));
+  assert.equal(shown.length, 1);
+  assert.equal(shown[0].ev.type, 'turn_end');
+  assert.equal(shown[0].ev.text, msg);
+});
+
+test('claude synthetic text that is not the failure still reaches the thread', async () => {
+  const { rt, children, events } = harness();
+  await rt.start({ tabId: 't2', command: 'claude', cwd: '/w' });
+  const c = children[0];
+  await rt.prompt({ tabId: 't2', text: 'go' });
+  c.feed({ type: 'assistant', message: { model: '<synthetic>', content: [{ type: 'text', text: 'No response requested.' }] } });
+  c.feed({ type: 'result', subtype: 'success', is_error: false });
+  const i = events.findIndex((e) => e.ev.type === 'text_final');
+  assert.equal(events[i].ev.text, 'No response requested.');
+  assert.ok(i < events.findIndex((e) => e.ev.type === 'turn_end'), 'held text is sent before the turn ends');
 });
 
 test('claude cancel writes an interrupt control request', async () => {
@@ -506,4 +586,120 @@ test('Allow all belongs to one chat and ends with its agent', async () => {
   fresh.feed({ type: 'control_request', request_id: 'r9', request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command: 'ls' } } });
   assert.equal(fresh.stdinLines.some((l) => l.type === 'control_response' && l.response.response && l.response.response.behavior), false);
   assert.equal(events.filter((e) => e.tabId === 'a' && e.ev.type === 'permission').length, 2);
+});
+
+test('streaming cost totals become deltas and reset with the session', async () => {
+  const { rt, events, children } = harness();
+  await rt.start({ tabId: 'cost', command: 'claude', cwd: '/w' });
+  const child = children[0];
+  child.feed({ type: 'system', subtype: 'init', session_id: 'first-session' });
+  child.feed({ type: 'result', total_cost_usd: 0.1 });
+  child.feed({ type: 'result', total_cost_usd: 0.16 });
+  child.feed({ type: 'result', total_cost_usd: 0 });
+  child.feed({ type: 'result', total_cost_usd: 0.2 });
+  child.feed({ type: 'system', subtype: 'init', session_id: 'next-session' });
+  child.feed({ type: 'result', total_cost_usd: 0.03 });
+  assert.deepStrictEqual(events.filter((e) => e.ev.type === 'turn_end').map((e) => Number(e.ev.costUsd.toFixed(2))), [0.1, 0.06, 0, 0.04, 0.03]);
+  await rt.stop({ tabId: 'cost' });
+});
+test('a resumed streaming cost establishes a baseline before counting growth', async () => {
+  const { rt, events, children } = harness();
+  await rt.start({ tabId: 'cost', command: 'claude --resume previous-session', cwd: '/w' });
+  children[0].feed({ type: 'result', total_cost_usd: 10 });
+  children[0].feed({ type: 'result', total_cost_usd: 10.2 });
+  const costs = events.filter((e) => e.ev.type === 'turn_end').map((e) => e.ev.costUsd);
+  assert.strictEqual(costs[0], undefined);
+  assert.strictEqual(Number(costs[1].toFixed(2)), 0.2);
+  await rt.stop({ tabId: 'cost' });
+});
+
+
+test('only accepted user prompts reach durable recording and injected context stays out', async () => {
+  const recorded = [];
+  const { rt } = harness({ recordPrompt: (tabId, event) => recorded.push({ tabId, event }) });
+  assert.strictEqual((await rt.prompt({ tabId: 'missing', text: 'not sent' })).ok, false);
+  await rt.start({ tabId: 'record', command: 'claude', cwd: '/w' });
+  assert.strictEqual((await rt.prompt({ tabId: 'record', text: '' })).ok, false);
+  assert.strictEqual(recorded.length, 0);
+  assert.strictEqual((await rt.prompt({ tabId: 'record', text: 'My message', context: 'PRIVATE CONTEXT' })).ok, true);
+  assert.strictEqual(recorded.length, 1);
+  assert.strictEqual(recorded[0].event.text, 'My message');
+  await rt.stop({ tabId: 'record' });
+});
+
+function retryHarness(over = {}) {
+  const spawned = [];
+  const children = [];
+  const events = [];
+  const rt = createChatRuntime({
+    spawn: (exe, args, opts) => { const c = fakeChild(); spawned.push({ exe, args, opts }); children.push(c); return c; },
+    resolveExe: (n) => '/abs/' + n, emit: (tabId, ev) => events.push(ev), emitExit: () => {}, platform: 'win32',
+    handshakeMs: 20, retryDelayMs: 5, ...over,
+  });
+  return { rt, spawned, children, events };
+}
+
+test('a silent CLI is tried once more, then fails with what Husk expected', async () => {
+  const { rt, spawned, events } = retryHarness();
+  const r = await rt.start({ tabId: 't1', command: 'copilot', cwd: '/w' });
+  assert.equal(spawned.length, 2);
+  assert.equal(r.ok, false);
+  assert.equal(r.auth, false);
+  assert.deepEqual(r.compat, { cli: 'copilot', expected: 'an ACP answer to copilot --acp', reason: 'timeout' });
+  assert.ok(events.some((e) => e.type === 'status' && /Trying once more/.test(e.text)));
+  assert.equal(rt.size(), 0);
+});
+
+test('a CLI that rejects the protocol flag fails once, with its own words and no retry', async () => {
+  const { rt, spawned, children } = retryHarness();
+  const p = rt.start({ tabId: 't1', command: 'gemini', cwd: '/w' });
+  await tick();
+  children[0].stderr.emit('data', "error: unknown option '--acp'\n");
+  children[0].emit('exit', 1, null);
+  const r = await p;
+  assert.equal(spawned.length, 1);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /unknown option '--acp'/);
+  assert.equal(r.compat.reason, 'refused');
+  assert.equal(r.compat.cli, 'gemini');
+});
+
+test('a slow CLI that answers on the retry opens the chat', async () => {
+  const { rt, spawned, children } = retryHarness();
+  const p = rt.start({ tabId: 't1', command: 'copilot', cwd: '/w' });
+  while (spawned.length < 2) await new Promise((r) => setTimeout(r, 2));
+  const c = children[1];
+  c.feed({ jsonrpc: '2.0', id: 1, result: {} });
+  await tick();
+  c.feed({ jsonrpc: '2.0', id: 2, result: { sessionId: 'S2' } });
+  const r = await p;
+  assert.deepEqual(r, { ok: true, transport: 'acp', sessionId: 'S2' });
+});
+
+test('a codex app-server that never answers is retried and fails with what Husk expected', async () => {
+  const { rt, spawned } = retryHarness();
+  const r = await rt.start({ tabId: 't1', command: 'codex', cwd: '/w' });
+  assert.equal(spawned.length, 2);
+  assert.equal(r.compat.reason, 'timeout');
+  assert.equal(r.compat.expected, 'an app-server answer to codex app-server');
+});
+
+test('a chat stopped while its start waits to retry is not started again', async () => {
+  const { rt, spawned, events } = retryHarness({ retryDelayMs: 60000 });
+  const p = rt.start({ tabId: 't1', command: 'copilot', cwd: '/w' });
+  while (!events.some((e) => e.type === 'status')) await new Promise((r) => setTimeout(r, 2));
+  await rt.stop({ tabId: 't1' });
+  const r = await p;
+  assert.equal(r.ok, false);
+  assert.equal(spawned.length, 1);
+});
+
+test('compaction refuses missing, unsupported and busy sessions without sending a prompt', async () => {
+  const h = await startedAcp();
+  assert.equal((await h.rt.compact({ tabId: 'missing' })).code, 'not-ready');
+  const before = h.c.stdinLines.length;
+  assert.equal((await h.rt.compact({ tabId: 't1' })).code, 'unsupported');
+  assert.equal(h.c.stdinLines.length, before);
+  await h.rt.prompt({ tabId: 't1', text: 'work' });
+  assert.equal((await h.rt.compact({ tabId: 't1' })).code, 'busy');
 });

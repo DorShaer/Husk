@@ -35,11 +35,17 @@ function writeTranscript(homeDir, cwd, sessionId, name) {
   fs.writeFileSync(path.join(dir, `${sessionId}.jsonl`), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
 }
 
-function makeHome() {
+function writeJob(homeDir, shortId, job) {
+  const dir = path.join(homeDir, '.claude', 'jobs', shortId);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ updatedAt: Date.now(), ...job }));
+}
+
+function makeHome({ chatView = '', needs = 'Permission to push the release tag' } = {}) {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-agent-attach-'));
   fs.mkdirSync(path.join(homeDir, '.config', 'husk'), { recursive: true });
   fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify({
-    firstRunDone: true, skipWelcome: true, agentCommand: 'claude',
+    firstRunDone: true, skipWelcome: true, agentCommand: 'claude', resumeLastOnLaunch: false, ...(chatView ? { chatView } : {}),
   }));
   const husk = path.join(homeDir, 'code', 'husk');
   const other = path.join(homeDir, 'code', 'scanner');
@@ -48,6 +54,8 @@ function makeHome() {
 
   const fleet = makeFleet(Date.now(), husk, other);
   for (const a of fleet) writeTranscript(homeDir, a.cwd, a.sessionId, a.name);
+  // What the waiting agent asked, in the CLI's own job record.
+  writeJob(homeDir, 'agent-here', { state: 'blocked', needs });
   const agentsFile = path.join(homeDir, 'agents.json');
   fs.writeFileSync(agentsFile, JSON.stringify(fleet));
   const argvFile = path.join(homeDir, 'argv.log');
@@ -116,8 +124,75 @@ test('the fleet spans every project, so an agent started elsewhere is still list
   }
 });
 
-test('a live agent is opened by attaching to it, by id', async () => {
+test('Respond moves a waiting agent into a chat tab resumed on its own session', async () => {
   const env = makeHome();
+  const app = await launch(env);
+  try {
+    const win = await openCenter(app);
+    await win.evaluate(() => amSelect('agent-here'));      // eslint-disable-line no-undef
+    await expect(win.locator('#am-d-open')).toHaveText('Respond');
+    await expect(win.locator('#am-d-wait')).toHaveText('Permission to push the release tag');
+    const before = await win.evaluate(() => TABS.size);    // eslint-disable-line no-undef
+
+    await win.click('#am-d-open');
+    await expect(win.locator('#agent-map')).toBeHidden({ timeout: 10_000 });
+    // The worker lets go of the session, then Husk's own chat resumes it.
+    await expect.poll(() => lines(env.argvFile).filter((l) => l.includes('--input-format')).join('\n'), { timeout: 15_000 })
+      .toContain('--resume 96cb2d85-26b1-4dc7-abb3-467de954ff69');
+    expect(lines(env.argvFile), 'the background run was not stopped before the chat resumed it').toContain('stop agent-here');
+    expect(lines(env.argvFile).filter((l) => l.startsWith('attach ')).length, 'Respond fell back to the terminal').toBe(0);
+    const tab = await win.evaluate(() => { const t = TABS.get(activeTabId); return { mode: t.mode, sid: tabSessionId(t) }; }); // eslint-disable-line no-undef
+    expect(tab).toEqual({ mode: 'chat', sid: '96cb2d85-26b1-4dc7-abb3-467de954ff69' });
+    await expect(win.locator('.chat-item').filter({ hasText: 'Harden the release workflow.' }).first()).toBeVisible();
+
+    // Respond again lands on the same tab instead of a second copy.
+    await win.evaluate(() => openAgentMap());              // eslint-disable-line no-undef
+    await win.waitForFunction(() => agentMap.rows.length > 0, null, { timeout: 20_000 }); // eslint-disable-line no-undef
+    await win.evaluate(() => amSelect('agent-here'));      // eslint-disable-line no-undef
+    await win.click('#am-d-open');
+    await win.waitForTimeout(1500);
+    expect(await win.evaluate(() => TABS.size)).toBe(before + 1); // eslint-disable-line no-undef
+    expect(lines(env.argvFile).filter((l) => l.startsWith('stop ')).length, 'a second Respond stopped the agent again').toBe(1);
+  } finally {
+    await app.close();
+  }
+});
+
+test('Respond says so and stops nothing when the agent folder is gone', async () => {
+  const env = makeHome();
+  const app = await launch(env);
+  try {
+    const win = await openCenter(app);
+    fs.rmSync(env.husk, { recursive: true, force: true });
+    await win.evaluate(() => amSelect('agent-here'));      // eslint-disable-line no-undef
+    await win.click('#am-d-open');
+    await expect(win.locator('#toast-stack')).toContainText('no longer exists', { timeout: 10_000 });
+    expect(lines(env.argvFile).filter((l) => l.startsWith('stop ')).length).toBe(0);
+  } finally {
+    await app.close();
+  }
+});
+
+test('an agent done with its work reads as ready, not as needing you', async () => {
+  const env = makeHome({ needs: 'send a prompt to start' });
+  const app = await launch(env);
+  try {
+    const win = await openCenter(app);
+    const st = await win.evaluate(() => agentMap.rows.find((a) => a.id === 'agent-here').state); // eslint-disable-line no-undef
+    expect(st).toBe('ready');
+    await expect(win.locator('#am-n-blocked')).toHaveText('0');
+    await expect(win.locator('#am-sub')).not.toContainText('needs you');
+    await win.evaluate(() => amSelect('agent-here'));      // eslint-disable-line no-undef
+    await expect(win.locator('#am-d-state')).toHaveText('Done, ready for you');
+    await expect(win.locator('#am-d-open')).toHaveText('Continue in chat');
+    await expect(win.locator('#am-d-wait')).toBeHidden();
+  } finally {
+    await app.close();
+  }
+});
+
+test('with the terminal view preferred, Respond attaches to a live agent by id', async () => {
+  const env = makeHome({ chatView: 'terminal' });
   const app = await launch(env);
   try {
     const win = await openCenter(app);
@@ -188,6 +263,9 @@ test('a live agent can be stopped from the panel that reports it', async () => {
     await expect(end).toBeEnabled();
 
     await end.click();
+    await expect(win.locator('#confirm-title')).toHaveText('Stop this agent?');
+    expect(lines(env.argvFile).filter((l) => l.startsWith('stop '))).toHaveLength(0);
+    await win.click('#confirm-ok');
     await win.waitForTimeout(2000);
 
     const stopped = lines(env.argvFile).filter((l) => l.startsWith('stop '));
@@ -250,7 +328,7 @@ test('the pill, the center and the switcher agree about the fleet', async () => 
     await win.waitForFunction(() => typeof openAgentMap === 'function', null, { timeout: 20_000 });
     // The pill paints as soon as the fleet answers; boot cost varies with the
     // machine, so the read waits for the paint instead of a fixed pause.
-    await win.waitForFunction(() => !document.querySelector('#topbar-agents').hidden, null, { timeout: 20_000 });
+    await win.waitForFunction(() => document.querySelector('#topbar-agents-count').textContent !== '', null, { timeout: 20_000 });
 
     // Two of the three fixture agents are live, and that is what the pill counts.
     const chip = await chipCount(win);
@@ -276,7 +354,7 @@ test('the pill, the center and the switcher agree about the fleet', async () => 
   }
 });
 
-test('with nothing live the pill stands down and the center keeps the last work', async () => {
+test('with nothing live the pill goes quiet and the center keeps the last work', async () => {
   const env = makeHome();
   // Every agent finished: the pill counts work in flight, so it has nothing to
   // say, while the center still holds the stretch of work that just ended.
@@ -296,8 +374,11 @@ test('with nothing live the pill stands down and the center keeps the last work'
     expect(await win.evaluate(() => agentMap.rows.some((r) => r.running)),
       'a fleet with nothing running reported live work').toBe(false);
     expect(total, 'the center lost the work that just finished').toBe(3);
-    await expect(win.locator('#topbar-agents'),
-      'the pill counted finished agents nobody can act on').toBeHidden();
+    // The way in stays, quiet: no count and no live mark for finished work.
+    await expect(win.locator('#topbar-agents')).toBeVisible();
+    await expect(win.locator('#topbar-agents-count'),
+      'the pill counted finished agents nobody can act on').toHaveText('');
+    await expect(win.locator('#topbar-agents')).not.toHaveClass(/is-live/);
   } finally {
     await app.close();
   }

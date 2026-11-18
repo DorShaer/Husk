@@ -32,7 +32,7 @@ function launchWithProject(projectDir) {
   fs.mkdirSync(path.join(homeDir, '.claude'), { recursive: true });
   const pkgVersion = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8')).version;
   fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify({
-    firstRunDone: true, skipWelcome: true, lastSeenVersion: pkgVersion, paiEnabled: false,
+    firstRunDone: true, skipWelcome: true, lastSeenVersion: pkgVersion, welcomeVersion: 2,
     voice: { enabled: false, name: 'en_US-amy-medium', rate: 1.0 },
     agentCommand: `node ${FIXTURE}`,
     projects: [{ id: 'p1', name: 'e2e-proj', path: projectDir }],

@@ -205,6 +205,7 @@ test('pick mode chooses the second chat from the strip and a close unsplits', as
   await win.keyboard.press('Control+\\');
   await win.waitForTimeout(200);
   expect((await state(win)).split).toBe(false);
+  await win.evaluate(() => { document.activeElement?.blur(); });
   await win.keyboard.press('Control+\\');
   await win.waitForTimeout(200);
   s = await state(win);

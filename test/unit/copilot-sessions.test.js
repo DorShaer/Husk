@@ -7,7 +7,7 @@ const os = require('os');
 const path = require('path');
 const vm = require('vm');
 
-const { deriveCopilotSessionTitleFromEventsText } = require('../../src/lib/copilot-session-title');
+const { deriveCopilotSessionTitleFromEventsText, copilotUserMessages } = require('../../src/lib/copilot-session-title');
 
 // main.js is an Electron entrypoint and cannot be required, so lift the copilot
 // readers out of the source and run them against session dirs on disk.
@@ -25,8 +25,8 @@ const CODE = [
   grab(/function copilotLastTurnMs\(dir\) \{[\s\S]*?\n\}/, 'copilotLastTurnMs'),
   grab(/function readCopilotSessionTitle\(dir\) \{[\s\S]*?\n\}/, 'readCopilotSessionTitle'),
   grab(/function isAutopilotCopilotText\(text\) \{[\s\S]*?\n\}/, 'isAutopilotCopilotText'),
-  grab(/function containsAutopilotCopilotText\(text\) \{[\s\S]*?\n\}/, 'containsAutopilotCopilotText'),
   grab(/function isAutopilotCopilotSession\(ws, eventTitle\) \{[\s\S]*?\n\}/, 'isAutopilotCopilotSession'),
+  grab(/function\* copilotSessionRows\(opts = \{\}\) \{[\s\S]*?\n\}/, 'copilotSessionRows'),
   grab(/function listCopilotSessions\(opts = \{\}\) \{[\s\S]*?\n\}/, 'listCopilotSessions'),
 ].join('\n');
 
@@ -59,8 +59,9 @@ function makeCopilotHome(specs) {
 function load(home) {
   const ctx = {
     fs, path, JSON, Map, Buffer, Date, Number, String, Array, Object, Math, isFinite,
+    drainSessions: require('../../src/lib/session-scan').drain,
     COPILOT_DIR: home,
-    deriveCopilotSessionTitleFromEventsText,
+    deriveCopilotSessionTitleFromEventsText, copilotUserMessages,
     isAutopilotWorkspacePath: () => false,
   };
   vm.createContext(ctx);
@@ -137,4 +138,18 @@ test('an empty session-state tree yields no sessions rather than throwing', () =
   const { listCopilotSessions } = load(home);
   assert.equal(listCopilotSessions().length, 0);
   fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('keeps sessions that read marker text and hides structured autopilot prompts', (t) => {
+  const home = makeCopilotHome([
+    { id: 'reader', userMessage: 'Explain the autopilot source' },
+    { id: 'worker', userMessage: '[AUTONOMOUS MODE] Finish this task' },
+    { id: 'discussion', userMessage: 'Explain [AUTONOMOUS MODE] in the source' },
+  ]);
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  fs.appendFileSync(path.join(home, 'session-state', 'reader', 'events.jsonl'), JSON.stringify({
+    type: 'tool.execution_complete', data: { content: '[AUTONOMOUS MODE]' },
+  }) + '\n');
+  const result = load(home).listCopilotSessions();
+  assert.deepEqual(Array.from(result, (s) => s.id).sort(), ['discussion', 'reader']);
 });

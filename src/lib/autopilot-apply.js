@@ -12,7 +12,9 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { STATUS_FILE } = require('./autopilot-status');
+const { readBoundedFile } = require('./bounded-file');
 const { realParentInside, realPathInside } = require('./path-confine');
 
 // A change entry is { path: <relative>, status: 'added'|'modified'|'deleted' },
@@ -111,6 +113,49 @@ function deleteFrom(workspaceRoot, rel) {
   }
 }
 
+// What sits at root/rel now: null when absent, a sha256 for a file, link:<target>
+// for a symlink, 'other' for anything else.
+function fingerprintAt(root, rel) {
+  const abs = path.join(root, rel);
+  let st;
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- rel passed isSafeRelPath; lstat never follows
+  try { st = fs.lstatSync(abs); } catch (_) { return null; }
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- same confined path, read as a link
+  if (st.isSymbolicLink()) { try { return 'link:' + fs.readlinkSync(abs); } catch (_) { return 'other'; } }
+  if (!st.isFile()) return 'other';
+  // Read through the descriptor checked against the lstat above, so a swap cannot redirect it.
+  try { return crypto.createHash('sha256').update(readBoundedFile(abs, Number.MAX_SAFE_INTEGER)).digest('hex'); } catch (_) { return 'other'; }
+}
+
+// The run's starting state for rel from its snapshot manifest entries.
+function baseFingerprint(entries, rel) {
+  const e = entries[rel] || entries[rel.split(path.sep).join('/')];
+  if (!e) return null;
+  if (e.type === 'file') return typeof e.sha === 'string' ? e.sha : 'unknown';
+  if (e.type === 'symlink') return 'link:' + e.target;
+  return 'other';
+}
+
+// Files the run changed whose workspace copy also changed since the run
+// started. A file already identical to the run's result is not a conflict.
+// kind: 'edited' | 'deleted' (you removed it) | 'created' (you made one with
+// the same name as the run's new file).
+function findApplyConflicts(worktreePath, workspaceRoot, changes, baseEntries) {
+  const out = [];
+  for (const c of Array.isArray(changes) ? changes : []) {
+    const rel = c && c.path;
+    if (rel === STATUS_FILE || !isSafeRelPath(rel)) continue;
+    const base = baseFingerprint(baseEntries || {}, rel);
+    const mine = fingerprintAt(workspaceRoot, rel);
+    if (mine === base) continue;
+    const theirs = c.status === 'deleted' ? null : fingerprintAt(worktreePath, rel);
+    if (mine === theirs) continue;
+    const kind = base === null ? 'created' : (mine === null ? 'deleted' : 'edited');
+    out.push({ path: rel, kind, runStatus: c.status });
+  }
+  return out;
+}
+
 // Apply a run's changes from its worktree into the real workspace.
 //
 //   worktreePath  - the run's isolated worktree
@@ -147,4 +192,4 @@ function applyWorktreeChanges(worktreePath, workspaceRoot, changes) {
   return { ok: failed.length === 0, applied, failed };
 }
 
-module.exports = { applyWorktreeChanges, isSafeRelPath };
+module.exports = { applyWorktreeChanges, findApplyConflicts, isSafeRelPath };

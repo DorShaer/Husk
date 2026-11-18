@@ -71,20 +71,22 @@
       : el('span', { class: 'sch-warn' }, 'that workflow no longer exists'));
     if (s.cwd) facts.push(el('code', { class: 'sch-cwd' }, s.cwd));
 
-    const when = s.enabled
+    const when = !target || s.broken ? el('span', { class: 'sch-warn' }, 'Needs a workflow') : s.enabled
       ? el('span', { class: 'sch-next' }, s.nextRunAt ? until(s.nextRunAt) : 'never')
       : el('span', { class: 'sch-meta' }, 'paused');
 
     const toggle = el('button', {
-      class: s.enabled ? 'toggle on' : 'toggle',
+      class: s.enabled && target && !s.broken ? 'toggle on' : 'toggle',
       type: 'button',
       title: s.enabled ? 'Pause this schedule' : 'Resume this schedule',
     }, '');
     toggle.dataset.act = 'toggle';
+    toggle.disabled = !target || !!s.broken;
 
     const mk = (act, label, cls) => {
       const b = el('button', { class: cls || 'ghost-btn', type: 'button' }, label);
       b.dataset.act = act;
+      if (act === 'run') b.disabled = !target || !!s.broken;
       return b;
     };
 
@@ -99,7 +101,7 @@
       ),
       el('div', { class: 'sch-row-acts' },
         mk('run', 'Run now'),
-        mk('edit', 'Edit'),
+        mk('edit', !target || s.broken ? 'Choose workflow' : 'Edit'),
         mk('delete', 'Delete', 'ghost-btn ghost-btn-danger'),
         toggle,
       ));
@@ -126,7 +128,7 @@
     }
     const sub = byId('sch-sub');
     if (sub) {
-      const live = state.rows.filter((s) => s.enabled).length;
+      const live = state.rows.filter((s) => s.enabled && !s.broken && workflowName(s.targetId)).length;
       sub.textContent = state.rows.length
         ? `${state.rows.length} schedule${state.rows.length === 1 ? '' : 's'}, ${live} active`
         : 'Workflows that start on their own';

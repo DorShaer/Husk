@@ -256,3 +256,22 @@ test('what a passage of text touches is found without counting or logging anythi
   b.setEnabled(false);
   assert.deepEqual(b.resonate('the staging cluster deploy pipeline', { scope: '/p' }), []);
 });
+
+test('addImage stores a recallable note that carries the image ref', () => {
+  const { b } = brain({});
+  const hash = 'a'.repeat(64);
+  const r = b.addImage({ name: 'diagram.png', caption: 'auth flow sequence', ref: { hash, ext: 'png' }, scope: '/w' });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.node.image, { hash, ext: 'png' });
+  // Recalled by caption words, like any note; the image ref rides in the graph.
+  const found = b.recall('auth flow', { scope: '/w' });
+  assert.equal(found.hits.length, 1);
+  const node = b.graph({ scope: '/w', all: true }).nodes.find((n) => n.id === r.node.id);
+  assert.deepEqual(node.image, { hash, ext: 'png' });
+});
+
+test('addImage rejects a bad ref', () => {
+  const { b } = brain({});
+  assert.equal(b.addImage({ name: 'x.png', ref: { hash: 'nope', ext: 'png' }, scope: '/w' }).ok, false);
+  assert.equal(b.addImage({ name: 'x.gif', ref: { hash: 'a'.repeat(64), ext: 'gif' }, scope: '/w' }).ok, false);
+});

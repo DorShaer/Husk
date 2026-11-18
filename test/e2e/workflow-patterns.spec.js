@@ -46,7 +46,8 @@ function launch(env) {
       USERPROFILE: env.homeDir,
       ELECTRON_DISABLE_SANDBOX: '1',
       HUSK_E2E: '1',
-      PATH: `${env.binDir}:${process.env.PATH}`,
+      // Only the stub agent: CLIs installed for the real user must not be picked.
+      PATH: [env.binDir, ...String(process.env.PATH || '').split(':').filter((d) => d && !d.startsWith(os.homedir()))].join(':'),
     },
     timeout: 30_000,
   });

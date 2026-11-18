@@ -202,7 +202,7 @@ function makeHome() {
     skipWelcome: true,
     // The release highlights are their own surface; a product capture opens on
     // the page it is meant to show.
-    lastSeenVersion: require(path.join(REPO_ROOT, 'package.json')).version,
+    lastSeenVersion: require(path.join(REPO_ROOT, 'package.json')).version, welcomeVersion: 2,
     theme: THEME,
     resumeLastOnLaunch: false,
     agentCommand: 'agent',
@@ -313,6 +313,22 @@ async function main() {
         await shoot(win, name);
       } catch (err) { console.log(`  ${name} FAILED: ${err.message}`); }
     }
+
+    // The Brain page draws what it remembers, so the capture seeds a few notes first.
+    try {
+      await win.evaluate(async (notes) => {
+        for (const text of notes) await window.husk.brain.addNote({ text, global: false });
+      }, [
+        'Orders endpoint paginates with cursor tokens, never offsets. Page size caps at 100.',
+        'Checkout retry uses exponential backoff and caps at thirty seconds.',
+        'The rate limiter runs before the auth check so anonymous floods never reach the database.',
+        'Retry and backoff logic lives in retry.js. The checkout tests cover the timeout path.',
+        'Release notes stay under Unreleased in the changelog until the tag is cut.',
+      ]);
+      await win.evaluate(() => setPage('brain'));
+      await win.waitForTimeout(2200);
+      await shoot(win, 'husk-brain.png');
+    } catch (err) { console.log(`  husk-brain.png FAILED: ${err.message}`); }
 
     await win.evaluate(() => openMcpCustomModal());
     await win.waitForTimeout(900);

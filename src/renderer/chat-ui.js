@@ -444,10 +444,16 @@
     let running = false;
     let starting = false;
     let exited = false;
+    // Set when a vendor switch leaves a model from the previous agent in the
+    // thread. The chip reads it as a prompt to pick one, until this agent
+    // reports its own model or the user chooses.
+    let modelPrompt = false;
     // Set by a send or a new permission card: the next paint scrolls to the
     // bottom even when the reader had scrolled up.
     let forceScroll = false;
     let turnStartedAt = 0;
+    let preparingPrompt = false;
+    let promptSequence = 0;
     let agentName = str(o.agentName) || 'the agent';
     let cwd = str(o.cwd);
     const nodes = new Map();
@@ -486,6 +492,14 @@
     attach.appendChild(icon('attach'));
     attach.appendChild(document.createTextNode('Attach'));
     const meta = el('span', 'chat-composer-meta');
+    const move = el('button', 'ce-composer-btn chat-move-discussion', 'Move discussion');
+    move.type = 'button';
+    move.title = 'Continue this discussion with another vendor';
+    move.setAttribute('aria-haspopup', 'menu');
+    move.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (typeof window.huskMoveDiscussion === 'function') window.huskMoveDiscussion(tabId, move);
+    });
     const send = el('button', 'btn-primary chat-send');
     send.type = 'submit';
     send.title = 'Send (Enter)';
@@ -512,6 +526,12 @@
     allowAll.addEventListener('click', () => { if (api.allowAll) api.allowAll({ tabId, on: false }); });
     foot.appendChild(attach);
     foot.appendChild(meta);
+    foot.appendChild(move);
+    const actions = el('button', 'ce-composer-btn chat-actions', '⋯');
+    actions.title = 'Chat actions'; actions.setAttribute('aria-label', 'Chat actions');
+    actions.type = 'button'; actions.setAttribute('aria-haspopup', 'menu');
+    actions.addEventListener('click', (event) => { event.stopPropagation(); window.huskChatActions?.(tabId, actions); });
+    foot.appendChild(actions);
     foot.appendChild(allowAll);
     foot.appendChild(el('span', 'chat-composer-spacer'));
     foot.appendChild(stop);
@@ -534,6 +554,10 @@
     const queueBox = el('div', 'chat-queue');
     queueBox.hidden = true;
     dock.appendChild(form);
+    const context = el('div', 'chat-context-window');
+    context.hidden = true;
+    context.setAttribute('aria-label', 'Context window');
+    dock.appendChild(context);
     pane.appendChild(dock);
     if (host) host.appendChild(pane);
 
@@ -576,6 +600,8 @@
     // Each is { mimeType, data (base64), dataUrl } ; the wire gets data, the
     // bubble gets dataUrl.
     let pendingImages = [];
+    let pendingText = '';
+    const LARGE_TEXT = 16000;
     const attachStrip = el('div', 'chat-attach-strip');
     attachStrip.hidden = true;
     form.insertBefore(attachStrip, input);
@@ -592,7 +618,14 @@
         th.appendChild(x);
         attachStrip.appendChild(th);
       });
-      attachStrip.hidden = !pendingImages.length;
+      if (pendingText) {
+        const chip = el('span', 'chat-text-attachment', `Pasted text · ${pendingText.length.toLocaleString()} characters`);
+        const remove = el('button', 'chat-attach-x', '\u00d7');
+        remove.type = 'button'; remove.setAttribute('aria-label', 'Remove pasted text');
+        remove.addEventListener('click', () => { pendingText = ''; paintAttachments(); syncComposer(); });
+        chip.appendChild(remove); attachStrip.appendChild(chip);
+      }
+      attachStrip.hidden = !pendingImages.length && !pendingText;
     }
     function addImageFile(file) {
       if (!file || !/^image\//.test(file.type)) return false;
@@ -620,20 +653,26 @@
       return took;
     }
     input.addEventListener('paste', (e) => {
-      // Only an image paste is intercepted; text pastes stay native.
-      if (takeImagesFrom(e.clipboardData)) e.preventDefault();
+      if (takeImagesFrom(e.clipboardData)) { e.preventDefault(); return; }
+      const text = e.clipboardData && e.clipboardData.getData('text/plain');
+      if (text && text.length >= LARGE_TEXT) {
+        e.preventDefault();
+        pendingText += input.value.slice(0, input.selectionStart) + text + input.value.slice(input.selectionEnd);
+        input.value = ''; autogrow(); paintAttachments(); syncComposer(); closeAc();
+      }
     });
     form.addEventListener('dragover', (e) => { if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) { e.preventDefault(); form.classList.add('is-dropping'); } });
     form.addEventListener('dragleave', () => form.classList.remove('is-dropping'));
     form.addEventListener('drop', (e) => { form.classList.remove('is-dropping'); if (takeImagesFrom(e.dataTransfer)) { e.preventDefault(); e.stopPropagation(); } });
 
     let queued = [];
+    let queuePaused = false;
     let sendNowItem = null;
     function paintQueue() {
       queueBox.replaceChildren();
       queued.forEach((q, i) => {
         const row = el('div', 'chat-item chat-item-user is-queued');
-        const bubble = el('div', 'chat-bubble', q.text || (q.images && q.images.length ? '' : ''));
+        const bubble = userBubble(q.text);
         if (q.images && q.images.length) bubble.prepend(imageRow(q.images));
         row.appendChild(bubble);
         const time = messageTime(q.at);
@@ -642,12 +681,12 @@
         tag.appendChild(el('span', 'chat-queued-label', 'Queued'));
         const sendNow = el('button', 'chat-queue-send', q === sendNowItem ? 'Sending now…' : 'Send now');
         sendNow.type = 'button';
-        sendNow.disabled = starting || exited || destroyed || !!sendNowItem;
+        sendNow.disabled = starting || exited || destroyed || gatePending || !!sendNowItem;
         sendNow.title = q === sendNowItem
           ? 'Interrupting the current reply to send this message'
           : 'Stop the current reply and send this message now';
         sendNow.addEventListener('click', () => {
-          if (starting || exited || destroyed || sendNowItem) return;
+          if (starting || exited || destroyed || gatePending || sendNowItem) return;
           const index = queued.indexOf(q);
           if (index < 0) return;
           queued.splice(index, 1);
@@ -665,7 +704,7 @@
             return;
           }
           paintQueue();
-          doSend(q.text, q.images);
+          doSend(q.text, q.images, q.at);
         });
         tag.appendChild(sendNow);
         const x = el('button', 'chat-queue-x', '\u00d7');
@@ -688,11 +727,11 @@
       schedule();
     }
     function flushQueue() {
-      if (!queued.length || running || starting || exited || destroyed) return;
+      if (queuePaused || !queued.length || running || starting || exited || destroyed || gatePending) return;
       const next = queued.shift();
       if (next === sendNowItem) sendNowItem = null;
       paintQueue();
-      doSend(next.text, next.images);
+      doSend(next.text, next.images, next.at);
     }
     // Prompt history on the arrow keys, shell style: Up from the start of the
     // field walks back through what was sent, Down walks forward and the last
@@ -709,6 +748,9 @@
       return out;
     }
     function setInputValue(v) {
+      pendingText = '';
+      if (v.length >= LARGE_TEXT) { pendingText = v; v = ''; }
+      paintAttachments();
       input.value = v;
       try { input.setSelectionRange(v.length, v.length); } catch (_) {}
       autogrow();
@@ -718,7 +760,7 @@
       const list = historyList();
       if (!list.length) return false;
       if (dir < 0) {
-        if (histIdx === -1) { histDraft = input.value; histIdx = list.length; }
+        if (histIdx === -1) { histDraft = pendingText + input.value; histIdx = list.length; }
         if (histIdx === 0) return true;
         histIdx -= 1;
         setInputValue(list[histIdx]);
@@ -733,7 +775,7 @@
 
     function syncComposer() {
       const busy = running || starting || exited;
-      send.disabled = busy || (!input.value.trim() && !pendingImages.length);
+      send.disabled = busy || (!input.value.trim() && !pendingImages.length && !pendingText);
       send.hidden = running || exited;
       stop.hidden = !running;
       restart.hidden = !exited || typeof o.onRestart !== 'function';
@@ -765,24 +807,46 @@
       }
       // Each chip says what it is on hover: three bare words side by side do not.
       parts.forEach((p, k) => {
-        const chip = el('span', 'chat-chip' + (k === 1 && cwd ? ' chat-composer-cwd' : ''), p);
+        const action = k === 0 ? o.onAgentPick : k === 1 && cwd ? o.onFolderPick : null;
+        const chip = el(typeof action === 'function' ? 'button' : 'span', 'chat-chip' + (action ? ' chat-context-btn' : '') + (k === 1 && cwd ? ' chat-composer-cwd' : ''), p);
         chip.title = k === 0 ? `Agent: ${agentName}` : (k === 1 && cwd ? `Folder: ${cwd}` : `Mode: ${p}`);
+        if (typeof action === 'function') {
+          chip.type = 'button';
+          chip.setAttribute('aria-haspopup', 'menu');
+          chip.addEventListener('click', (ev) => { ev.stopPropagation(); action(chip); });
+        }
         meta.appendChild(chip);
       });
       // The model chip opens the picker (ACP lists come from the agent, claude's
       // from Husk's catalog). Shown even before a model is known, as 'Model'.
-      const mb = el('button', 'chat-chip chat-model-btn', state.model ? str(state.model) : 'Model');
+      const mb = el('button', 'chat-chip chat-model-btn' + (modelPrompt ? ' chat-model-btn--pick' : ''), modelPrompt ? 'Select model' : (state.model ? str(state.model) : 'Model'));
       mb.type = 'button';
-      mb.title = state.model ? `Model: ${str(state.model)}. Click to switch` : 'Model. Click to pick one';
+      mb.title = modelPrompt ? `Pick a model for ${agentName}` : state.model ? `Model: ${str(state.model)}. Click to switch` : 'Model. Click to pick one';
       mb.setAttribute('aria-haspopup', 'menu');
       mb.addEventListener('click', (ev) => { ev.stopPropagation(); toggleModelMenu(); });
       meta.appendChild(mb);
-      // Context window fill, only from agents that report it.
-      const ctx = usageLabel(state.usage);
-      if (ctx) {
-        const u = el('span', 'chat-chip chat-composer-usage', ctx.text);
-        u.title = ctx.title;
-        meta.appendChild(u);
+      const usage = state.usage;
+      const used = Number(usage && usage.used);
+      const size = Number(usage && usage.size);
+      context.hidden = !Number.isFinite(used) || !(size > 0);
+      context.replaceChildren();
+      if (!context.hidden) {
+        const pct = Math.max(0, used / size * 100);
+        context.dataset.state = pct >= 90 ? 'critical' : pct >= 75 ? 'close' : 'ok';
+        const labels = el('div', 'chat-context-labels');
+        labels.append(el('span', '', 'Context window'));
+        labels.append(el('span', 'chat-context-value', `${fmtTokens(used)} / ${fmtTokens(size)} tokens · ${Math.round(pct)}%`));
+        const bar = el('div', 'chat-context-track');
+        bar.setAttribute('role', 'meter');
+        bar.setAttribute('aria-label', 'Context window used');
+        bar.setAttribute('aria-valuemin', '0');
+        bar.setAttribute('aria-valuemax', String(size));
+        bar.setAttribute('aria-valuenow', String(Math.min(size, Math.max(0, used))));
+        bar.setAttribute('aria-valuetext', `${Math.round(pct)} percent of context used`);
+        const fill = el('div', 'chat-context-fill');
+        fill.style.width = `${Math.min(100, pct)}%`;
+        bar.append(fill);
+        context.append(labels, bar);
       }
       if (cwd) meta.title = cwd;
       empty.textContent = '';
@@ -810,24 +874,10 @@
     dock.appendChild(modelMenu);
     let modelMenuOpen = false;
     async function modelChoices() {
-      const live = state.models && Array.isArray(state.models.available) ? state.models.available : [];
-      // An agent that names only one model (copilot says just 'auto') gets the
-      // CLI's own /model list merged in.
-      if (live.length === 1) {
-        try {
-          const r = await window.husk.models.list({ command: o.agentCommand || agentName });
-          const more = (r && Array.isArray(r.models) ? r.models : []).map((m) => ({ id: str(m.value), name: str(m.label || m.value), desc: '' })).filter((m) => m.id && m.id !== live[0].id);
-          if (more.length) return { rows: [{ id: live[0].id, name: live[0].name || live[0].id, desc: live[0].description || '' }].concat(more), current: state.models.current, sourceLabel: `Listed by ${agentName}` };
-        } catch (_) {}
-      }
-      if (live.length) return { rows: live.map((m) => ({ id: m.id, name: m.name || m.id, desc: m.description || '' })), current: state.models.current, sourceLabel: `Listed by ${agentName}` };
-      // claude (and anything else without a live list): Husk's catalog for the CLI.
-      try {
-        const r = await window.husk.models.list({ command: o.agentCommand || agentName });
-        const rows = (r && Array.isArray(r.models) ? r.models : []).map((m) => ({ id: str(m.value), name: str(m.label || m.value), desc: '' })).filter((m) => m.id);
-        return { rows, current: null, sourceLabel: r && r.sourceLabel ? str(r.sourceLabel) : '' };
-      } catch (_) { return { rows: [], current: null, sourceLabel: '' }; }
+      return window.HuskModels.load({ command: o.agentCommand || agentName,
+        available: state.models && state.models.available || [], current: state.models && state.models.current });
     }
+
     async function openModelMenu() {
       modelMenu.replaceChildren(el('div', 'chat-model-note', 'Loading models...'));
       modelMenu.hidden = false;
@@ -840,15 +890,7 @@
       modelMenu.appendChild(head);
       if (!rows.length) modelMenu.appendChild(el('div', 'chat-model-note', `No model list for ${agentName} yet.`));
       for (const m of rows) {
-        const b = el('button', 'chat-model-item' + ((current && m.id === current) || (!current && state.model && (m.name === state.model || m.id === state.model)) ? ' is-current' : ''));
-        b.type = 'button';
-        b.setAttribute('role', 'menuitemradio');
-        b.dataset.model = m.id;
-        b.appendChild(el('span', 'chat-model-name', m.name));
-        if (m.id !== m.name) b.appendChild(el('span', 'chat-model-id', m.id));
-        if (m.desc) b.appendChild(el('span', 'chat-model-desc', m.desc));
-        b.addEventListener('click', () => { closeModelMenu(); chooseModel(m.id, m.name); });
-        modelMenu.appendChild(b);
+        modelMenu.appendChild(window.HuskModels.item(m, current || rows.find(row => row.id === state.model || row.name === state.model)?.id, (id, name) => { closeModelMenu(); chooseModel(id, name); }));
       }
       // Any id the CLI accepts, for a model newer than every list here.
       const custom = el('form', 'chat-model-custom');
@@ -874,12 +916,15 @@
       let res = null;
       try { res = await api.setModel({ tabId, modelId, modelName }); } catch (err) { res = { ok: false, error: (err && err.message) || 'switch failed' }; }
       if (!res || !res.ok) { apply({ type: 'error', text: `Could not switch model: ${(res && res.error) || 'no reason given'}` }); return; }
+      modelPrompt = false;
       apply({ type: 'status', text: `Model set to ${modelName || modelId}${res.restarted ? ' (session resumed under the new model)' : ''}` });
       if (typeof o.onModelChange === 'function') { try { o.onModelChange(modelId, modelName); } catch (_) {} }
     }
 
+    let gateOpen = false;
+    let gatePending = false;
     function doSend(textArg, imagesArg, atArg) {
-      const text = str(textArg === undefined ? input.value : textArg).replace(/\s+$/, '').replace(/^\s*\n/, '');
+      const text = str(textArg === undefined ? pendingText + input.value : textArg).replace(/\s+$/, '').replace(/^\s*\n/, '');
       const images = imagesArg !== undefined ? (imagesArg || []) : (textArg === undefined ? pendingImages.slice() : []);
       if ((!text.trim() && !images.length) || exited || destroyed) return false;
       // /model is Husk's own: the CLI's TUI command does nothing over the wire.
@@ -887,6 +932,12 @@
       if (mm && textArg === undefined) {
         input.value = ''; autogrow(); closeAc(); syncComposer();
         if (mm[1]) chooseModel(mm[1], mm[1]); else openModelMenu();
+        return true;
+      }
+      // Host compaction only claims /compact when it can actually run here;
+      // otherwise the command is the agent's own and goes through to it.
+      if (/^\/compact\s*$/.test(text) && textArg === undefined && typeof o.onCompact === 'function' && o.onCompact()) {
+        input.value = ''; autogrow(); syncComposer();
         return true;
       }
       // Signing in and out are the CLI's interactive commands; the host opens
@@ -906,6 +957,37 @@
         return true;
       }
       const sentAt = timestampValue(atArg) || Date.now();
+      if (running || starting) {
+        queued.push({ text, images, at: sentAt });
+        if (textArg === undefined) { input.value = ''; autogrow(); closeAc(); pendingImages = []; pendingText = ''; paintAttachments(); }
+        paintQueue();
+        return true;
+      }
+      // The host may hold a typed message for a yes or no first. The draft
+      // stays in the field until the answer.
+      if (gatePending) return true;
+      if (!gateOpen && typeof o.sendGate === 'function') {
+        let ask = null;
+        try { ask = o.sendGate(); } catch (_) {}
+        if (ask && typeof ask.then === 'function') {
+          gatePending = true;
+          const restoreQueued = () => {
+            if (!destroyed && textArg !== undefined) {
+              queued.unshift({ text, images, at: sentAt });
+              paintQueue();
+            }
+          };
+          paintQueue();
+          ask.then((ok) => {
+            gatePending = false;
+            if (destroyed) return;
+            if (!ok) { restoreQueued(); return; }
+            gateOpen = true;
+            try { doSend(textArg, imagesArg, atArg); } finally { gateOpen = false; }
+          }, () => { gatePending = false; restoreQueued(); });
+          return true;
+        }
+      }
       histIdx = -1;
       if (editingKey && textArg === undefined) {
         // The edited prompt and its reply leave the thread before the new one lands.
@@ -916,21 +998,22 @@
         nodes.forEach((n, k) => { if (!state.items.some((it) => it.key === k)) { try { n.el.remove(); } catch (_) {} nodes.delete(k); } });
         paint();
       }
-      if (running || starting) {
-        queued.push({ text, images, at: sentAt });
-        if (textArg === undefined) { input.value = ''; autogrow(); closeAc(); pendingImages = []; paintAttachments(); }
-        paintQueue();
-        return true;
-      }
-      if (textArg === undefined) { input.value = ''; autogrow(); closeAc(); pendingImages = []; paintAttachments(); }
+      if (textArg === undefined) { input.value = ''; autogrow(); closeAc(); pendingImages = []; pendingText = ''; paintAttachments(); }
       apply({ type: 'user', text, at: sentAt, images: images.map((im) => ({ mimeType: im.mimeType, data: im.dataUrl })) });
       forceScroll = true;
       // Running flips now rather than on the next frame, so a second Enter in
       // the same frame cannot send twice.
       setRunningInternal(true);
       if (typeof o.onSend === 'function') { try { o.onSend(text); } catch (_) {} }
+      const sendingSequence = ++promptSequence;
+      preparingPrompt = true;
       Promise.resolve()
-        .then(() => api.prompt({ tabId, text, at: sentAt, images: images.map((im) => ({ mimeType: im.mimeType, data: im.data })) }))
+        .then(() => typeof o.beforePrompt === 'function' ? o.beforePrompt() : undefined)
+        .then(() => {
+          if (sendingSequence !== promptSequence || destroyed || exited) return { ok: true };
+          preparingPrompt = false;
+          return api.prompt({ tabId, text, at: sentAt, images: images.map((im) => ({ mimeType: im.mimeType, data: im.data })) });
+        })
         .then((res) => { if (res && res.ok === false) apply({ type: 'error', text: res.error || 'The agent did not take that message.' }); })
         .catch((err) => apply({ type: 'error', text: (err && err.message) || 'The agent did not take that message.' }));
       syncComposer();
@@ -939,6 +1022,13 @@
 
     function doStop() {
       if (!running) return Promise.resolve({ ok: true });
+      if (preparingPrompt) {
+        promptSequence++; preparingPrompt = false;
+        if (typeof o.onPromptAborted === 'function') o.onPromptAborted();
+        apply({ type: 'status', text: 'Stopped before sending.' });
+        apply({ type: 'turn_end', canceled: true });
+        return Promise.resolve({ ok: true });
+      }
       return Promise.resolve().then(() => api.cancel({ tabId })).catch(() => ({ ok: false }));
     }
 
@@ -1070,7 +1160,7 @@
     }
 
     form.addEventListener('submit', (e) => { e.preventDefault(); if (!acRows.length) doSend(); });
-    input.addEventListener('input', () => { acDismissed = false; histIdx = -1; autogrow(); syncComposer(); updateAc(); });
+    input.addEventListener('input', () => { if (input.value.length >= LARGE_TEXT) { pendingText += input.value; input.value = ''; paintAttachments(); } acDismissed = false; histIdx = -1; autogrow(); syncComposer(); updateAc(); });
     // Alt+Backspace deletes the word before the caret and Alt+Delete the one
     // after, the readline chords; Chromium only binds Ctrl for these. Done as
     // a selection plus the native delete so undo still works.
@@ -1120,7 +1210,7 @@
         // A queued message comes back first: Up on an empty field pulls the
         // most recent one into the field and out of the queue, so it can be
         // edited and re-sent, or deleted and never sent.
-        if (e.key === 'ArrowUp' && !walking && !input.value && queued.length) {
+        if (e.key === 'ArrowUp' && !walking && !input.value && !pendingText && queued.length) {
           e.preventDefault();
           const q = queued.pop();
           if (q === sendNowItem) sendNowItem = null;
@@ -1156,9 +1246,28 @@
       }
       return wrap;
     }
+    function userBubble(text) {
+      const value = str(text);
+      const bubble = el('div', 'chat-bubble');
+      const preview = el('div', 'chat-user-text', value.length > 2400 ? value.slice(0, 2400) + '...' : value);
+      bubble.appendChild(preview);
+      if (value.length > 2400) {
+        const more = el('button', 'ghost-link chat-user-more', 'Show more');
+        more.type = 'button'; more.setAttribute('aria-expanded', 'false');
+        more.addEventListener('click', () => {
+          const expanded = more.getAttribute('aria-expanded') !== 'true';
+          more.setAttribute('aria-expanded', String(expanded));
+          preview.classList.toggle('is-expanded', expanded);
+          preview.textContent = expanded ? value : value.slice(0, 2400) + '...';
+          more.textContent = expanded ? 'Show less' : 'Show more';
+        });
+        bubble.appendChild(more);
+      }
+      return bubble;
+    }
     function buildUser(it) {
       const row = el('div', 'chat-item chat-item-user');
-      const bubble = el('div', 'chat-bubble', it.text);
+      const bubble = userBubble(it.text);
       if (Array.isArray(it.images) && it.images.length) bubble.prepend(imageRow(it.images));
       row.appendChild(bubble);
       const time = messageTime(it.at);
@@ -1416,6 +1525,7 @@
     }
 
     function decisionLabel(it) {
+      if (it.decision === 'expired') return 'Expired: agent restarted';
       const opt = (it.options || []).find((x) => x && x.optionId === it.decision);
       const kind = str(opt && opt.kind);
       if (kind === 'allow_all') return 'Allowed, with everything after it';
@@ -1434,27 +1544,28 @@
         el: card,
         update(it, pending) {
           card.replaceChildren();
+          const asking = str(it.title) === 'AskUserQuestion' && Array.isArray(it.input?.questions);
           const live = !it.decision && pending.indexOf(it.requestId) !== -1;
           card.classList.toggle('is-resolved', !live);
           if (!live) {
             const line = el('div', 'chat-perm-line');
             line.appendChild(icon('shield', 'chat-perm-icon'));
-            line.appendChild(el('span', 'chat-perm-tool', str(it.title)));
+            line.appendChild(el('span', 'chat-perm-tool', asking ? 'Question' : str(it.title)));
             if (it.detail) line.appendChild(el('span', 'chat-perm-detail-inline', str(it.detail)));
-            const verdict = it.decision ? decisionLabel(it) : 'No longer needed';
+            const verdict = it.decision ? (asking ? (it.decision === 'allow' ? 'Answered' : 'Dismissed') : decisionLabel(it)) : 'Expired: agent restarted';
             const v = el('span', 'chat-perm-verdict', verdict);
-            v.dataset.verdict = /allow/i.test(verdict) ? 'allow' : it.decision ? 'deny' : 'none';
+            v.dataset.verdict = /allow/i.test(verdict) || (asking && it.decision === 'allow') ? 'allow' : it.decision && it.decision !== 'expired' ? 'deny' : 'none';
             line.appendChild(v);
             card.appendChild(line);
             return;
           }
           const head = el('div', 'chat-perm-head');
           head.appendChild(el('span', 'chat-pill chat-pill-time', created));
-          const pill = el('span', 'chat-pill chat-pill-status', 'Waiting for approval');
+          const pill = el('span', 'chat-pill chat-pill-status', asking ? 'Waiting for your answer' : 'Waiting for approval');
           pill.dataset.state = 'waiting';
           head.appendChild(pill);
           card.appendChild(head);
-          card.appendChild(el('div', 'chat-perm-title', str(it.title)));
+          card.appendChild(el('div', 'chat-perm-title', asking ? 'Question' : str(it.title)));
           // AskUserQuestion is answered by picking options, not Allow/Deny. The
           // picks go back as updatedInput.answers keyed by question and header,
           // which claude reads as the tool result (verified against stream-json).
@@ -1474,6 +1585,7 @@
               if (q && q.question) block.appendChild(el('div', 'chat-ask-question', str(q.question)));
               const multi = !!(q && q.multiSelect);
               const list = el('div', 'chat-ask-options');
+              let other;
               for (const o of (Array.isArray(q && q.options) ? q.options : [])) {
                 if (!o || typeof o !== 'object') continue;
                 const b = el('button', 'chat-ask-option chat-ask-choice');
@@ -1482,6 +1594,7 @@
                 if (o.description) b.appendChild(el('span', 'chat-ask-desc', str(o.description)));
                 b.addEventListener('click', () => {
                   const set = picks[qi];
+                  if (other) other.value = '';
                   if (multi) { if (set.has(o.label)) set.delete(o.label); else set.add(o.label); }
                   else { set.clear(); set.add(o.label); }
                   for (const btn of list.querySelectorAll('.chat-ask-choice')) {
@@ -1493,6 +1606,20 @@
                 list.appendChild(b);
               }
               block.appendChild(list);
+              if (q?.isOther || !q?.options?.length) {
+                other = el('input', 'chat-ask-other');
+                other.type = q?.isSecret ? 'password' : 'text';
+                other.placeholder = q?.options?.length ? 'Other answer' : 'Your answer';
+                other.setAttribute('aria-label', str(q?.header || q?.question || 'Your answer'));
+                other.autocomplete = 'off';
+                other.addEventListener('input', () => {
+                  picks[qi].clear();
+                  if (other.value.trim()) picks[qi].add(other.value.trim());
+                  for (const btn of list.querySelectorAll('.chat-ask-choice')) btn.classList.remove('is-sel');
+                  submit.disabled = !picks.length || picks.some((picked) => picked.size === 0);
+                });
+                block.appendChild(other);
+              }
               wrap.appendChild(block);
             });
             card.appendChild(wrap);
@@ -1511,6 +1638,7 @@
               const answers = {};
               qs.forEach((q, qi) => {
                 const labels = [...picks[qi]];
+                if (q && q.id) answers[str(q.id)] = labels;
                 if (q && q.question) answers[str(q.question)] = labels;
                 if (q && q.header) answers[str(q.header)] = labels;
               });
@@ -1606,7 +1734,7 @@
           head.type = 'button';
           head.title = 'Files in the working tree that changed while this turn ran';
           head.appendChild(icon('diff', 'chat-changes-icon'));
-          head.appendChild(el('span', 'chat-changes-title', files.length === 1 ? '1 file changed during this turn' : files.length + ' files changed during this turn'));
+          head.appendChild(el('span', 'chat-changes-title', (it.partial ? 'At least ' : '') + (files.length === 1 ? '1 file changed during this turn' : files.length + ' files changed during this turn')));
           head.appendChild(statSpan(it.adds, it.dels));
           head.appendChild(el('span', 'chat-changes-open', 'View'));
           head.appendChild(icon('chevron', 'chat-changes-chev'));
@@ -1740,12 +1868,19 @@
     // hidden pane has no height yet, so the pin is kept and honoured the moment
     // the pane (or a late image) gives it one.
     let pinned = true;
+    let lastScrollTop = 0;
+    let restoreScrollPending = false;
+    let restoreScrollTop = 0;
     let pinning = false;
     function toBottom() { pinning = true; scroller.scrollTop = scroller.scrollHeight; requestAnimationFrame(() => { pinning = false; }); }
-    scroller.addEventListener('scroll', () => { if (!pinning && scroller.clientHeight > 0) pinned = nearBottom(); });
+    scroller.addEventListener('scroll', () => { if (!restoreScrollPending && scroller.clientHeight > 0) { lastScrollTop = scroller.scrollTop; if (!pinning) pinned = nearBottom(); } });
     let resizeObserver = null;
     if (typeof ResizeObserver === 'function') {
-      resizeObserver = new ResizeObserver(() => { if (pinned && scroller.clientHeight > 0) toBottom(); });
+      resizeObserver = new ResizeObserver(() => {
+        if (scroller.clientHeight <= 0) return;
+        if (restoreScrollPending && !pinned) { scroller.scrollTop = restoreScrollTop; lastScrollTop = restoreScrollTop; restoreScrollPending = false; }
+        else if (pinned) toBottom();
+      });
       resizeObserver.observe(scroller);
       resizeObserver.observe(list);
     }
@@ -1837,6 +1972,9 @@
     function apply(eventArg) {
       if (destroyed || !eventArg || typeof eventArg !== 'object') return;
       let event = eventArg;
+      // A live model from this agent resolves the post-switch prompt. Replayed
+      // history never reaches here, so a carried-over model cannot clear it.
+      if (modelPrompt && event.type === 'session' && ev && ev.modelValue(event.model)) modelPrompt = false;
       if (event.type === 'user') {
         turnStartedAt = Date.now();
         event = Object.assign({}, event, { at: timestampValue(event.at) || turnStartedAt });
@@ -1879,7 +2017,11 @@
       if (!running) fileIndexStale = true;
       syncComposer();
       if (typeof o.onRunningChange === 'function') { try { o.onRunningChange(running); } catch (_) {} }
-      if (!running) setTimeout(flushQueue, 0);
+      if (!running) {
+        let prepare;
+        try { prepare = typeof o.beforeNextTurn === 'function' ? o.beforeNextTurn() : null; } catch (_) {}
+        Promise.resolve(prepare).catch(() => {}).then(() => setTimeout(flushQueue, 0));
+      }
       updateTyping();
     }
 
@@ -1887,6 +2029,7 @@
       queue = [];
       queued = [];
       sendNowItem = null;
+      modelPrompt = false;
       state = emptyThread();
       nodes.clear();
       list.replaceChildren();
@@ -1923,6 +2066,33 @@
       apply,
       flush() { if (frame !== null) { frame = null; } drain(); paint(); },
       getState() { drain(); return state; },
+      pauseQueue() { queuePaused = true; },
+      rememberScroll() { if (!restoreScrollPending && scroller.clientHeight > 0) { lastScrollTop = scroller.scrollTop; pinned = nearBottom(); } },
+      captureUi() {
+        return { draft: input.value, pendingText, histIdx, histDraft, editingKey, images: pendingImages.slice(), queued: queued.slice(), scrollTop: scroller.clientHeight > 0 ? scroller.scrollTop : lastScrollTop, pinned: scroller.clientHeight > 0 ? nearBottom() : pinned };
+      },
+      restoreUi(saved) {
+        if (!saved) return;
+        setInputValue(saved.draft || '');
+        pendingText = str(saved.pendingText) + pendingText;
+        histIdx = Number.isInteger(saved.histIdx) ? saved.histIdx : -1;
+        histDraft = str(saved.histDraft);
+        editingKey = state.items.some((it) => it.kind === 'user' && it.key === saved.editingKey) ? saved.editingKey : null;
+        editNote.hidden = !editingKey;
+        pendingImages = Array.isArray(saved.images) ? saved.images.slice() : [];
+        queued = Array.isArray(saved.queued) ? saved.queued.slice() : [];
+        paintAttachments(); paintQueue(); syncComposer();
+        queuePaused = false;
+        setTimeout(flushQueue, 0);
+        pinned = saved.pinned !== false;
+        forceScroll = false;
+        restoreScrollTop = lastScrollTop = saved.scrollTop || 0;
+        restoreScrollPending = !pinned;
+        requestAnimationFrame(() => {
+          if (pinned) toBottom();
+          else if (scroller.clientHeight > 0) { scroller.scrollTop = restoreScrollTop; lastScrollTop = restoreScrollTop; restoreScrollPending = false; }
+        });
+      },
       setRunning(on) {
         // An external stop (the process went away) has to close the turn in the
         // state too, or the next paint would read turnOpen and flip it back.
@@ -1938,7 +2108,8 @@
           queued = [];
           sendNowItem = null;
           paintQueue();
-          setInputValue(input.value ? back + '\n' + input.value : back);
+          const draft = pendingText + input.value;
+          setInputValue(draft ? back + '\n' + draft : back);
         }
         // Nobody is left to answer an open permission, so its card collapses.
         if (exited && Array.isArray(state.pending) && state.pending.length) {
@@ -1958,9 +2129,12 @@
         syncComposer();
       },
       isRunning() { return running; },
+      promptModel(on) { modelPrompt = !!on; paintMeta(); },
+      needsModelPick() { return modelPrompt; },
       reset,
       replay,
       send(text) { return doSend(text); },
+      openModelMenu() { if (!destroyed && !exited) openModelMenu(); },
       // Puts text at the caret, the way a file attach drops a path into a
       // terminal prompt without submitting it.
       insert(text) {

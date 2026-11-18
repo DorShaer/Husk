@@ -24,9 +24,6 @@ function mk(id, ago, extra = {}) {
     sizeBytes: 1024,
     named: false,
     firstMessage: '',
-    prdSlug: '',
-    prdPath: '',
-    prdPhase: '',
     ...extra,
   };
 }
@@ -161,13 +158,6 @@ test('scent: a named session whose prompt restates the title stays quiet', () =>
   assert.equal(sv.scent(s, null), '');
 });
 
-test('scent: a work item slug is not prose and earns no line', () => {
-  // A finished session would otherwise be as tall as a live one to show a raw
-  // identifier, which puts the density gradient on the wrong rows.
-  const s = mk('a', MIN, { prdSlug: 'ship-it' });
-  assert.equal(sv.scent(s, null), '');
-});
-
 test('scent: a live signal outranks every excerpt', () => {
   const s = mk('a', MIN, { named: true, firstMessage: 'an excerpt' });
   assert.equal(sv.scent(s, { kind: 'running', tok: 'working', cont: 'editing main.js' }), 'editing main.js');
@@ -196,7 +186,7 @@ test('filterSessions: an agent stands alone once its parent is filtered out', ()
 });
 
 test('filterSessions: search falls back to substring across the machine fields', () => {
-  const list = [mk('a', MIN, { title: 'nothing alike', prdSlug: 'widget-run' })];
+  const list = [mk('a', MIN, { title: 'nothing alike', projectPath: '/code/widget-run' })];
   const { rows, flat } = sv.filterSessions(list, ctx({ query: 'widget' }));
   assert.equal(flat, true);
   assert.deepEqual(rows.map((s) => s.id), ['a']);

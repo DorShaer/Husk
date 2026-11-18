@@ -55,32 +55,6 @@ MEMORY/
 docs/*.mp4
 docs/*.mov
 
-# ─── Bundled PAI ────────────────────────────────────────────────────────────
-# Ship the framework only. Personal PAI data (memory, learning, credentials,
-# user-specific extensions) must never enter the repo, even if a sync tool
-# copies a populated ~/.claude tree into libs/pai.
-libs/pai/PAI/USER/**
-!libs/pai/PAI/USER/**/
-!libs/pai/PAI/USER/**/README.md
-libs/pai/**/MEMORY/
-libs/pai/**/LEARNING/
-libs/pai/**/.credentials.json
-libs/pai/**/ratings.jsonl
-libs/pai/**/*reflections*.jsonl
-libs/pai/**/history.jsonl
-
-# The same private-data shapes under ANY vendored framework, not just the one
-# that happened to be vendored first. Re-vendoring under a new directory name
-# otherwise arrives with no protection, and a missing ignore rule is silent
-# until a sync tool drops real data in. Templates stay tracked: these match
-# populated data, and every shipped USER file declares template provenance.
-libs/**/MEMORY/
-libs/**/LEARNING/
-libs/**/.credentials.json
-libs/**/ratings.jsonl
-libs/**/*reflections*.jsonl
-libs/**/history.jsonl
-
 # ─── Agent tooling artifacts ────────────────────────────────────────────────
 # Per-session identity files Husk rewrites at runtime.
 .github/copilot-instructions.md
@@ -96,7 +70,7 @@ GEMINI.md
 # agent config is ever committed deliberately.
 .claude/
 
-# PAI Algorithm task artifacts (per-task working state, never shipped).
+# Agent task artifacts (per-task working state, never shipped).
 ISA*.md
 
 # Local exposure scanning suite. Deliberately not tracked: it exists to be run

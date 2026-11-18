@@ -32,7 +32,7 @@ For a downloaded Fedora/RHEL RPM, run this from its download directory:
 sudo dnf install ./husk-v<version>-linux-x86_64.rpm
 ```
 
-**Updating.** On `.deb` and `.rpm` the in-app updater installs through the system package manager, so the desktop asks for your password once. If that prompt is dismissed or your desktop has no polkit agent, Husk tells you and hands you the command to finish it yourself (`sudo apt install --only-upgrade husk`). AppImage updates apply in place with no prompt.
+**Updating.** On `.deb` and `.rpm` the in-app updater installs through the system package manager, so the desktop may ask for your password. If installation cannot finish, Husk shows recovery steps. For an RPM, download the new file and run `sudo dnf install ./husk-v<version>-linux-x86_64.rpm` from its download folder. Husk does not configure a DNF repository, so `dnf upgrade husk` alone does not fetch new Husk releases. AppImage updates apply in place with no password prompt.
 
 **Sandbox helper.** Electron's `chrome-sandbox` needs to be setuid root for hardened mode. Husk runs fine without it (`--no-sandbox` is auto-applied), and `install.sh` will tell you the one-time `sudo chown root:root && sudo chmod 4755` command if you want to enable it.
 
@@ -86,7 +86,7 @@ Full step-by-step guide, including building your own packages and troubleshootin
 ```bash
 git clone https://github.com/DorShaer/Husk.git husk
 cd husk
-./installer/install.sh   # registers Husk with the OS and bootstraps LifeOS into ~/.claude/
+./installer/install.sh   # registers Husk with the OS
 # or
 ./scripts/run.sh         # dev mode, no system registration
 ```
@@ -94,11 +94,9 @@ cd husk
 `install.sh` detects the platform with `uname` and runs the right registration model:
 - Linux: wrapper at `~/.local/bin/husk`, a `.desktop` entry, a hicolor PNG icon, and an optional GNOME favorites pin.
 - macOS: wrapper at `~/.local/bin/husk` plus a real `~/Applications/Husk.app` bundle (with `.icns` generated from the source PNG when `iconutil` and `sips` are present).
-- Windows: `install.sh` does not run on Windows; use `install.ps1` (PowerShell source install, same SHA-256-pinned dependency fetching) or the packaged `.exe`.
+- Windows: `install.sh` does not run on Windows; use `install.ps1` (PowerShell source install) or the packaged `.exe`.
 
 Both Linux and macOS source installs run `npm install` and `npm run rebuild` (electron-rebuild against Electron's Node ABI) on the first install.
-
-Any third-party script the installer fetches (currently just the bun installer) is downloaded to a temp file and SHA-256-verified against a pin in `install.sh` before it runs. See `installer/lib/verify.sh` and `installer/lib/verify.ps1` for the pinning policy and how to refresh a pin.
 
 ## Uninstall
 
@@ -118,5 +116,6 @@ printed rather than deleting the project.
 Husk shows a small version pill in the topbar. When a newer version is on the Releases page, the pill grows a soft pulsing orange dot and reads `vX.Y.Z available`. Click it to see release notes and install.
 
 - Windows NSIS and Linux AppImage update in-place: download, click "Restart and install", relaunched on the new version.
-- `.deb`, `.rpm`, and unsigned macOS `.dmg` cannot auto-update; the popover swaps to "Open releases page".
+- `.deb` and `.rpm` updates use the system package manager and may ask for your password. If download or installation cannot finish, the update card offers the release page and recovery steps.
+- Unsigned macOS builds update manually through the release page.
 - Husk checks once at boot (4s after launch) and again every 6 hours. No telemetry; the request goes straight to the GitHub Releases API.

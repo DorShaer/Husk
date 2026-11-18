@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Husk, production installer. Detects the OS and registers Husk the way
 # that OS expects: a .desktop entry on Linux, a Husk.app bundle on macOS.
-# Everything else (deps, native rebuild, wrapper, LifeOS bootstrap) is shared.
+# Everything else (deps, native rebuild, wrapper) is shared.
 set -e
 
 # This script lives in installer/, so the project root is its parent.
@@ -20,15 +20,6 @@ warn() { echo -e "${C_WARN}!${C_RST} $1"; }
 dim()  { echo -e "${C_DIM}$1${C_RST}"; }
 
 cd "$APP_DIR"
-
-# Pinned SHA-256 of the upstream bun installer script revision we
-# accept. ensure_bun verifies the downloaded file against this constant
-# before running it. Procedure for bumping is in installer/lib/verify.sh.
-BUN_INSTALLER_URL="https://bun.sh/install"
-BUN_INSTALLER_SHA256="bab8acfb046aac8c72407bdcce903957665d655d7acaa3e11c7c4616beae68dd"
-
-# shellcheck source=installer/lib/verify.sh
-. "$APP_DIR/installer/lib/verify.sh"
 
 case "$PLATFORM" in
     Linux)  ok "Detected Linux" ;;
@@ -64,128 +55,6 @@ if [ "$NODE_MAJOR" -lt "$NODE_MIN_MAJOR" ] \
     exit 1
 fi
 ok "Node.js v${NODE_VER}"
-
-# ─── 0. Prerequisites: jq + bun ────────────────────────────────────
-# jq: the bundled statusline parses Anthropic OAuth usage with it; without
-#     jq the 5h/7d limits never get cached.
-# bun: LifeOS hooks are #!/usr/bin/env bun (RatingCapture, LearningSync, etc).
-#     Without bun, no rating capture, learning is empty.
-#
-# Both are auto-installed when missing using the platform's native package
-# manager. Failures here are logged but never abort the rest of the install,
-# Husk's core still works without them, just with degraded LifeOS features.
-
-# Decide whether to prefix install commands with sudo. Skip when already
-# running as root (containers, restricted CI) or when sudo isn't on PATH.
-SUDO=""
-if [ "$(id -u 2>/dev/null)" != "0" ] && command -v sudo >/dev/null 2>&1; then
-    SUDO="sudo"
-fi
-
-_install_jq_linux() {
-    # Each branch is wrapped in `|| true` so a failing package manager call
-    # never aborts the install (set -e at the script top would otherwise
-    # bubble the error up and stop everything). The post-install
-    # `command -v jq` check in ensure_jq is the source of truth.
-    if   command -v apt-get >/dev/null 2>&1; then ($SUDO apt-get update -qq >/dev/null 2>&1 || true); $SUDO apt-get install -y jq || true
-    elif command -v dnf     >/dev/null 2>&1; then $SUDO dnf install -y jq || true
-    elif command -v yum     >/dev/null 2>&1; then $SUDO yum install -y jq || true
-    elif command -v pacman  >/dev/null 2>&1; then $SUDO pacman -S --noconfirm jq || true
-    elif command -v zypper  >/dev/null 2>&1; then $SUDO zypper install -y jq || true
-    elif command -v apk     >/dev/null 2>&1; then $SUDO apk add --no-cache jq || true
-    else warn "No supported package manager found (apt/dnf/yum/pacman/zypper/apk). Install jq manually."; fi
-    return 0
-}
-
-_install_jq_mac() {
-    if command -v brew >/dev/null 2>&1; then brew install jq || true
-    elif command -v port >/dev/null 2>&1; then $SUDO port install jq || true
-    else warn "Homebrew not detected. Install Homebrew (https://brew.sh) and re-run, or run 'brew install jq' yourself."; fi
-    return 0
-}
-
-ensure_jq() {
-    if command -v jq >/dev/null 2>&1; then
-        ok "jq present ($(jq --version 2>/dev/null || echo unknown))"
-        return 0
-    fi
-    info "Installing jq (the statusline needs it for the Anthropic usage cache)..."
-    case "$PLATFORM" in
-        Linux)  _install_jq_linux ;;
-        Darwin) _install_jq_mac ;;
-        *) warn "Auto-install not supported on $PLATFORM. Install jq manually."; return 1 ;;
-    esac
-    if command -v jq >/dev/null 2>&1; then
-        ok "jq installed"
-    else
-        warn "jq install command finished but jq is still not on PATH; continuing without it. The usage cache will not refresh until you install it."
-        return 1
-    fi
-}
-
-_ensure_unzip() {
-    # The bun installer extracts a zip; on minimal distros (containers, fresh
-    # WSL, Alpine) unzip is not present and the installer aborts. Pull it in
-    # quietly first so the bun step can succeed.
-    if command -v unzip >/dev/null 2>&1; then return 0; fi
-    case "$PLATFORM" in
-        Linux)
-            if   command -v apt-get >/dev/null 2>&1; then $SUDO apt-get install -y unzip || true
-            elif command -v dnf     >/dev/null 2>&1; then $SUDO dnf install -y unzip || true
-            elif command -v yum     >/dev/null 2>&1; then $SUDO yum install -y unzip || true
-            elif command -v pacman  >/dev/null 2>&1; then $SUDO pacman -S --noconfirm unzip || true
-            elif command -v zypper  >/dev/null 2>&1; then $SUDO zypper install -y unzip || true
-            elif command -v apk     >/dev/null 2>&1; then $SUDO apk add --no-cache unzip || true
-            fi
-            ;;
-        Darwin)
-            # macOS ships unzip in the base system; nothing to do.
-            ;;
-    esac
-    return 0
-}
-
-ensure_bun() {
-    if command -v bun >/dev/null 2>&1; then
-        ok "bun present ($(bun --version 2>/dev/null || echo unknown))"
-        return 0
-    fi
-    info "Installing bun (LifeOS hooks need it for rating capture and learning)..."
-    if ! command -v curl >/dev/null 2>&1; then
-        warn "curl is required to install bun. Install curl, or install bun manually from https://bun.sh"
-        return 1
-    fi
-    _ensure_unzip
-    # Download the bun installer to a temp file and check its SHA-256
-    # against the pinned constant before running it.
-    local installer_tmp
-    if ! installer_tmp=$(mktemp 2>/dev/null); then
-        warn "Could not create temp file for bun installer; continuing without bun."
-        return 1
-    fi
-    if ! download_and_verify "$BUN_INSTALLER_URL" "$BUN_INSTALLER_SHA256" "$installer_tmp"; then
-        warn "bun installer SHA-256 did not match the pinned value (expected $BUN_INSTALLER_SHA256). Skipping. To update the pin, see installer/lib/verify.sh."
-        rm -f "$installer_tmp"
-        return 1
-    fi
-    if ! bash "$installer_tmp"; then
-        warn "bun installer reported a failure; continuing without bun. LifeOS hooks will not run until bun is installed."
-        rm -f "$installer_tmp"
-        return 1
-    fi
-    rm -f "$installer_tmp"
-    if [ -x "$HOME/.bun/bin/bun" ]; then
-        export PATH="$HOME/.bun/bin:$PATH"
-        ok "bun installed at $HOME/.bun/bin (added to PATH for this session)"
-    else
-        warn "bun install completed but $HOME/.bun/bin/bun is missing; LifeOS hooks will not run until you install bun manually."
-        return 1
-    fi
-}
-
-info "Checking prerequisites (jq, bun)..."
-ensure_jq || true
-ensure_bun || true
 
 # ─── 1. Dependencies (all platforms) ──────────────────────────────
 if [ ! -d node_modules ] || [ ! -f node_modules/node-pty/build/Release/pty.node ]; then
@@ -234,67 +103,7 @@ case ":$PATH:" in
     *) warn "$BIN_DIR is not on your PATH. Add it to your shell rc to launch Husk by name." ;;
 esac
 
-# ─── 4. LifeOS bootstrap (all platforms) ───────────────────────────
-# Husk ships with a copy of LifeOS by Daniel Miessler. We copy the runtime,
-# agents, commands, hooks, skills, and a CLAUDE.md template into ~/.claude/
-# on first install. Existing files are never overwritten, if you have your
-# own ~/.claude/, we only add what is missing. Keep this in step with
-# bootstrapPaiIfNeeded() in src/main.js, which is the same install for
-# packaged builds.
-LIFEOS_BUNDLE="$APP_DIR/libs/lifeos"
-CLAUDE_DIR="$HOME/.claude"
-if [ -d "$CLAUDE_DIR/PAI" ]; then
-    # An install predating this version keeps the older framework under PAI/
-    # with a CLAUDE.md addressing it. Adding the new tree alongside would leave
-    # two frameworks and a routing file naming only the old one, so leave it be.
-    info "Existing PAI install found at $CLAUDE_DIR/PAI, leaving it untouched"
-elif [ -d "$LIFEOS_BUNDLE" ]; then
-    info "Bootstrapping LifeOS into $CLAUDE_DIR (only adds missing files)..."
-    mkdir -p "$CLAUDE_DIR"
-    if [ ! -f "$CLAUDE_DIR/CLAUDE.md" ]; then
-        cp "$LIFEOS_BUNDLE/CLAUDE.template.md" "$CLAUDE_DIR/CLAUDE.md" 2>/dev/null || true
-        ok "Installed CLAUDE.md (you can edit it any time)"
-    fi
-    # LIFEOS is spelled in caps to match the @LIFEOS/... imports CLAUDE.md
-    # carries: on a case-sensitive filesystem any other spelling dangles.
-    for SUBDIR in LIFEOS agents commands hooks skills; do
-        if [ -d "$LIFEOS_BUNDLE/$SUBDIR" ]; then
-            if [ ! -d "$CLAUDE_DIR/$SUBDIR" ]; then
-                cp -R "$LIFEOS_BUNDLE/$SUBDIR" "$CLAUDE_DIR/$SUBDIR"
-                ok "Installed $SUBDIR/"
-            else
-                cp -Rn "$LIFEOS_BUNDLE/$SUBDIR/." "$CLAUDE_DIR/$SUBDIR/" 2>/dev/null || true
-            fi
-        fi
-    done
-    # The identity scaffold lands inside the runtime tree so the
-    # @LIFEOS/USER/... imports resolve without a symlink. Every shipped file is
-    # a blank template, and -n means an answered one is never overwritten.
-    if [ -d "$LIFEOS_BUNDLE/USER" ]; then
-        mkdir -p "$CLAUDE_DIR/LIFEOS/USER"
-        cp -Rn "$LIFEOS_BUNDLE/USER/." "$CLAUDE_DIR/LIFEOS/USER/" 2>/dev/null || true
-    fi
-    # Per-install state the runtime writes into but the bundle never ships.
-    for MEMDIR in WORK KNOWLEDGE LEARNING STATE OBSERVABILITY SKILLS; do
-        mkdir -p "$CLAUDE_DIR/LIFEOS/MEMORY/$MEMDIR"
-    done
-    # Agent-instruction files carried inside the bundle belong to the upstream
-    # project's own repo, where they steer whoever is editing the framework.
-    # Landed in a user's ~/.claude/ they read as standing orders that person
-    # never wrote, in the exact place the CLI looks for their own. Writing
-    # their instructions is their business. Only the ones we just copied are
-    # removed, and only when they still match the bundle byte for byte, so a
-    # file the user already had is never touched.
-    find "$CLAUDE_DIR" -name 'CLAUDE.md' -not -path "$CLAUDE_DIR/CLAUDE.md" 2>/dev/null | while read -r INSTALLED; do
-        REL="${INSTALLED#$CLAUDE_DIR/}"
-        SRC="$LIFEOS_BUNDLE/$REL"
-        [ -f "$SRC" ] || continue
-        cmp -s "$INSTALLED" "$SRC" && rm -f "$INSTALLED"
-    done
-    ok "LifeOS ready"
-fi
-
-# ─── 5. Platform-specific app registration ─────────────────────────
+# ─── 4. Platform-specific app registration ─────────────────────────
 case "$PLATFORM" in
     Linux)
         DESKTOP_DIR="$HOME/.local/share/applications"

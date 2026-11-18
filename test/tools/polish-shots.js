@@ -34,6 +34,9 @@ const flag = (name, dflt) => {
 const THEME = flag('theme', 'dark');
 const SCENE = flag('scene', 'all');
 const SELECTED = flag('select', '');
+// --scale 2 renders at a fixed device scale, for captures that stay sharp
+// when a slide shows them smaller than the window.
+const SCALE = flag('scale', '');
 
 const sanitize = (p) => p.replace(/[^a-zA-Z0-9]/g, '-');
 const sid = (n) => `c0ffee00-0000-4dc7-abb3-${String(n).padStart(12, '0')}`;
@@ -163,7 +166,7 @@ function launch(env) {
   fs.writeFileSync(shim, `#!/bin/sh\nexec "${process.execPath}" "${path.join(REPO_ROOT, 'test', 'e2e', 'fixtures', 'fake-claude-agents.js')}" "$@"\n`);
   fs.chmodSync(shim, 0o755);
   return electron.launch({
-    args: [path.join(REPO_ROOT, 'src', 'main.js'), '--no-sandbox'],
+    args: [path.join(REPO_ROOT, 'src', 'main.js'), '--no-sandbox', ...(SCALE ? [`--force-device-scale-factor=${SCALE}`] : [])],
     cwd: REPO_ROOT,
     env: {
       ...process.env,
@@ -256,6 +259,7 @@ async function run() {
       if (!SELECTED) await win.evaluate(() => amSelect('kid-a11', { scroll: true }));   // eslint-disable-line no-undef
       await settle(win, 900);
       await shoot(win, 'graph-all-fleet-selected');
+      await shoot(win, 'card-all-fleet-selected', { element: '#agent-map .am-card' });
       await shoot(win, 'detail-crop-fleet', { element: '#am-detail-pane' });
       await win.click('[data-am-view="list"]');
       await settle(win, 600);

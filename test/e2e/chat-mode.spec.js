@@ -315,8 +315,14 @@ test('an agent that exits on its own offers Restart in the composer, and Restart
   await expect(pane.locator('.chat-send')).toBeHidden();
   await expect(pane.locator('.chat-stop')).toBeHidden();
   await expect(pane.locator('.chat-input')).toHaveAttribute('placeholder', /exited. Press Restart/);
-  await restart.click();
+  // The top bar says the same, and its own Restart starts the new session.
+  await expect(win.locator('#topbar-chatstat')).toHaveAttribute('data-state', 'stopped');
+  await expect(win.locator('#tcs-state')).toHaveText('Stopped');
+  await expect(win.locator('#tcs-act')).toHaveText('Restart');
+  await win.locator('#tcs-act').click();
   await chatReady(win);
+  await expect(win.locator('#topbar-chatstat')).toHaveAttribute('data-state', 'ready');
+  await expect(win.locator('#tcs-act')).toBeHidden();
   await expect(restart).toBeHidden();
   await expect(pane.locator('.chat-item-user')).toHaveCount(0);
   await pane.locator('.chat-input').fill('back again');
@@ -327,20 +333,19 @@ test('an agent that exits on its own offers Restart in the composer, and Restart
   await app.close();
 });
 
-test('an agent title names the tab, usage shows as ctx %, and Yes / Always / No with a string patch render', async () => {
+test('an agent title names the tab, usage appears below the composer, and Yes / Always / No with a string patch render', async () => {
   const { homeDir, bin } = makeHome();
   const { app, win } = await launch(homeDir, bin);
   const pane = win.locator('.chat-pane.show');
   await chatReady(win);
   // gemini-shaped sessions report no usage, so the footer has none.
-  await expect(pane.locator('.chat-composer-usage')).toHaveCount(0);
+  await expect(pane.locator('.chat-context-window')).toBeHidden();
   await pane.locator('.chat-input').fill('copilot: write a greeting');
   await pane.locator('.chat-input').press('Enter');
 
   await expect(win.locator('.chat-tab.active')).toHaveAttribute('title', 'Greeting file');
-  const usage = pane.locator('.chat-composer-meta .chat-composer-usage');
-  await expect(usage).toHaveText('ctx 3%');
-  await expect(usage).toHaveAttribute('title', /of .* context tokens used/);
+  const usage = pane.locator('.chat-context-value');
+  await expect(usage).toHaveText('3.2K / 128K tokens · 3%');
 
   const perm = pane.locator('.chat-perm');
   await expect(perm.locator('.chat-perm-btn')).toHaveText(['Yes', 'Always', 'Allow all', 'No']);
@@ -360,7 +365,7 @@ test('an agent title names the tab, usage shows as ctx %, and Yes / Always / No 
   await win.waitForLoadState('domcontentloaded');
   await win.waitForFunction(() => window.HuskChat && document.querySelector('.chat-pane.show'));
   await expect(win.locator('.chat-tab.active')).toHaveAttribute('title', 'Greeting file');
-  await expect(win.locator('.chat-pane.show .chat-composer-usage')).toHaveText('ctx 3%');
+  await expect(win.locator('.chat-pane.show .chat-context-value')).toHaveText('3.2K / 128K tokens · 3%');
   await app.close();
 });
 
@@ -384,16 +389,23 @@ test('the Sessions column lists live tabs with their state, + New adds a second 
   await expect(live.first()).toHaveAttribute('data-state', 'running');
   await expect(live.first().locator('.cs-card-state')).toHaveText('Thinking...');
   await expect(live.first().locator('.cs-card-excerpt')).toContainText('slow: write a greeting');
-  await expect(win.locator('#tcs-run')).toHaveAttribute('data-on', '1');
+  await expect(win.locator('#topbar-chatstat')).toHaveAttribute('data-state', 'working');
+  await expect(win.locator('#tcs-state')).toHaveText(/^Working: /);
   await expect(live.first()).toHaveAttribute('data-state', 'needs');
   await expect(live.first().locator('.cs-card-state')).toHaveText('Needs approval');
+  await expect(win.locator('#tcs-state')).toHaveText('Waiting for you');
+  await expect(win.locator('#tcs-act')).toHaveText('Respond');
+  // Respond brings the open question into view and puts focus on its first answer.
+  await win.locator('#tcs-act').click();
+  await expect(pane.locator('.chat-perm .chat-perm-btn').first()).toBeFocused();
   await pane.locator('.chat-perm .chat-perm-btn', { hasText: 'Allow once' }).click();
   await expect(live.first()).toHaveAttribute('data-state', 'done');
-  await expect(win.locator('#tcs-run')).toHaveAttribute('data-on', '0');
+  await expect(win.locator('#topbar-chatstat')).toHaveAttribute('data-state', 'idle');
+  await expect(win.locator('#tcs-state')).toHaveText('Idle');
 
   // + New opens a second tab, which gets its own card and becomes the active one.
   await col.locator('#cs-new').click();
-  await win.locator('#new-tab-menu').getByRole('menuitem', { name: 'New chat' }).click();
+  await win.locator('#new-tab-menu').locator('[data-kind="chat"][data-cmd="gemini"]').click();
   await expect(win.locator('.chat-tab')).toHaveCount(2);
   await expect(live).toHaveCount(2);
   await expect(col.locator('.cs-card.is-active')).toHaveCount(1);
@@ -440,7 +452,7 @@ test('a tool row opens into its card, Formatted and Raw switch, the top bar coun
   await setWindowContentSize(app, 1500, 900);
   await expect(win.locator('body')).toHaveAttribute('data-theme', 'ember');
   await expect(win.locator('#pref-theme option[value="ember"]')).toHaveText('Ember');
-  expect(await win.locator('#pref-theme').inputValue()).toBe('ember');
+  await expect(win.locator('#pref-theme')).toHaveValue('ember');
   const bg = await win.evaluate(() => getComputedStyle(document.body).getPropertyValue('--bg').trim());
   expect(bg).toBe('#171311');
   const bodyBg = await win.evaluate(() => getComputedStyle(document.body).backgroundColor);
@@ -449,7 +461,8 @@ test('a tool row opens into its card, Formatted and Raw switch, the top bar coun
   const pane = win.locator('.chat-pane.show');
   await chatReady(win);
   await expect(win.locator('#topbar-chatstat')).toBeVisible();
-  await expect(win.locator('#tcs-conn')).toHaveAttribute('data-on', '1');
+  await expect(win.locator('#tcs-state')).toHaveText('Ready');
+  await expect(win.locator('#tcs-cli')).toHaveText('Gemini');
   await expect(win.locator('#tcs-ctx')).toBeHidden();
 
   await pane.locator('.chat-input').fill('copilot: write a greeting');
@@ -531,8 +544,9 @@ function seedPastSession(homeDir, bin, extraConfig) {
   return { id, work };
 }
 
-test('a cold boot resumes the newest session into Chat instead of opening an empty chat', async () => {
+test('a cold boot resumes the newest session into Chat by default', async () => {
   const { homeDir, bin } = makeHome();
+  // resumeLastOnLaunch unset, as in an install that never touched it.
   const { id } = seedPastSession(homeDir, bin);
   const { app, win } = await launch(homeDir, bin);
   await expect(win.locator('.chat-tab')).toHaveCount(1);
@@ -550,13 +564,13 @@ test('a cold boot resumes the newest session into Chat instead of opening an emp
   await expect(pane.locator('.chat-item-user')).toHaveCount(2);
   // + New still opens a fresh chat beside it.
   await win.locator('#cs-new').click();
-  await win.locator('#new-tab-menu').getByRole('menuitem', { name: 'New chat' }).click();
+  await win.locator('#new-tab-menu').locator('[data-kind="chat"][data-cmd="gemini"]').click();
   await expect(win.locator('.chat-tab')).toHaveCount(2);
   await expect(win.locator('.chat-pane.show .chat-item-user')).toHaveCount(0);
   await app.close();
 });
 
-test('resumeLastOnLaunch: false keeps the old behaviour of a fresh chat on boot', async () => {
+test('with resuming turned off, a cold boot opens a fresh chat and keeps past sessions as cards', async () => {
   const { homeDir, bin } = makeHome();
   seedPastSession(homeDir, bin, { resumeLastOnLaunch: false });
   const { app, win } = await launch(homeDir, bin);
@@ -593,7 +607,7 @@ test('a past session card resumes into Chat with its history replayed above the 
   fs.writeFileSync(path.join(newerDir, 'workspace.yaml'), `id: ${newerId}\ncwd: ${work}\ncreated_at: ${later}\nupdated_at: ${later}\nname: Newer chat\n`);
   fs.writeFileSync(path.join(newerDir, 'events.jsonl'), JSON.stringify({ type: 'user.message', data: { content: 'newest one' } }) + '\n');
   fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify({
-    firstRunDone: true, skipWelcome: true, agentCommand: 'copilot', agentCwd: work,
+    firstRunDone: true, skipWelcome: true, resumeLastOnLaunch: true, agentCommand: 'copilot', agentCwd: work,
   }));
   const { app, win } = await launch(homeDir, bin);
   await chatReady(win);
@@ -828,15 +842,15 @@ test('Report a bug and Request a feature live in the top bar and the Help menu, 
   await expect(win.locator('#btn-report-bug')).toBeVisible();
   await expect(win.locator('#btn-request-feature')).toBeVisible();
   // The menu is on top: the element under each item's centre is the item.
-  const onTop = await win.evaluate(() => [...document.querySelectorAll('#topbar-help-menu .tb-menu-item')].every((b) => { const r = b.getBoundingClientRect(); const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return !!hit && b.contains(hit); }));
+  const onTop = await win.evaluate(() => [...document.querySelectorAll('#topbar-help-menu .tb-menu-item:not([hidden])')].every((b) => { const r = b.getBoundingClientRect(); const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return !!hit && b.contains(hit); }));
   expect(onTop).toBe(true);
-  const order = await win.evaluate(() => [...document.querySelectorAll('#topbar-help-menu .tb-menu-item')].map((b) => b.id));
-  expect(order).toEqual(['btn-report-bug', 'btn-request-feature', 'btn-help-github']);
+  const order = await win.evaluate(() => [...document.querySelectorAll('#topbar-help-menu .tb-menu-item:not([hidden])')].map((b) => b.id));
+  expect(order).toEqual(['btn-help-documentation', 'btn-help-shortcuts', 'btn-help-troubleshooting', 'btn-report-bug', 'btn-request-feature', 'btn-help-github']);
   await win.keyboard.press('Escape');
   await expect(win.locator('#btn-report-bug')).toBeHidden();
   // Right side reads as groups: agents/status, help, then the two actions.
   const groups = await win.evaluate(() => [...document.querySelectorAll('.topbar-side-right > *')].map((n) => n.id || n.className.split(' ')[0]));
-  expect(groups).toEqual(['topbar-agents', 'topbar-chatstat', 'tb-sep', 'topbar-help', 'tb-sep', 'btn-status-toggle']);
+  expect(groups).toEqual(['topbar-agents', 'tb-sep', 'topbar-usage', 'topbar-help', 'tb-sep', 'btn-status-toggle']);
   const bug = await win.evaluate(() => window.husk.feedback.url('bug'));
   expect(bug.ok).toBe(true);
   const u = new URL(bug.url);
@@ -852,8 +866,8 @@ test('Report a bug and Request a feature live in the top bar and the Help menu, 
     const help = m.items.find((i) => i.label === 'Help');
     return { labels, help: help ? help.submenu.items.map((i) => i.label).filter(Boolean) : [] };
   });
-  expect(menu.labels.slice(-2)).toEqual(['Window', 'Help']);
-  expect(menu.help.slice(0, 2)).toEqual(['Report a bug', 'Request a feature']);
+  expect(menu.labels).toEqual(['File', 'Edit', 'View', 'Go', 'Help']);
+  expect(menu.help).toEqual(expect.arrayContaining(['Report a bug', 'Request a feature']));
   await app.close();
 });
 
@@ -989,7 +1003,7 @@ test('a long resumed conversation opens scrolled to its last message', async () 
     lines.push({ type: 'assistant.message', data: { content: 'answer number ' + i + '. ' + 'Lorem ipsum dolor sit amet. '.repeat(6) } });
   }
   fs.writeFileSync(path.join(dir, 'events.jsonl'), lines.map((o) => JSON.stringify(o)).join('\n') + '\n');
-  fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify({ firstRunDone: true, skipWelcome: true, agentCommand: 'copilot', agentCwd: work }));
+  fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify({ firstRunDone: true, skipWelcome: true, resumeLastOnLaunch: true, agentCommand: 'copilot', agentCwd: work }));
   const { app, win } = await launch(homeDir, bin);
   const pane = win.locator('.chat-pane.show');
   await expect(pane.locator('.chat-item-user')).toHaveCount(40, { timeout: 15_000 });
@@ -1023,7 +1037,7 @@ test('a session log over the replay limit still resumes into Chat, showing its l
   out.write(JSON.stringify({ type: 'assistant.message', data: { content: 'the most recent answer' } }) + '\n');
   await new Promise((r) => out.end(r));
   expect(fs.statSync(path.join(dir, 'events.jsonl')).size).toBeGreaterThan(13 * 1024 * 1024);
-  fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify({ firstRunDone: true, skipWelcome: true, agentCommand: 'copilot', agentCwd: work }));
+  fs.writeFileSync(path.join(homeDir, '.config', 'husk', 'config.json'), JSON.stringify({ firstRunDone: true, skipWelcome: true, resumeLastOnLaunch: true, agentCommand: 'copilot', agentCwd: work }));
   const { app, win } = await launch(homeDir, bin);
   const pane = win.locator('.chat-pane.show');
   await expect(pane.locator('.chat-item-text', { hasText: 'the most recent answer' })).toBeVisible({ timeout: 15_000 });
@@ -1032,7 +1046,7 @@ test('a session log over the replay limit still resumes into Chat, showing its l
   await app.close();
 });
 
-test('the status bar names the model the chat reports, and follows a switch', async () => {
+test('the top bar names the model the chat reports, and follows a switch', async () => {
   const { homeDir, bin } = makeHome();
   // A default for new sessions that this chat is not running.
   fs.mkdirSync(path.join(homeDir, '.claude'), { recursive: true });
@@ -1041,11 +1055,11 @@ test('the status bar names the model the chat reports, and follows a switch', as
   await chatReady(win);
   const pane = win.locator('.chat-pane.show');
   await expect(pane.locator('.chat-model-btn')).toHaveText('Fake 1');
-  await expect(win.locator('#sb-model')).toHaveText('Fake 1');
+  await expect(win.locator('#tcs-model')).toHaveText('Fake 1');
   await pane.locator('.chat-model-btn').click();
   await win.locator('.chat-model-item', { hasText: 'Fake 2' }).click();
   await expect(pane.locator('.chat-model-btn')).toHaveText('Fake 2');
-  await expect(win.locator('#sb-model')).toHaveText('Fake 2');
+  await expect(win.locator('#tcs-model')).toHaveText('Fake 2');
   await app.close();
 });
 
@@ -1059,7 +1073,7 @@ test('an AskUserQuestion permission renders selectable options and submits a pic
 
   const perm = pane.locator('.chat-perm');
   await expect(perm).toBeVisible();
-  await expect(perm.locator('.chat-perm-title')).toHaveText('AskUserQuestion');
+  await expect(perm.locator('.chat-perm-title')).toHaveText('Question');
   // The question and its options render as text, not a scrolling JSON <pre>.
   await expect(perm.locator('.chat-ask-question')).toHaveText('Retire the old welcome page?');
   await expect(perm.locator('.chat-ask-tag')).toHaveText('Legacy views');
@@ -1157,4 +1171,40 @@ test('Allow all stops the asking for the rest of the chat, shows what it let thr
   await expect(again.locator('.chat-perm:not(.is-resolved)')).toHaveCount(1);
   await expect(again.locator('.chat-meta .chat-meta-line', { hasText: 'Done' })).toHaveCount(3);
   await app.close();
+});
+
+test('top bar uses compact activity labels and keeps the context counter on one line', async () => {
+  const { homeDir, bin } = makeHome();
+  const { app, win } = await launch(homeDir, bin);
+  try {
+    await chatReady(win);
+    await setWindowContentSize(app, 1920, 900);
+    const command = 'python3 - <<PY\n' + 'a very long shell command '.repeat(60);
+    for (const [kind, label] of [['execute', 'Running'], ['edit', 'Editing'], ['read', 'Reading'], ['search', 'Searching'], ['fetch', 'Fetching'], ['other', 'Using tools'], [null, 'Thinking'], ['text', 'Writing']]) {
+      await win.evaluate(({ kind, command }) => {
+        const tab = TABS.get(activeTabId);
+        tab.exited = false; tab.chatAlive = true; tab.chatRunning = true; tab.chatEventAt = Date.now(); tab.turnAt = Date.now();
+        const item = kind === 'text' ? { kind: 'text', open: true, text: 'Drafting a reply' }
+          : kind ? { kind: 'tool', toolKind: kind, status: 'running', title: command, detail: command } : { kind: 'thought', text: 'Reasoning' };
+        tab.chatState = { ...tab.chatState, turnOpen: true, pending: [], items: [item], usage: { used: 243000, size: 475000 } };
+        refreshTopbarChatStat();
+      }, { kind, command });
+      await expect(win.locator('#tcs-state')).toHaveText('Working: ' + label);
+      await expect(win.locator('#tcs-ctx')).toBeVisible();
+      await expect(win.locator('#tcs-ctx-text')).toHaveText('243K / 475K');
+      const fit = await win.locator('#tcs-ctx-text').evaluate(el => {
+        const range = document.createRange(); range.selectNodeContents(el);
+        const meter = el.parentElement.getBoundingClientRect();
+        const box = document.querySelector('#topbar-chatstat').getBoundingClientRect();
+        return { lines: range.getClientRects().length, overflow: el.scrollWidth > el.clientWidth, contained: meter.right <= box.right + 1 };
+      });
+      expect(fit).toEqual({ lines: 1, overflow: false, contained: true });
+      if (kind === 'execute') {
+        await expect(win.locator('#tcs-main')).toHaveAttribute('title', new RegExp('Activity: python3'));
+        await win.waitForTimeout(150);
+        const png = await app.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0].capturePage()).toPNG().toString('base64'));
+        fs.writeFileSync('/tmp/husk-compact-activity.png', Buffer.from(png, 'base64'));
+      }
+    }
+  } finally { await app.close(); fs.rmSync(homeDir, { recursive: true, force: true }); }
 });

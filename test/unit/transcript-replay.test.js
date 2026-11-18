@@ -152,3 +152,13 @@ test('codex event-only rollout tails retain the conversation', () => {
   assert.equal(events.filter((e) => e.type === 'user').length, 1);
   assert.equal(events.find((e) => e.type === 'text_final').text, 'Done.');
 });
+
+test('replaying an API error keeps the last real model instead of a CLI marker', () => {
+  const { transcriptToEvents } = require('../../src/lib/transcript-replay');
+  const lines = [
+    { type: 'assistant', message: { model: 'claude-opus-4-6', content: [{ type: 'text', text: 'Working.' }] } },
+    { type: 'assistant', message: { model: '<synthetic>', content: [{ type: 'text', text: 'Usage limit reached.' }] } },
+  ].map(JSON.stringify).join('\n');
+  const events = transcriptToEvents('claude', lines);
+  assert.deepEqual(events.filter((e) => e.type === 'session').map((e) => e.model), ['claude-opus-4-6']);
+});

@@ -33,23 +33,23 @@ async function ready(app) {
   return win;
 }
 
-test('AI tool selector sits at the bottom, above Preferences', async () => {
+test('the rail ends with Preferences and carries no new-chat tool pill', async () => {
   const app = await launch();
   const win = await ready(app);
   const order = await win.evaluate(() => {
     const items = Array.from(document.querySelectorAll('#rail *'));
-    const idx = (sel) => items.indexOf(document.querySelector(sel));
+    const idx = (sel) => { const el = document.querySelector(sel); return el ? items.indexOf(el) : -1; };
     return {
-      autopilot: idx('#rail-autopilot'),
-      toolPill: idx('#rail-agent-pill'),
+      terminal: idx('.rail-item[data-page="terminal"]'),
       prefs: idx('#btn-open-prefs'),
+      hasToolPill: !!document.querySelector('#rail-agent-pill'),
       autopilotText: (document.querySelector('#rail-autopilot')?.textContent || '').trim(),
       headerAutopilotExists: !!document.getElementById('btn-autopilot'),
     };
   });
-  // Tool pill sits after the nav items and immediately before Preferences.
-  expect(order.toolPill).toBeGreaterThan(order.autopilot);
-  expect(order.prefs).toBeGreaterThan(order.toolPill);
+  // The rail no longer carries the new-chat pill; Preferences stays last.
+  expect(order.hasToolPill).toBe(false);
+  expect(order.prefs).toBeGreaterThan(order.terminal);
   // The row is its name alone, with no maturity tag beside it.
   expect(order.autopilotText).toBe('Autopilot');
   expect(order.headerAutopilotExists).toBe(false);
@@ -129,91 +129,181 @@ test('workflows hub renders its hero, illustration and pattern gallery', async (
   await app.close();
 });
 
-test('orchestrator model picker uses provider catalog without overflowing', async () => {
-  const app = await launch();
+test('job model picker separates vendors, preserves pins, keeps half-set routing honest and fits the window', async () => {
+  const app = await launch({ firstRunDone: true, skipWelcome: true, agentCommand: 'true' });
   const win = await ready(app);
-  const info = await win.evaluate(async () => {
-    cfg = {
-      ...(cfg || {}),
-      agentCommand: 'copilot',
-      modelRouting: { copilot: { cheap: 'devuser:~ +0 -0Session: 0 AIC usedYou must be logged in to select a model. Use /login to authenticate.Plan: no limit, 18 agentsGPT-5.5 1.1M Context', smart: 'claude-sonnet-5' } },
-    };
-    orchCatalog = {
-      loading: true,
-      vendor: 'copilot',
-      providerLabel: 'GitHub Copilot',
-      command: 'copilot',
-      flag: '--model',
-      source: 'loading',
-      sourceLabel: '',
-      error: '',
-      models: [],
-    };
+  await win.waitForFunction(() => !!cfg);
+  const info = await win.evaluate(() => {
+    cfg = { ...cfg, agentCommand: 'copilot', taskRouting: undefined,
+      modelRouting: { copilot: { cheap: 'invalid status text', smart: 'claude-sonnet-5' } } };
+    orchDraft = null;
+    orchAgents = [{ command: 'copilot', label: 'GitHub Copilot' }, { command: 'codex', label: 'Codex' }];
+    orchCatalogs.set('copilot', { loading: true, models: [] });
     document.getElementById('aut-orch-modal').hidden = false;
     bindOrchestratorConfig();
-    const loadingState = {
-      status: document.getElementById('aut-model-status').textContent,
-      simpleDisabled: document.getElementById('aut-mr-simple').disabled,
-      complexDisabled: document.getElementById('aut-mr-complex').disabled,
-      saveDisabled: document.getElementById('aut-mr-save').disabled,
+    const loading = {
+      simpleVendor: document.getElementById('aut-vendor-simple').value,
+      complexVendor: document.getElementById('aut-vendor-complex').value,
+      status: document.getElementById('aut-model-status-complex').textContent,
+      automaticAvailable: Array.from(document.getElementById('aut-mr-complex').options).some(o => o.value === ''),
+      vendorAuto: Array.from(document.getElementById('aut-vendor-simple').options).some(o => o.value === 'auto'),
+      simpleStatus: document.getElementById('aut-model-status-simple').textContent,
+      complexModelHidden: document.getElementById('aut-mr-complex').hidden,
+      complexSetupShown: !document.getElementById('aut-setup-complex').hidden,
     };
-    orchCatalog = {
-      loading: false,
-      vendor: 'copilot',
-      providerLabel: 'GitHub Copilot',
-      command: 'copilot',
-      flag: '--model',
-      source: 'slash-model',
-      sourceLabel: 'Read from /model',
-      error: '',
-      models: [
-        { value: 'gpt-5.5', label: 'GPT-5.5' },
-        { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
-        { value: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
-      ],
-    };
+    orchDraft.cheap = { vendor: 'codex', model: 'gpt-test' };
+    orchCatalogs.set('codex', { loaded: true, models: [{ value: 'gpt-test', label: 'GPT test' }] });
+    orchCatalogs.set('copilot', { loaded: true, models: [{ value: 'claude-sonnet-5', label: 'Sonnet' }] });
     bindOrchestratorConfig();
-    const modal = document.getElementById('aut-orch-modal');
-    const card = modal.querySelector('.modal-card');
-    const cardRect = card.getBoundingClientRect();
-    const visibleControls = Array.from(card.querySelectorAll('select,input')).filter((el) => !el.hidden);
-    const overflow = visibleControls.some((el) => {
-      const r = el.getBoundingClientRect();
-      return r.left < cardRect.left - 1 || r.right > cardRect.right + 1;
+    const card = document.querySelector('#aut-orch-modal .modal-card');
+    const rect = card.getBoundingClientRect();
+    const overflow = Array.from(card.querySelectorAll('select,input')).filter(el => !el.hidden).some(el => {
+      const r = el.getBoundingClientRect(); return r.left < rect.left - 1 || r.right > rect.right + 1;
     });
-    return {
-      title: card.querySelector('.modal-title').textContent,
-      provider: document.getElementById('aut-orch-vendor').textContent,
-      command: document.getElementById('aut-model-command').textContent,
-      status: document.getElementById('aut-model-status').textContent,
-      loadingState,
-      simpleValue: document.getElementById('aut-mr-simple').value,
-      complexValue: document.getElementById('aut-mr-complex').value,
-      simpleDisabled: document.getElementById('aut-mr-simple').disabled,
-      complexDisabled: document.getElementById('aut-mr-complex').disabled,
-      saveDisabled: document.getElementById('aut-mr-save').disabled,
-      options: Array.from(document.getElementById('aut-mr-simple').options).map((o) => o.value),
-      customValue: document.getElementById('aut-mr-simple-custom').value,
-      overflow,
+    return { loading, overflow, fitsHeight: rect.top >= 0 && rect.bottom <= innerHeight, title: card.querySelector('.modal-title').textContent,
+      simple: document.getElementById('aut-mr-simple').value,
+      complex: document.getElementById('aut-mr-complex').value,
+      plannerDisabled: document.getElementById('aut-mr-planner').disabled,
+      defaultCommand: cfg.agentCommand,
     };
   });
-  expect(info.title).toContain('orchestrator models');
-  expect(info.provider).toBe('GitHub Copilot');
-  expect(info.command).toContain('--model');
-  expect(info.loadingState.status).toContain('Checking available models');
-  expect(info.loadingState.simpleDisabled).toBe(true);
-  expect(info.loadingState.complexDisabled).toBe(true);
-  expect(info.loadingState.saveDisabled).toBe(true);
-  expect(info.status).toContain('Loaded 3 available models');
-  expect(info.simpleValue).toBe('');
-  expect(info.complexValue).toBe('claude-sonnet-5');
-  expect(info.customValue).toBe('');
-  expect(info.simpleDisabled).toBe(false);
-  expect(info.complexDisabled).toBe(false);
-  expect(info.saveDisabled).toBe(false);
-  expect(info.options).toEqual(expect.arrayContaining(['gpt-5.5', 'gpt-5.4-mini', 'claude-sonnet-5']));
-  expect(info.options.join(' ')).not.toContain('Session');
+  // No CLI is picked on the user's behalf: an unset job type waits for a choice.
+  expect(info.loading.simpleVendor).toBe('');
+  expect(info.loading.vendorAuto).toBe(true);
+  expect(info.loading.complexVendor).toBe('copilot');
+  expect(info.loading.status).toContain('Loading');
+  expect(info.loading.complexModelHidden).toBe(false);
+  expect(info.loading.complexSetupShown).toBe(false);
+  expect(info.loading.automaticAvailable).toBe(true);
+  expect(info.title).toBe('Configure job models');
+  expect(info.simple).toBe('gpt-test');
+  expect(info.complex).toBe('');
+  expect(info.plannerDisabled).toBe(true);
+  expect(info.defaultCommand).toBe('copilot');
   expect(info.overflow).toBe(false);
+  expect(info.fitsHeight).toBe(true);
+  await win.screenshot({ path: test.info().outputPath('job-model-routing.png'), animations: 'disabled' });
+  await win.locator('#aut-mr-save').click();
+  await expect(win.locator('#aut-orch-modal')).toBeHidden();
+  const saved = await win.evaluate(() => cfg.taskRouting);
+  expect(saved.cheap).toEqual({ vendor: 'codex', model: 'gpt-test' });
+  expect(saved.smart).toEqual({ vendor: 'copilot', model: '' });
+  expect(saved.planner).toEqual({ vendor: '', model: '' });
+  await app.close();
+});
+
+test('vendor model responses cannot replace another vendor selection', async () => {
+  const app = await launch({ firstRunDone: true, skipWelcome: true, agentCommand: 'true' });
+  const win = await ready(app);
+  await win.waitForFunction(() => !!cfg);
+  await app.evaluate(({ ipcMain }) => {
+    ipcMain.removeHandler('models:list');
+    ipcMain.handle('models:list', async (_event, { command }) => {
+      await new Promise(resolve => setTimeout(resolve, command === 'codex' ? 350 : 20));
+      return { models: [{ value: command + '-test', label: command + ' test' }] };
+    });
+  });
+  await win.evaluate(() => {
+    cfg = { ...cfg, taskRouting: {} }; orchDraft = null; orchCatalogs.clear();
+    orchAgents = [{ command: 'codex', label: 'Codex' }, { command: 'claude', label: 'Claude' }];
+    document.getElementById('aut-orch-modal').hidden = false; bindOrchestratorConfig();
+  });
+  await win.locator('#aut-vendor-simple').selectOption('codex');
+  await win.locator('#aut-vendor-simple').selectOption('claude');
+  await expect(win.locator('#aut-mr-simple option[value="claude-test"]')).toHaveCount(1);
+  await win.waitForFunction(() => orchCatalogs.get('codex')?.loaded);
+  await expect(win.locator('#aut-mr-simple option[value="codex-test"]')).toHaveCount(0);
+  await win.locator('#aut-mr-simple').selectOption('claude-test');
+  await win.locator('#aut-vendor-simple').selectOption('');
+  await expect(win.locator('#aut-mr-simple')).toBeDisabled();
+  expect(await win.evaluate(() => orchDraft.cheap)).toEqual({ vendor: '', model: '' });
+  await app.close();
+});
+
+test('a CLI with no saved models shows Not routed with zero tier controls, and routing is set up from its own catalog', async () => {
+  const app = await launch({ firstRunDone: true, skipWelcome: true, agentCommand: 'true',
+    taskRouting: { cheap: { vendor: 'codex', model: '' }, smart: { vendor: 'claude', model: '' }, planner: { vendor: 'auto', model: '' }, integrator: { vendor: 'auto', model: '' } } });
+  const win = await ready(app);
+  await win.waitForFunction(() => !!cfg);
+  await app.evaluate(({ ipcMain }) => {
+    ipcMain.removeHandler('agents:detect');
+    ipcMain.handle('agents:detect', () => ({ agents: [{ command: 'claude', label: 'Claude', available: true }, { command: 'codex', label: 'Codex', available: true }] }));
+    global.liveCatalog = true;
+    ipcMain.removeHandler('models:list');
+    ipcMain.handle('models:list', (_e, opts) => (global.liveCatalog && opts.refresh
+      ? { models: [{ value: 'm-small', label: 'Small' }, { value: 'm-large', label: 'Large' }], live: ['m-small', 'm-large'], readAt: 4242 }
+      : { models: [], live: [], error: 'Codex did not list its models.' }));
+  });
+  await win.evaluate(() => openOrchestratorModal());
+  const codexRow = win.locator('#aut-cli-routing .aut-cli-row[data-vendor="codex"]');
+  await expect(codexRow).toHaveAttribute('data-state', 'unrouted');
+  await expect(codexRow).toContainText('This CLI uses its own default model for every task.');
+  await expect(codexRow.locator('select, input')).toHaveCount(0);
+  await expect(codexRow.locator('button')).toHaveText(['Set up routing']);
+  await expect(win.locator('#aut-cli-routing .aut-cli-row[data-vendor="claude"]')).toContainText('Simple jobs run on haiku, complex jobs on opus');
+  // Model selection is available even before vendor defaults are configured.
+  await expect(win.locator('#aut-mr-simple')).toBeVisible();
+  await expect(win.locator('#aut-model-status-simple')).toContainText('Codex did not list its models');
+  await expect(win.locator('#aut-setup-simple')).toBeHidden();
+  await expect(win.locator('#aut-mr-complex')).toBeVisible();
+
+  await win.locator('#aut-cli-advanced > summary').click();
+  await codexRow.locator('button', { hasText: 'Set up routing' }).click();
+  await expect(win.locator('#aut-cli-pick-cheap option')).toHaveCount(3);
+  await win.locator('#aut-cli-pick-cheap').selectOption('m-small');
+  await win.locator('#aut-cli-pick-smart').selectOption('m-large');
+  await win.locator('#aut-cli-pick-use').click();
+  await expect(codexRow).toHaveAttribute('data-state', 'routed');
+  await expect(win.locator('#aut-mr-simple')).toBeVisible();
+  await win.locator('#aut-mr-save').click();
+  await expect(win.locator('#aut-orch-modal')).toBeHidden();
+  expect(await win.evaluate(() => cfg.modelRouting.codex)).toEqual({ cheap: 'm-small', smart: 'm-large', seenAt: 4242 });
+
+  // A catalog that cannot be read still allows a typed id, stored without a catalog time.
+  await app.evaluate(() => { global.liveCatalog = false; });
+  await win.evaluate(() => openOrchestratorModal());
+  await win.locator('#aut-cli-advanced').evaluate(el => { el.open = true; });
+  await codexRow.locator('button', { hasText: 'Change' }).click();
+  await expect(win.locator('.aut-cli-picker .aut-routing-status')).toContainText('enter a model id instead');
+  await win.locator('#aut-cli-pick-mode').click();
+  await win.locator('#aut-cli-pick-cheap').fill('typed small');
+  await win.locator('#aut-cli-pick-smart').fill('typed-large');
+  await win.locator('#aut-cli-pick-use').click();
+  await expect(codexRow).toHaveAttribute('data-state', 'routed');
+  await expect(codexRow).toContainText('m-small');
+  await win.locator('#aut-cli-pick-cheap').fill('typed-small');
+  await win.locator('#aut-cli-pick-smart').fill('typed-large');
+  await win.locator('#aut-cli-pick-use').click();
+  await win.locator('#aut-mr-save').click();
+  expect(await win.evaluate(() => cfg.modelRouting.codex)).toEqual({ cheap: 'typed-small', smart: 'typed-large', seenAt: null });
+  await app.close();
+});
+
+test('Autopilot launch passes a job vendor override without changing new-chat defaults', async () => {
+  const app = await launch({ firstRunDone: true, skipWelcome: true, agentCommand: 'true' });
+  const win = await ready(app);
+  await win.waitForFunction(() => !!cfg);
+  await app.evaluate(({ ipcMain }) => {
+    ipcMain.removeHandler('agents:detect');
+    ipcMain.handle('agents:detect', () => ({ agents: [{ command: 'codex', label: 'Codex', available: true }] }));
+    ipcMain.removeHandler('models:list');
+    ipcMain.handle('models:list', () => ({ models: [{ value: 'gpt-test', label: 'GPT test' }] }));
+    ipcMain.removeHandler('autopilot:start');
+    ipcMain.handle('autopilot:start', (_event, payload) => { global.routingTestPayload = payload; return { ok: false, error: 'Fixture captured' }; });
+  });
+  await win.evaluate(() => {
+    activeProjectId = 'fixture'; projectsCache = [{ id: 'fixture', name: 'Fixture', path: '/tmp' }];
+    autopilotStartMode = 'solo'; openAutopilotStart();
+  });
+  await expect(win.locator('#aut-run-vendor option[value="codex"]')).toHaveCount(1);
+  await win.locator('#aut-run-vendor').selectOption('codex');
+  await expect(win.locator('#aut-run-model option[value="gpt-test"]')).toHaveCount(1);
+  await win.locator('#aut-run-model').selectOption('gpt-test');
+  await win.locator('#aut-goal').fill('Verify routing fixture');
+  await win.locator('#aut-snapshot-toggle').evaluate(el => { el.checked = false; });
+  await win.locator('#aut-start-go').click();
+  await expect.poll(() => app.evaluate(() => global.routingTestPayload?.routing)).toEqual({ vendor: 'codex', model: 'gpt-test' });
+  expect(await win.evaluate(() => cfg.agentCommand)).toBe('true');
   await app.close();
 });
 
@@ -386,7 +476,7 @@ test('adding a context file types its path and nothing else', async () => {
   const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-context-source-'));
   const sourcePath = path.join(sourceDir, 'cert.der');
   fs.writeFileSync(sourcePath, 'demo certificate');
-  const app = await launch({ firstRunDone: true, agentCommand: 'bash --noprofile --norc', paiEnabled: false });
+  const app = await launch({ firstRunDone: true, agentCommand: 'bash --noprofile --norc' });
   const win = await ready(app);
   // A tab started before boot loads the config takes the default agent, not
   // this test's shell.

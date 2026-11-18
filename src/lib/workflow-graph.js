@@ -26,6 +26,38 @@ function clipText(value, max) {
   return (last >= 0xd800 && last <= 0xdbff) ? cut.slice(0, -1) : cut;
 }
 
+// Step time limits, in ms. Every limit that enters a graph is clamped here.
+const STEP_TIMEOUT_DEFAULT_MS = 5 * 60 * 1000;
+const STEP_TIMEOUT_MIN_MS = 10 * 1000;
+const STEP_TIMEOUT_MAX_MS = 2 * 60 * 60 * 1000;
+const STEP_TIMEOUT_GRACE_MS = 5000;
+
+// A limit clamped to 10s..2h, or null when absent or not a number.
+function clampStepTimeout(value) {
+  if (value === null || value === undefined || value === '' || typeof value === 'boolean') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.min(STEP_TIMEOUT_MAX_MS, Math.max(STEP_TIMEOUT_MIN_MS, Math.round(n)));
+}
+
+// The limit a step runs under: its own, else the workflow default, else 5 minutes.
+function stepTimeoutFor(node, graph) {
+  return clampStepTimeout(node && node.timeoutMs)
+    || clampStepTimeout(graph && graph.defaultTimeoutMs)
+    || STEP_TIMEOUT_DEFAULT_MS;
+}
+
+// On expiry: onExpire, SIGTERM, then SIGKILL after the grace. Returns a cancel function.
+function armStepTimer(child, limitMs, onExpire, graceMs = STEP_TIMEOUT_GRACE_MS) {
+  let killTimer = null;
+  const termTimer = setTimeout(() => {
+    try { onExpire(); } catch (_) {}
+    try { child.kill('SIGTERM'); } catch (_) {}
+    killTimer = setTimeout(() => { try { child.kill('SIGKILL'); } catch (_) {} }, graceMs);
+  }, limitMs);
+  return () => { clearTimeout(termTimer); if (killTimer) clearTimeout(killTimer); };
+}
+
 // isAllowedAgentCommand(value) returns true when the first whitespace-
 // separated token's basename (case-insensitive) is in the allowlist.
 function isAllowedAgentCommand(value) {
@@ -45,7 +77,9 @@ function sanitizeNode(n) {
   n = n || {};
   const raw = clipText(n.agentCommand || '', 128);
   const agentCommand = (raw && isAllowedAgentCommand(raw)) ? raw : null;
+  const timeoutMs = clampStepTimeout(n.timeoutMs);
   return {
+    ...(timeoutMs ? { timeoutMs } : {}),
     id: n.id || `node-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     name: clipText(n.name || 'Step', 64),
     agentCommand,
@@ -82,7 +116,8 @@ function sanitizeGraph(g) {
   const edges = Array.isArray(g.edges)
     ? g.edges.map(sanitizeEdge).filter((e) => ids.has(e.from) && ids.has(e.to))
     : [];
-  return { nodes, edges };
+  const defaultTimeoutMs = clampStepTimeout(g.defaultTimeoutMs);
+  return defaultTimeoutMs ? { nodes, edges, defaultTimeoutMs } : { nodes, edges };
 }
 
 function migrateWorkflow(w) {
@@ -320,6 +355,12 @@ function wfResolveNext(graph, node, output, byId) {
 
 module.exports = {
   ALLOWED_AGENT_COMMANDS,
+  STEP_TIMEOUT_DEFAULT_MS,
+  STEP_TIMEOUT_MIN_MS,
+  STEP_TIMEOUT_MAX_MS,
+  clampStepTimeout,
+  stepTimeoutFor,
+  armStepTimer,
   clipText,
   isAllowedAgentCommand,
   sanitizeNode,

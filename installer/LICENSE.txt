@@ -97,9 +97,8 @@ these terms.
 ---
 
 Third-party components keep their own licenses: Electron and Chromium (their
-notices ship inside the application), xterm.js (MIT), the Ubuntu font family
-(Ubuntu Font Licence, see src/renderer/assets/fonts/UBUNTU-FONT-LICENCE.txt)
-and PAI by Daniel Miessler (MIT, see libs/lifeos/LICENSE).
+notices ship inside the application), xterm.js (MIT) and the Ubuntu font
+family (Ubuntu Font Licence, see src/renderer/assets/fonts/UBUNTU-FONT-LICENCE.txt).
 
 Releases of Husk before 2.13.0 were published under the MIT License and remain
 available under it.

@@ -70,7 +70,7 @@ function plannerArgs(baseCmd, prompt, prefixArgs = []) {
   return [...prefixArgs, ...shot];
 }
 
-function buildPlanPrompt(goal, maxAgents, repoSnapshot = '', planningHint = '') {
+function buildPlanPrompt(goal, maxAgents, repoSnapshot = '', planningHint = '', vendors = []) {
   return [
     'You are an orchestrator planning a team of autonomous coding agents that will work IN PARALLEL on one shared goal, each in an isolated copy of THIS repository.',
     '',
@@ -84,6 +84,7 @@ function buildPlanPrompt(goal, maxAgents, repoSnapshot = '', planningHint = '') 
     'For dependency/update tasks, keep every subgoal tied to the original dependency goal. Split package roots/manifests/lockfiles across agents when the repo has enough independent package surfaces; use a separate validation/config agent only when there is meaningful dependency-related config or verification work. Do not turn a dependency bump into a broad security-workflow review.',
     `Then split the goal into INDEPENDENT, NON-OVERLAPPING sub-tasks mapped to REAL areas of this repo that actually contain relevant work, one agent each, with clear boundaries so no two agents touch the same files. Use as FEW agents as the goal genuinely needs (2 to ${maxAgents}); an agent that would find nothing to do is waste, so do not create it.`,
     'For EACH agent set "tier": "cheap" if its sub-task is mechanical (bumping deps, formatting, renaming, finding TODOs, simple edits) or "smart" if it needs real reasoning (design, debugging, non-trivial implementation). Prefer cheap when the work is genuinely mechanical -- it saves the user money.',
+    vendors.length ? `Available installed vendors: ${vendors.join(', ')}. Assign each agent a vendor from this list using a vendor field. Mix vendors when useful. Husk applies the user's explicit vendor settings first. Do not invent model ids.` : '',
     'Reply with ONLY a JSON object, no prose before or after:',
     '{"agents":[{"role":"short-name-from-a-real-area","tier":"cheap|smart","subgoal":"precise scope and deliverable, naming the actual paths this agent owns"}]}',
   ].join('\n');
@@ -464,6 +465,7 @@ function cleanPlanObject(obj, maxAgents) {
         role: (a.role.trim().slice(0, 40) || 'agent').replace(/\s+/g, ' '),
         subgoal,
         tier: resolveTier({ ...a, subgoal }),
+        ...(typeof a.vendor === 'string' && a.vendor.trim() ? { vendor: a.vendor.trim() } : {}),
       };
     })
     .filter((a) => a.subgoal)
@@ -481,13 +483,13 @@ function extractPlan(text, maxAgents) {
   return null;
 }
 
-function planCollab({ goal, agentCommand, cwd, maxAgents, env, onChild, timeoutMs }) {
+function planCollab({ goal, agentCommand, cwd, maxAgents, env, onChild, timeoutMs, vendors = [] }) {
   return new Promise((resolve) => {
     const tokens = String(agentCommand || 'claude').trim().split(/\s+/).filter(Boolean);
     const cmd = tokens[0] || 'claude';
     const prefixArgs = tokens.slice(1);
     const base = cmd.split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|cmd|bat|ps1)$/i, '');
-    const prompt = buildPlanPrompt(goal, maxAgents, buildRepoSnapshot(cwd, goal), dependencyPlanningHint(goal, cwd, maxAgents));
+    const prompt = buildPlanPrompt(goal, maxAgents, buildRepoSnapshot(cwd, goal), dependencyPlanningHint(goal, cwd, maxAgents), vendors);
     const fallback = () => dependencyFallbackPlan(goal, cwd, maxAgents) || fallbackPlan(goal, cwd, maxAgents);
     const effectiveTimeout = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : PLAN_TIMEOUT_MS;
     let child;

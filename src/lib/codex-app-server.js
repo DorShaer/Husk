@@ -153,12 +153,14 @@ function normalizeCodexNotification(method, params) {
       return p.delta ? [{ type: 'thought', text: str(p.delta) }] : [];
     case 'item/started': {
       const item = p.item || {};
+      if (item.type === 'contextCompaction') return [{ type: 'compaction', phase: 'started' }];
       if (item.type === 'agentMessage' || item.type === 'reasoning') return [{ type: 'block_end' }];
       const tool = toolFromItem(item, false);
       return tool ? [tool] : [];
     }
     case 'item/completed': {
       const item = p.item || {};
+      if (item.type === 'contextCompaction') return [{ type: 'compaction', phase: 'completed' }, { type: 'status', text: 'Conversation compacted.' }];
       if (item.type === 'agentMessage') {
         return str(item.text).trim() ? [{ type: 'text_final', text: str(item.text) }, { type: 'block_end' }] : [{ type: 'block_end' }];
       }
@@ -172,7 +174,9 @@ function normalizeCodexNotification(method, params) {
       const u = p.tokenUsage || {};
       const used = Number(u.last && u.last.totalTokens);
       const size = Number(u.modelContextWindow);
-      return isFinite(used) && isFinite(size) && size > 0 ? [{ type: 'usage', used, size }] : [];
+      if (!isFinite(used) || !isFinite(size) || size <= 0) return [];
+      const total = Number(u.total && u.total.totalTokens);
+      return [isFinite(total) && total >= 0 ? { type: 'usage', used, size, total } : { type: 'usage', used, size }];
     }
     case 'thread/name/updated':
       return p.threadName ? [{ type: 'title', title: str(p.threadName) }] : [];
@@ -185,6 +189,7 @@ function normalizeCodexNotification(method, params) {
         isError: failed,
         durationMs: typeof turn.durationMs === 'number' ? turn.durationMs : undefined,
         text: failed && turn.error && turn.error.message ? str(turn.error.message) : undefined,
+        ...(failed && turn.error?.codexErrorInfo === 'contextWindowExceeded' ? { limitKind: 'context' } : {}),
       }];
     }
     // A failure codex retries on its own is progress, not the end of the turn;
@@ -236,7 +241,23 @@ function codexDecision(optionId) {
   return { decision: DECISION_OPTIONS.some((o) => o.optionId === id) ? id : 'cancel' };
 }
 
+function normalizeCodexQuestion(requestId, params) {
+  const p = params || {};
+  return {
+    type: 'permission', requestId: str(requestId), toolCallId: p.itemId,
+    title: 'AskUserQuestion', input: { questions: p.questions || [] },
+    nonBlocking: p.isBlocking === false, options: [],
+  };
+}
+
+function codexQuestionResponse(params, optionId, answers) {
+  if (optionId !== 'allow') return { answers: {} };
+  return { answers: Object.fromEntries((params.questions || []).map((q) => [q.id, {
+    answers: Array.isArray(answers?.[q.id]) ? answers[q.id].filter((a) => typeof a === 'string') : [],
+  }])) };
+}
+
 module.exports = {
   APP_SERVER_ARGS, codexModel, codexResumeId, codexInput, codexSession, diffSides,
-  normalizeCodexNotification, normalizeCodexApproval, codexDecision,
+  normalizeCodexNotification, normalizeCodexApproval, codexDecision, normalizeCodexQuestion, codexQuestionResponse,
 };

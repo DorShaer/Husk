@@ -395,9 +395,10 @@ function uniqueModels(items) {
       value,
       label: cleanLabel((item && item.label) || titleFromId(value)) || value,
       source: item && item.source,
+      description: item && item.description,
     });
   }
-  return out.map(({ value, label }) => ({ value, label }));
+  return out.map(({ value, label, description }) => description ? { value, label, description } : { value, label });
 }
 
 function parseModelCatalog(text, vendor) {

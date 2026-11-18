@@ -59,3 +59,15 @@ test('commandSessionId reads the session a command names, and nothing else', () 
   assert.equal(commandSessionId('claude --resume "x; rm"'), null);
   assert.equal(commandSessionId('claude agents --json'), null);
 });
+
+const { untestedVersion } = require('../../src/lib/chat-transport');
+test('untestedVersion flags only a known CLI outside its tested range', () => {
+  assert.equal(untestedVersion('claude', '2.1.323 (Claude Code)'), null);
+  assert.equal(untestedVersion('claude-work --model x', '2.1.0'), null);
+  assert.equal(untestedVersion('codex', 'codex-cli 0.168.4'), null);
+  assert.deepEqual(untestedVersion('claude', '3.0.1'), { cli: 'claude', version: '3.0.1', feature: 'stream-json chat', min: '2.1', max: '2.1' });
+  assert.equal(untestedVersion('codex', '0.150.0').version, '0.150.0');
+  assert.equal(untestedVersion('copilot', 'GitHub Copilot CLI 1.0.110.'), null);
+  assert.equal(untestedVersion('copilot', ''), null);
+  assert.equal(untestedVersion('aider', '0.80.0'), null);
+});

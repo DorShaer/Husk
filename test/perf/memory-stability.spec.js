@@ -18,7 +18,7 @@ const LONG_CLI = path.join(REPO_ROOT, 'test', 'e2e', 'fixtures', 'long-running-c
 const REPORT_PATH = path.join(REPO_ROOT, 'test-results', 'perf-report.json');
 
 const PAGES = ['chat', 'agents', 'workflows', 'autopilot', 'projects', 'prompts', 'skills', 'sessions', 'files', 'mcp', 'plugins'];
-const THEMES = ['midnight', 'dark', 'tokyo-night', 'catppuccin', 'rose-pine', 'gruvbox', 'nord', 'dracula', 'light', 'sepia'];
+const THEMES = require('../../src/lib/themes').THEME_IDS;
 
 function makeIsolatedHome() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'husk-perf-'));
@@ -112,7 +112,7 @@ test('memory and stability profile', async () => {
     }
   }
   await win.evaluate(() => applyTheme('midnight'));
-  samples.push(await sample(app, win, 'after theme churn (3 rounds x 10 themes)'));
+  samples.push(await sample(app, win, `after theme churn (3 rounds x ${THEMES.length} themes)`));
 
   // ── Phase 3: chat tab churn (PTY spawn + xterm dispose) ──────────────────
   const command = `node ${LONG_CLI}`;

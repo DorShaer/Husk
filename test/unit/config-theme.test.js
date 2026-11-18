@@ -23,13 +23,22 @@ const LOAD_CONFIG_SRC = extract(/function loadConfig\(\) \{[\s\S]*?\n\}/, 'loadC
 
 // Build a loadConfig bound to a fake config file whose contents each case controls.
 function loadConfigWith(storedJson) {
+  const files = new Map(storedJson === null ? [] : [['/fake/config.json', storedJson]]);
   const fakeFs = {
-    existsSync: () => storedJson !== null,
-    readFileSync: () => storedJson,
+    existsSync: (p) => files.has(p),
+    readFileSync: (p) => {
+      if (files.has(p)) return files.get(p);
+      throw Object.assign(new Error('not found'), { code: 'ENOENT' });
+    },
+    renameSync: (from, to) => { files.set(to, files.get(from)); files.delete(from); },
   };
   const ctx = {
     fs: fakeFs,
     CONFIG_PATH: '/fake/config.json',
+    CONFIG_DIR: '/fake',
+    configSaveBlocked: false,
+    configRecovery: null,
+    ConfigStore: { loadConfigFile: (p) => require('../../src/lib/config-store').loadConfigFile(p, { fs: fakeFs }) },
     HOME: '/home/test',
     DEFAULT_PROFILES: [],
     JSON,
@@ -51,7 +60,7 @@ test('a first install defaults to the light theme with the indigo accent', () =>
 });
 
 test('an update never changes the theme of an install that has one saved', () => {
-  for (const theme of ['midnight', 'dark', 'nord', 'dracula', 'light', 'ember']) {
+  for (const theme of require('../../src/lib/themes').THEME_IDS) {
     const cfg = loadConfigWith(JSON.stringify({ firstRunDone: true, theme }));
     assert.equal(cfg.theme, theme, `${theme} must survive an update`);
   }

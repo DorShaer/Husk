@@ -112,3 +112,11 @@ test('codexDecision passes known answers and cancels on anything else', () => {
   assert.deepEqual(codexDecision(null), { decision: 'cancel' });
   assert.deepEqual(codexDecision('nonsense'), { decision: 'cancel' });
 });
+
+test('Codex compaction lifecycle is explicit and context errors are distinct from provider quota', () => {
+  const { normalizeCodexNotification: normalize } = require('../../src/lib/codex-app-server');
+  assert.deepEqual(normalize('item/started', { item: { type: 'contextCompaction', id: 'c' } }), [{ type: 'compaction', phase: 'started' }]);
+  assert.equal(normalize('item/completed', { item: { type: 'contextCompaction', id: 'c' } })[0].phase, 'completed');
+  assert.equal(normalize('turn/completed', { turn: { status: 'failed', error: { codexErrorInfo: 'contextWindowExceeded', message: 'Conversation is full' } } })[0].limitKind, 'context');
+  assert.equal(normalize('turn/completed', { turn: { status: 'failed', error: { codexErrorInfo: 'usageLimitExceeded', message: 'Plan limit reached' } } })[0].limitKind, undefined);
+});

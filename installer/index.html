@@ -8,147 +8,520 @@
 <meta property="og:title" content="Husk: a desktop home for your CLI agent" />
 <meta property="og:description" content="Wrap any terminal AI agent in a real desktop window. A native chat, every session one click away, workflows, skills, MCP. Install in one line." />
 <meta property="og:image" content="https://dorshaer.github.io/Husk/docs/images/husk-chat.png" />
-<meta name="theme-color" content="#0d0e12" />
+<meta name="theme-color" content="#f4f5f7" />
 <link rel="icon" href="https://cdn.jsdelivr.net/gh/DorShaer/Husk@main/src/renderer/assets/husk-logo.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,400..800&display=swap" rel="stylesheet" />
 <style>
+  @font-face { font-family: "Inter"; src: url("https://cdn.jsdelivr.net/gh/DorShaer/Husk@main/src/renderer/assets/fonts/inter-latin.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+  @font-face { font-family: "JetBrains Mono"; src: url("https://cdn.jsdelivr.net/gh/DorShaer/Husk@main/src/renderer/assets/fonts/jetbrains-mono-latin.woff2") format("woff2"); font-weight: 100 800; font-display: swap; }
+
+  @property --field { syntax: "<color>"; inherits: true; initial-value: #f4f5f7; }
   :root {
-    --bg: #0b0c10; --bg-2: #0d0e12; --panel: #14161d; --panel-2: #181b23;
-    --line: #23272f; --line-2: #30353f;
-    --text: #eceef3; --muted: #9aa1ad; --muted-2: #6f7681;
-    --accent: #f74a1d; --accent-2: #ff7a4d; --accent-soft: rgba(247,74,29,.14);
-    --radius: 14px; --radius-lg: 20px;
+    --field: #f4f5f7; --paper: #ffffff; --ink: #0a0a0a; --ink-2: #4b4d55; --ink-3: #7b7e88;
+    --rule: rgba(10,10,10,.1); --rule-2: rgba(10,10,10,.16);
+    --indigo: #4f46e5; --indigo-soft: rgba(79,70,229,.09); --ember: #f74a1d;
+    --code-bg: #0d0e12; --code-ink: #e9eaee; --code-dim: #8b8f9b;
+    --display: "Bricolage Grotesque", system-ui, sans-serif;
+    --body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     --ease-out: cubic-bezier(.2,.8,.2,1);
-    --maxw: 68rem;
-    color-scheme: dark;
+    --sans: var(--body);
+    --maxw: 90rem; --gutter: clamp(1.25rem, 4vw, 4rem);
+    color-scheme: light;
   }
   * { box-sizing: border-box; }
   html { scroll-behavior: smooth; }
   body {
-    margin: 0; color: var(--text);
-    background:
-      radial-gradient(1100px 620px at 50% -12%, rgba(247,74,29,.16), transparent 62%),
-      radial-gradient(800px 500px at 100% 8%, rgba(90,120,255,.06), transparent 60%),
-      var(--bg);
-    font: 16px/1.65 -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Roboto, sans-serif;
+    margin: 0; color: var(--ink); background: var(--field); transition: --field .7s ease;
+    font: 17px/1.6 var(--body); font-feature-settings: "cv11", "ss01";
     -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
-    overflow-x: hidden;
+    overflow-x: clip;
   }
-  a { color: var(--accent-2); text-decoration: none; }
+  a { color: var(--indigo); text-decoration: none; }
   a:hover { text-decoration: underline; }
-  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 1.25rem; }
+  :focus-visible { outline: 2px solid var(--indigo); outline-offset: 3px; border-radius: 4px; }
+  button { font-family: inherit; }
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 var(--gutter); }
+  h1, h2, h3 { font-family: var(--display); margin: 0; }
+  h2 {
+    font-size: clamp(2.3rem, 5.2vw, 5.2rem); line-height: 1; letter-spacing: -.02em;
+    font-weight: 650; font-variation-settings: "wdth" 92; text-wrap: balance;
+  }
+  .lead { color: var(--ink-2); font-size: clamp(1.05rem, 1.35vw, 1.3rem); line-height: 1.55; max-width: 38rem; margin: 0; }
 
-  /* ── Nav ─────────────────────────────────────────── */
+  /* Nav */
   nav {
     position: sticky; top: 0; z-index: 50;
-    backdrop-filter: saturate(160%) blur(14px);
-    background: rgba(11,12,16,.72);
-    border-bottom: 1px solid transparent;
-    transition: border-color .25s ease, background .25s ease;
+    background: color-mix(in srgb, var(--field) 82%, transparent); backdrop-filter: saturate(160%) blur(14px);
+    border-bottom: 1px solid transparent; transition: border-color .25s ease;
   }
-  nav.scrolled { border-bottom-color: var(--line); }
-  .nav-inner { display: flex; align-items: center; gap: 1.1rem; height: 68px; }
-  .nav-brand { display: flex; align-items: center; gap: .6rem; font-weight: 800; letter-spacing: .06em; font-size: 1.18rem; }
-  .nav-brand span {
-    background: linear-gradient(90deg, var(--accent), var(--accent-2));
-    -webkit-background-clip: text; background-clip: text; color: transparent;
-  }
-  .nav-links { display: flex; gap: 1.35rem; margin-left: auto; align-items: center; }
-  .nav-links a { color: var(--muted); font-size: .9rem; font-weight: 500; }
-  .nav-links a:hover { color: var(--text); text-decoration: none; }
+  nav.scrolled { border-bottom-color: var(--rule); }
+  .nav-inner { display: flex; align-items: center; height: 64px; gap: 1.5rem; }
+  .nav-brand { display: flex; align-items: center; gap: .55rem; font: 700 1.25rem/1 var(--display); letter-spacing: -.03em; color: var(--ink); }
+  .nav-brand img { width: 26px; height: 26px; display: block; }
+  .nav-links { display: flex; gap: 1.6rem; margin-left: auto; align-items: center; }
+  .nav-links a { color: var(--ink-2); font-size: .92rem; font-weight: 500; }
+  .nav-links a:hover { color: var(--ink); text-decoration: none; }
   .nav-cta {
     display: inline-flex; align-items: center; gap: .45rem;
-    border: 1px solid var(--line-2); border-radius: 999px;
-    padding: .35rem .8rem; font-size: .85rem; color: var(--text) !important;
-    background: var(--panel);
+    border: 1px solid var(--rule-2); border-radius: 999px; background: var(--paper);
+    padding: .38rem .85rem; color: var(--ink) !important; font-size: .86rem;
   }
-  .nav-cta:hover { border-color: var(--accent); text-decoration: none; }
+  .nav-cta:hover { border-color: var(--ink); }
   .nav-cta svg { width: 15px; height: 15px; fill: currentColor; }
-  .nav-cta .stars { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .nav-cta .stars { font-variant-numeric: tabular-nums; }
   @media (max-width: 680px) { .nav-links a.hide-sm { display: none; } }
 
-  /* ── Hero ────────────────────────────────────────── */
-  header { text-align: center; padding: 5rem 0 2.5rem; }
-  .hero-mark { display: flex; justify-content: center; margin-bottom: .5rem; }
-  /* The rig below sizes the mark for the app's welcome step; the hero wants it
-     bigger, and fluid. */
-  .hero-mark .hk { width: clamp(190px, 23vw, 270px); height: auto; aspect-ratio: 200 / 214; }
+  /* Hero */
+  .hero { position: relative; overflow-x: clip; padding: clamp(1.6rem, 2.2vw, 2.6rem) 0 0; }
+  .hero::before {
+    content: ""; position: absolute; inset: -64px 0 0; z-index: -1; pointer-events: none;
+    background-image:
+      linear-gradient(to right, rgba(10,10,10,.05) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(10,10,10,.05) 1px, transparent 1px);
+    background-size: 96px 96px; background-position: center top;
+    -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 45%, transparent 92%);
+            mask-image: linear-gradient(to bottom, #000 0%, #000 45%, transparent 92%);
+  }
+  h1.display {
+    font-size: clamp(3.1rem, 11.2vw, 13.6rem); line-height: .86; letter-spacing: -.018em;
+    font-weight: 680; font-variation-settings: "wdth" 86;
+  }
+  h1.display .ln { display: block; overflow: hidden; padding: .06em 0 .1em; margin: -.06em 0 -.1em; }
+  h1.display .ln > span { display: inline-block; transform: translateY(112%); transition: transform 1s var(--ease-out); }
+  h1.display .ln:nth-child(2) > span { transition-delay: .09s; }
+  .ready h1.display .ln > span { transform: none; }
+  /* The pod sits on the baseline of the last line, where a full stop would. */
+  .perch { display: inline-block; vertical-align: baseline; width: .86em; margin-left: .08em; transform: translateY(.13em); line-height: 0; }
+  .perch .hk { width: 100%; height: auto; aspect-ratio: 200 / 214; }
+  .hk-glow { display: none; }
+  @media (max-width: 560px) { .perch { width: 1.1em; } }
 
-  /* The gradient sits on each letter, not the row: a transformed child breaks a
-     background-clip on its parent and the word disappears. */
-  h1.wordmark {
-    display: flex; justify-content: center;
-    font-size: clamp(3.2rem, 9vw, 6rem); line-height: 1;
-    font-weight: 800; letter-spacing: .17em; text-indent: .17em;
-    margin: 0 0 1rem;
+  .hero-row {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 40rem); gap: 2rem 5rem; align-items: end;
+    margin-top: clamp(1.6rem, 2vw, 2.4rem);
+    opacity: 0; transform: translateY(14px); transition: opacity .8s ease .35s, transform .8s var(--ease-out) .35s;
   }
-  h1.wordmark span {
-    background: linear-gradient(180deg, #ffffff 0%, #dfe2e7 40%, #98a0aa 76%, #d3d7dd 100%);
-    -webkit-background-clip: text; background-clip: text; color: transparent;
-    animation: mark-in .8s cubic-bezier(.2,.9,.3,1) backwards;
+  .ready .hero-row { opacity: 1; transform: none; }
+  .hero-row .lead { max-width: 36rem; }
+  .hero-os { display: inline-flex; padding: 3px; border-radius: 9px; background: rgba(10,10,10,.06); margin-bottom: .6rem; }
+  .os-btn {
+    border: 0; background: transparent; color: var(--ink-2); border-radius: 7px;
+    padding: .32rem .8rem; font-size: .8rem; font-weight: 600; cursor: pointer;
   }
-  h1.wordmark span:nth-child(1) { animation-delay: .05s; }
-  h1.wordmark span:nth-child(2) { animation-delay: .12s; }
-  h1.wordmark span:nth-child(3) { animation-delay: .19s; }
-  h1.wordmark span:nth-child(4) { animation-delay: .26s; }
-  @keyframes mark-in {
-    from { opacity: 0; transform: translateY(18px); }
-    to   { opacity: 1; transform: none; }
+  .os-btn.active { background: var(--paper); color: var(--ink); box-shadow: 0 1px 2px rgba(10,10,10,.14); }
+  .hero-install {
+    display: flex; align-items: center; gap: .7rem;
+    background: var(--code-bg); color: var(--code-ink); border-radius: 12px;
+    padding: .62rem .62rem .62rem 1.05rem; font: .86rem/1.5 var(--mono);
+    box-shadow: 0 1px 1px rgba(10,10,10,.2), 0 14px 28px -14px rgba(10,10,10,.45);
   }
-  .lede {
-    font-size: clamp(1.4rem, 3.2vw, 2.1rem); line-height: 1.2;
-    font-weight: 750; letter-spacing: -.015em; margin: 0 0 1.2rem;
+  .hero-install[hidden] { display: none; }
+  .hero-install .prompt { color: var(--ember); user-select: none; min-width: 1.4rem; flex-shrink: 0; }
+  .hero-install code { flex: 1; overflow-x: auto; white-space: nowrap; scrollbar-width: none; font-family: inherit; }
+  .hero-install code::-webkit-scrollbar { display: none; }
+  .mini-copy, .copy {
+    flex-shrink: 0; border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.07);
+    color: var(--code-ink); border-radius: 7px; padding: .34rem .7rem; font: 500 .76rem/1.2 var(--body); cursor: pointer;
   }
-  .lede .grad {
-    background: linear-gradient(100deg, var(--accent) 10%, var(--accent-2) 60%, #ffb08a);
-    -webkit-background-clip: text; background-clip: text; color: transparent;
-  }
-  .sub { max-width: 40rem; margin: 0 auto 2rem; color: var(--muted); font-size: 1.18rem; }
-  .sub code { color: var(--text); background: var(--panel); border: 1px solid var(--line); padding: .05rem .35rem; border-radius: 6px; font-size: .92em; }
-  .hero-cta { display: flex; gap: .8rem; justify-content: center; flex-wrap: wrap; margin-bottom: 1.4rem; }
+  .mini-copy:hover, .copy:hover { background: rgba(255,255,255,.16); }
+  .hero-cta { display: flex; gap: .7rem; flex-wrap: wrap; margin-top: .9rem; align-items: center; }
   .btn {
-    display: inline-flex; align-items: center; gap: .5rem;
-    border-radius: 11px; padding: .8rem 1.3rem; font-size: .95rem; font-weight: 600;
-    cursor: pointer; border: 1px solid transparent; transition: transform .12s ease, box-shadow .2s ease, border-color .2s ease;
+    display: inline-flex; align-items: center; gap: .5rem; border-radius: 11px;
+    padding: .78rem 1.25rem; font-size: .95rem; font-weight: 600; border: 1px solid transparent;
+    transition: transform .12s ease, background .15s ease, border-color .15s ease;
   }
   .btn:hover { text-decoration: none; transform: translateY(-1px); }
   .btn svg { width: 18px; height: 18px; fill: currentColor; }
-  .btn-primary { color: #fff; background: linear-gradient(180deg, var(--accent-2), var(--accent)); box-shadow: 0 8px 24px -8px rgba(247,74,29,.7); }
-  .btn-primary:hover { box-shadow: 0 12px 30px -8px rgba(247,74,29,.85); }
-  .btn-ghost { color: var(--text); background: var(--panel); border-color: var(--line-2); }
-  .btn-ghost:hover { border-color: var(--muted-2); }
-  /* One command is shown at a time, picked by the OS toggle above it. The box is
-     sized to hold the longest of them in full: the commands are nowrap, so a
-     container narrower than its content hides the tail of the URL behind the
-     copy button rather than wrapping it. */
-  .hero-os { display: flex; gap: .35rem; justify-content: center; margin-bottom: .7rem; }
-  .os-btn {
-    border: 1px solid var(--line-2); background: var(--panel); color: var(--muted);
-    border-radius: 999px; padding: .3rem .8rem; font-size: .78rem; font-weight: 600;
-    cursor: pointer; font-family: inherit; transition: color .15s ease, border-color .15s ease;
+  .btn-primary { color: #fff; background: var(--indigo); box-shadow: 0 1px 1px rgba(30,20,120,.35), 0 10px 22px -10px rgba(79,70,229,.7); }
+  .btn-primary:hover { background: #4338ca; }
+  .btn-ghost { color: var(--ink); background: var(--paper); border-color: var(--rule-2); }
+  .btn-ghost:hover { border-color: var(--ink); }
+  .os-note { margin-top: .8rem; color: var(--ink-3); font-size: .84rem; }
+
+  /* Deck */
+  .stage {
+    --s: 0; --mx: 0; --my: 0; --tilt: 27deg;
+    position: relative; perspective: 2600px; perspective-origin: 50% 0%;
+    padding: clamp(3.5rem, 5.4vw, 6.5rem) 0 clamp(3rem, 6vw, 7rem);
   }
-  .os-btn:hover { color: var(--text); }
-  .os-btn.active { color: #fff; background: var(--accent-soft); border-color: var(--accent); }
-  .hero-install {
-    max-width: 40rem; margin: 0 auto;
-    display: flex; align-items: center;
-    gap: .6rem; background: #08090c; border: 1px solid var(--line-2);
-    border-radius: 11px; padding: .55rem .6rem .55rem .95rem; text-align: left;
-    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: .8rem;
+  .deck {
+    position: relative; width: min(1320px, 88vw); margin: 0 auto;
+    transform-style: preserve-3d; transform-origin: 50% 0%;
+    transform: rotateX(calc(var(--s) * var(--tilt) + var(--my) * var(--s) * -1.4deg)) rotateY(calc(var(--mx) * var(--s) * 2.6deg));
+    transition: transform 1.3s var(--ease-out);
   }
-  .hero-install[hidden] { display: none; }
-  /* Fixed width so the command text starts at the same x in every row, whether
-     the prompt is "$" or "PS". */
-  .hero-install .prompt { color: var(--accent); user-select: none; min-width: 1.4rem; flex-shrink: 0; }
-  .hero-install + .hero-install { margin-top: .5rem; }
-  .hero-install code { flex: 1; overflow-x: auto; white-space: nowrap; color: var(--text); scrollbar-width: none; }
-  .hero-install code::-webkit-scrollbar { display: none; }
-  .mini-copy {
-    flex-shrink: 0; border: 1px solid var(--line-2); background: var(--panel);
-    color: var(--muted); border-radius: 7px; padding: .35rem .6rem; font-size: .74rem;
-    cursor: pointer; font-family: inherit;
+  .win {
+    margin: 0; border-radius: 14px; overflow: hidden; background: var(--paper); position: relative;
+    box-shadow:
+      0 0 0 1px rgba(10,10,10,.09),
+      0 2px 2px rgba(10,10,10,.04),
+      0 12px 22px -8px rgba(10,10,10,.1),
+      0 50px 90px -30px rgba(24,24,70,.28);
+    transition: transform 1.3s var(--ease-out);
   }
-  .mini-copy:hover { color: var(--text); border-color: var(--accent); }
-  .os-note { margin-top: .8rem; color: var(--muted-2); font-size: .82rem; }
+  .deck.live, .deck.live .win { transition-duration: .18s; transition-timing-function: linear; }
+  .win img { display: block; width: 100%; height: auto; aspect-ratio: 1760 / 1040; }
+  .win .bar {
+    height: 34px; display: flex; align-items: center; gap: 7px; padding: 0 14px;
+    background: #fbfbfb; border-bottom: 1px solid rgba(10,10,10,.08);
+    font: 500 .74rem/1 var(--body); color: var(--ink-3);
+  }
+  .win .bar i { width: 10px; height: 10px; border-radius: 50%; background: rgba(10,10,10,.13); }
+  .win .bar span { margin: 0 auto; transform: translateX(-22px); }
+  .win.back { position: absolute; left: 0; top: 0; width: 100%; }
+  .win.back::after { content: ""; position: absolute; inset: 0; background: rgba(244,245,247,.42); }
+  .win.b1 { transform: translate3d(calc(var(--s) * -17%), calc(var(--s) * -13%), calc(var(--s) * -200px)); }
+  .win.b2 { transform: translate3d(calc(var(--s) * 18%), calc(var(--s) * -24%), calc(var(--s) * -400px)); }
+  .win.b3 { transform: translate3d(calc(var(--s) * -4%), calc(var(--s) * -36%), calc(var(--s) * -620px)); }
+  .win.b3::after { background: rgba(244,245,247,.6); }
+
+  /* Agents */
+  section { padding: clamp(4.5rem, 9vw, 10rem) 0; }
+  .bring-head { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 2rem 5rem; align-items: end; }
+  .agents {
+    margin-top: clamp(2.5rem, 5vw, 5rem); display: grid; grid-template-columns: repeat(6, 1fr);
+    border-top: 1px solid var(--ink); border-bottom: 1px solid var(--rule-2);
+  }
+  .agents > div { padding: 1.4rem 1.2rem 1.5rem; border-left: 1px solid var(--rule); }
+  .agents > div:first-child { border-left: 0; padding-left: 0; }
+  .agents b { display: block; font: 600 clamp(1.15rem, 1.75vw, 1.9rem)/1.1 var(--mono); letter-spacing: -.04em; }
+  .agents span { display: block; margin-top: .55rem; color: var(--ink-3); font-size: .85rem; line-height: 1.35; }
+  .agents .any b { color: var(--indigo); }
+  @media (max-width: 1100px) {
+    .agents { grid-template-columns: repeat(4, 1fr); }
+    .agents > div:nth-child(5) { border-left: 0; padding-left: 0; }
+    .agents > div:nth-child(n+5) { border-top: 1px solid var(--rule); }
+  }
+  @media (max-width: 900px) { .bring-head, .hero-row { grid-template-columns: 1fr; } }
+  @media (max-width: 560px) {
+    .agents { grid-template-columns: repeat(2, 1fr); }
+    .agents > div { border-top: 1px solid var(--rule); }
+    .agents > div:nth-child(-n+2) { border-top: 0; }
+    .agents > div:nth-child(odd) { border-left: 0; padding-left: 0; }
+    .agents > div:nth-child(even) { border-left: 1px solid var(--rule); padding-left: 1.2rem; }
+  }
+
+  /* Tour */
+  #tour { padding: 0; }
+  .tour-scroll { height: calc(100vh + 10 * 42vh); }
+  .tour-pin {
+    position: sticky; top: 0; height: 100vh; display: grid; align-items: center;
+    grid-template-columns: minmax(0, 25rem) minmax(0, 1fr); gap: clamp(2rem, 4vw, 5rem);
+    max-width: 112rem; margin: 0 auto; padding: 64px var(--gutter) 0;
+  }
+  .tour-side h2 { font-size: clamp(2rem, 3.3vw, 3.6rem); margin-bottom: 1.8rem; }
+  .tour-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule-2); }
+  .tour-list li { border-bottom: 1px solid var(--rule-2); }
+  .tour-item {
+    --f: 0; position: relative; display: block; width: 100%; text-align: left; background: none; border: 0; cursor: pointer;
+    padding: .5rem 0 .5rem 1.1rem; color: var(--ink-3);
+  }
+  .tour-item::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--indigo);
+    transform-origin: top; transform: scaleY(var(--f)); opacity: 0;
+  }
+  .tour-item b { font: 600 1.12rem/1.3 var(--display); letter-spacing: -.02em; display: block; transition: color .2s ease; }
+  .tour-item span { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .35s var(--ease-out); font-size: .93rem; line-height: 1.5; color: var(--ink-2); }
+  .tour-item span em { font-style: normal; overflow: hidden; }
+  .tour-item:hover b { color: var(--ink); }
+  .tour-item.on { color: var(--ink); }
+  .tour-item.on::before { opacity: 1; }
+  .tour-item.on span { grid-template-rows: 1fr; }
+  .tour-item.on span em { padding: .3rem 0 .25rem; }
+  .tour-win { align-self: center; max-height: calc(100vh - 64px - 4rem); aspect-ratio: 1760 / 1074; justify-self: center; width: 100%; max-width: calc((100vh - 64px - 4rem) * 1760 / 1074); }
+  .tour-win .frames { position: relative; aspect-ratio: 1760 / 1040; }
+  .tour-win .frames img { position: absolute; inset: 0; opacity: 0; transition: opacity .35s ease; }
+  .tour-win .frames img.on { opacity: 1; }
+  @media (max-width: 900px) {
+    .tour-scroll { height: auto; }
+    .tour-pin { position: static; height: auto; display: flex; flex-direction: column; align-items: stretch; padding: 4.5rem var(--gutter); gap: 1.5rem; }
+    .tour-item.on::before { transform: none; }
+  }
+
+  /* More surfaces */
+  .more { padding-top: clamp(4.5rem, 8vw, 9rem); }
+  .more-grid { margin-top: clamp(2rem, 4vw, 4rem); display: grid; grid-template-columns: repeat(3, 1fr); column-gap: 3.5rem; border-top: 1px solid var(--ink); }
+  .more-grid div { padding: 1.3rem 0 1.5rem; border-bottom: 1px solid var(--rule-2); }
+  .more-grid b { font: 600 1.2rem/1.3 var(--display); letter-spacing: -.02em; }
+  .more-grid p { margin: .3rem 0 0; color: var(--ink-2); font-size: .95rem; line-height: 1.5; max-width: 26rem; }
+  @media (max-width: 900px) { .more-grid { grid-template-columns: 1fr 1fr; column-gap: 2rem; } }
+  @media (max-width: 560px) { .more-grid { grid-template-columns: 1fr; } }
+
+  /* Facts */
+  .facts { display: grid; grid-template-columns: 1fr 1fr 1fr 1.45fr; border-top: 1px solid var(--ink); border-bottom: 1px solid var(--rule-2); }
+  .facts div { padding: 1.6rem 1.4rem 1.8rem; border-left: 1px solid var(--rule); }
+  .facts div:first-child { border-left: 0; padding-left: 0; }
+  .facts b { display: block; font: 650 clamp(1.6rem, 2.6vw, 2.9rem)/1 var(--display); letter-spacing: -.02em; font-variation-settings: "wdth" 92; }
+  .facts span { display: block; margin-top: .6rem; color: var(--ink-2); font-size: .93rem; }
+  @media (max-width: 760px) {
+    .facts { grid-template-columns: 1fr 1fr; }
+    .facts div:nth-child(3) { border-left: 0; padding-left: 0; }
+    .facts div:nth-child(n+3) { border-top: 1px solid var(--rule); }
+  }
+  #trust { padding-top: 0; padding-bottom: 0; }
+
+  /* Install */
+  .install-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 46rem); gap: 2.5rem 5rem; align-items: start; }
+  .install-grid .sec-head { position: sticky; top: 104px; }
+  .install-grid .sec-head .lead { margin-top: 1.3rem; }
+  @media (max-width: 1000px) { .install-grid { grid-template-columns: 1fr; } .install-grid .sec-head { position: static; } }
+  .tabs { display: inline-flex; flex-wrap: wrap; padding: 3px; border-radius: 10px; background: rgba(10,10,10,.06); margin-bottom: 1.2rem; }
+  .tab { border: 0; background: transparent; color: var(--ink-2); border-radius: 8px; padding: .45rem 1.05rem; font-size: .9rem; font-weight: 600; cursor: pointer; }
+  .tab:hover { color: var(--ink); }
+  .tab.active { background: var(--paper); color: var(--ink); box-shadow: 0 1px 2px rgba(10,10,10,.14); }
+  .card {
+    background: var(--paper); border-radius: 16px; padding: 1.5rem 1.6rem; margin-bottom: 1rem;
+    box-shadow: 0 0 0 1px rgba(10,10,10,.08), 0 1px 2px rgba(10,10,10,.04), 0 18px 34px -22px rgba(24,24,70,.22);
+  }
+  .card h3 { font-size: 1.35rem; line-height: 1.25; letter-spacing: -.025em; font-weight: 650; margin-bottom: .5rem; display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+  .card h3 .badge { font: 600 .72rem/1 var(--body); letter-spacing: 0; color: var(--indigo); background: var(--indigo-soft); border-radius: 999px; padding: .3rem .6rem; }
+  .card p { margin: 0 0 .9rem; color: var(--ink-2); font-size: .95rem; }
+  .card p:last-child { margin: .9rem 0 0; }
+  .card p code, .card h3 code { font: .86em var(--mono); background: rgba(10,10,10,.06); padding: .08rem .35rem; border-radius: 5px; color: var(--ink); }
+  .cmd { position: relative; }
+  .cmd + .cmd { margin-top: .6rem; }
+  pre {
+    margin: 0; background: var(--code-bg); color: var(--code-ink); border-radius: 11px;
+    padding: .95rem 4.4rem .95rem 1.1rem; overflow-x: auto; font: .84rem/1.6 var(--mono);
+  }
+  pre code { font-family: inherit; }
+  .copy { position: absolute; top: .6rem; right: .6rem; }
+  .install-group { display: none; }
+  .install-group.active { display: block; }
+  @media (max-width: 720px) {
+    .hero-install { align-items: flex-start; }
+    .hero-install code { white-space: pre-wrap; overflow-wrap: anywhere; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+  }
+
+  /* Footer */
+  footer { border-top: 1px solid var(--rule-2); padding: 3rem 0 0; color: var(--ink-2); font-size: .9rem; overflow: hidden; }
+  .foot { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1.5rem 4rem; align-items: start; }
+  .foot p { margin: 0; max-width: 46rem; }
+  .flinks { display: flex; gap: 1.4rem; flex-wrap: wrap; }
+  .flinks a { color: var(--ink); font-weight: 500; }
+  .fmark {
+    font: 700 clamp(6rem, 27vw, 33rem)/.78 var(--display); letter-spacing: -.03em; font-variation-settings: "wdth" 86;
+    color: rgba(10,10,10,.06); text-align: center; margin: 3rem 0 -.04em; user-select: none; white-space: nowrap;
+  }
+  @media (max-width: 760px) { .foot { grid-template-columns: 1fr; } }
+
+
+  /* Demo window: the front of the deck is a working chat. */
+  /* The window: a light-theme miniature of the Husk chat. */
+  .hw {
+    --w-bg: #f8f8fa; --w-panel: #fff; --w-line: #e4e4ea; --w-text: #17171c; --w-mute: #6d6d78; --w-faint: #9a9aa5;
+    --w-indigo: #4f46e5; --w-sel: #dedbf6; --w-green: #15a34a; --w-red: #d93025;
+    height: 640px; display: flex; flex-direction: column; background: var(--w-bg); color: var(--w-text);
+    font: 13px/1.45 "Inter", var(--sans); border: 1px solid var(--line); overflow: hidden; text-align: left;
+  }
+  .hw svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+  .hw-top { height: 44px; flex-shrink: 0; display: grid; grid-template-columns: 1fr minmax(0, 380px) 1fr; align-items: center; padding: 0 14px; border-bottom: 1px solid var(--w-line); background: var(--w-panel); }
+  .hw-proj { justify-self: start; display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--w-line); border-radius: 6px; padding: 3px 9px; font-size: 12px; }
+  .hw-search { display: flex; align-items: center; gap: 8px; border: 1px solid var(--w-line); border-radius: 7px; padding: 5px 10px; color: var(--w-mute); }
+  .hw-search kbd { margin-left: auto; font-size: 10.5px; border: 1px solid var(--w-line); border-radius: 4px; padding: 0 5px; color: var(--w-faint); }
+  .hw-usage { justify-self: end; display: inline-flex; align-items: center; gap: 6px; color: var(--w-mute); font-size: 12px; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: #c4c4cc; display: inline-block; }
+  .dot.g { background: var(--w-green); }
+  .hw-body { flex: 1; min-height: 0; display: flex; }
+  .hw-rail { width: 46px; flex-shrink: 0; border-right: 1px solid var(--w-line); display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 0; color: var(--w-mute); }
+  .hw-rail span { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 7px; }
+  .hw-rail span.on { background: var(--w-sel); color: var(--w-indigo); }
+  .hw-rail .gap { margin-top: auto; }
+  .hw-sess { width: 258px; flex-shrink: 0; margin: 10px 0 10px 10px; background: var(--w-panel); border: 1px solid var(--w-line); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 9px; }
+  .hw-sess-head { display: flex; align-items: center; justify-content: space-between; font-size: 13.5px; }
+  .hw-new { border: 1px solid var(--w-line); border-radius: 6px; padding: 3px 10px; font-weight: 600; font-size: 12px; }
+  .hw-sess-search { border: 1px solid var(--w-line); border-radius: 7px; padding: 6px 10px; color: var(--w-faint); }
+  .hw-sess-group { display: flex; justify-content: space-between; color: var(--w-mute); font-weight: 500; padding: 2px 2px 0; }
+  .hw-card { border-radius: 8px; padding: 8px 10px; }
+  .hw-card.on { background: var(--w-sel); }
+  .hw-card .r1 { display: flex; justify-content: space-between; color: var(--w-mute); font-size: 11.5px; }
+  .hw-card b { display: block; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hw-card .st { color: var(--w-mute); font-size: 12px; display: flex; align-items: center; gap: 6px; }
+  .hw-card .chips { display: flex; gap: 5px; margin-top: 5px; }
+  .hw-card .chips span { font-size: 10.5px; border: 1px solid rgba(79,70,229,.25); border-radius: 999px; padding: 0 7px; color: var(--w-mute); }
+  .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--w-indigo); animation: hw-pulse 1.2s ease-in-out infinite; }
+  .hw.done .pulse { animation: none; background: var(--w-green); }
+  @keyframes hw-pulse { 50% { opacity: .25; transform: scale(.7); } }
+  .hw-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .hw-tabs { height: 44px; flex-shrink: 0; display: flex; align-items: flex-end; gap: 10px; padding: 0 16px; border-bottom: 1px solid var(--w-line); }
+  .hw-tab { padding: 0 8px 9px; border-bottom: 2px solid var(--w-indigo); font-weight: 600; max-width: 240px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hw-tabs .plus { padding-bottom: 9px; color: var(--w-faint); }
+  .hw-tabs .sp { flex: 1; }
+  .hw-btn { align-self: center; border: 1px solid var(--w-line); background: var(--w-panel); color: var(--w-text); border-radius: 7px; padding: 4px 11px; font: 600 12px "Inter", var(--sans); }
+  button.hw-btn { cursor: pointer; }
+  button.hw-btn:hover, button.hw-btn[aria-pressed="true"] { border-color: var(--w-indigo); background: #eeedfb; color: var(--w-indigo); }
+  .hw-thread { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 28px 8px; display: flex; flex-direction: column; gap: 11px; scrollbar-width: thin; }
+  .hw-thread > * { animation: hw-in .28s var(--ease-out); flex-shrink: 0; }
+  @keyframes hw-in { from { opacity: 0; transform: translateY(6px); } }
+  .m-user { align-self: flex-end; background: #ececf1; border-radius: 12px; padding: 7px 13px; font-size: 14px; max-width: 70%; overflow-wrap: anywhere; }
+  .m-ai { font-size: 14px; max-width: 46rem; }
+  .m-ai.streaming::after { content: ""; display: inline-block; width: 7px; height: 14px; margin-left: 2px; vertical-align: -2px; background: var(--w-indigo); animation: hw-pulse .8s steps(2) infinite; }
+  .m-meta { color: var(--w-faint); font-size: 12px; }
+  .m-perm { display: flex; align-items: center; gap: 10px; border: 1px solid var(--w-line); background: var(--w-panel); border-radius: 9px; padding: 7px 8px 7px 12px; max-width: 46rem; }
+  .m-perm b { font-weight: 600; }
+  .m-perm code, .m-tool code { font-size: 12px; color: var(--w-mute); }
+  .m-perm .q { color: var(--w-mute); }
+  .m-perm .acts { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+  .m-perm .acts span { border: 1px solid var(--w-line); border-radius: 6px; padding: 3px 11px; font-weight: 600; font-size: 12px; transition: transform .12s, background .12s; }
+  .m-perm .acts .allow { background: var(--w-indigo); border-color: var(--w-indigo); color: #fff; }
+  .m-perm .acts .allow.press { transform: scale(.93); background: #3b34b8; }
+  .m-perm .ok { margin-left: auto; color: var(--w-green); font-weight: 600; padding-right: 6px; }
+  .m-tool { max-width: 46rem; }
+  .m-tool > button { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: none; padding: 3px 0; font: 13px "Inter", var(--sans); color: var(--w-text); cursor: pointer; text-align: left; }
+  .m-tool > button .chev { margin-left: 4px; color: var(--w-faint); transition: transform .2s; }
+  .m-tool.open > button .chev { transform: rotate(90deg); }
+  .m-tool .tick { color: var(--w-green); }
+  .m-tool .spin { width: 12px; height: 12px; border: 1.6px solid #cfcfe0; border-top-color: var(--w-indigo); border-radius: 50%; animation: hw-spin .7s linear infinite; }
+  @keyframes hw-spin { to { transform: rotate(360deg); } }
+  .add { color: var(--w-green); } .del { color: var(--w-red); }
+  .diff { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .3s var(--ease-out); }
+  .m-tool.open .diff { grid-template-rows: 1fr; }
+  .diff > div { overflow: hidden; }
+  .diff pre, .hw-canvas pre { margin: 6px 0 0; border: 1px solid var(--w-line); border-radius: 8px; background: var(--w-panel); padding: 6px 0; font-size: 12px; line-height: 1.6; overflow-x: auto; color: var(--w-text); }
+  .diff pre span, .hw-canvas pre span { display: block; padding: 0 12px; white-space: pre; }
+  .diff pre .a, .hw-canvas pre .a { background: #e7f6ec; color: #116b33; }
+  .diff pre .d, .hw-canvas pre .d { background: #fdecea; color: #a52a22; }
+  .m-rcpt { border: 1px solid var(--w-line); background: var(--w-panel); border-radius: 9px; max-width: 34rem; }
+  .m-rcpt > div { display: flex; align-items: center; gap: 8px; padding: 7px 12px; }
+  .m-rcpt > div + div { border-top: 1px solid var(--w-line); font-family: var(--mono); font-size: 12px; }
+  .m-rcpt b { font-weight: 600; }
+  .m-rcpt .view { margin-left: auto; border: 0; background: none; color: var(--w-mute); font: 12px "Inter", var(--sans); cursor: pointer; padding: 2px 4px; }
+  .m-rcpt .view:hover { color: var(--w-indigo); }
+  .m-rcpt .r { margin-left: auto; }
+  .m-rcpt .mod { color: #c2700b; font-weight: 700; }
+  .hw-comp { flex-shrink: 0; margin: 4px 28px 12px; border: 1px solid var(--w-line); border-radius: 12px; background: var(--w-panel); padding: 9px 10px 8px 14px; }
+  .hw-comp:focus-within { border-color: var(--w-indigo); }
+  .hw-comp input { width: 100%; border: 0; outline: 0; background: none; font: 14px "Inter", var(--sans); color: var(--w-text); padding: 4px 0 8px; }
+  .hw-comp input::placeholder { color: var(--w-faint); }
+  .hw-comp-row { display: flex; align-items: center; gap: 6px; }
+  .chip { border: 1px solid var(--w-line); border-radius: 999px; padding: 1px 10px; font-size: 11.5px; color: var(--w-mute); white-space: nowrap; }
+  #hw-send { margin-left: auto; width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--w-line); background: var(--w-bg); color: var(--w-text); cursor: pointer; display: grid; place-items: center; }
+  #hw-send:hover { background: var(--w-indigo); border-color: var(--w-indigo); color: #fff; }
+  .hw-canvas { width: 0; flex-shrink: 0; overflow: hidden; border-left: 0 solid var(--w-line); background: var(--w-panel); transition: width .3s var(--ease-out); }
+  .hw.canvas .hw-canvas { width: 340px; border-left-width: 1px; }
+  .hw-canvas-in { width: 339px; padding: 0 16px 16px; }
+  .hw-canvas-tabs { display: flex; gap: 18px; height: 44px; align-items: flex-end; border-bottom: 1px solid var(--w-line); color: var(--w-mute); margin: 0 -16px 12px; padding: 0 16px; }
+  .hw-canvas-tabs span { padding-bottom: 9px; }
+  .hw-canvas-tabs .on { color: var(--w-text); font-weight: 600; border-bottom: 2px solid var(--w-indigo); }
+  .hw-canvas .file { display: flex; gap: 8px; font-family: var(--mono); font-size: 12px; }
+  .hw-status { height: 26px; flex-shrink: 0; display: flex; align-items: center; gap: 14px; padding: 0 14px; border-top: 1px solid var(--w-line); background: var(--w-panel); color: var(--w-mute); font-size: 11.5px; }
+  .hw-status span { display: inline-flex; align-items: center; gap: 6px; }
+  .hw-status span + span { border-left: 1px solid var(--w-line); padding-left: 14px; }
+  /* Agents without a chat protocol get their own terminal instead of the thread. */
+  .hw-term { display: none; flex: 1; min-height: 0; margin: 12px 16px; border-radius: 9px; background: #101828; color: #e8ecf4; font: 12.5px/1.7 var(--mono); padding: 14px 16px; overflow: auto; white-space: pre-wrap; }
+  .hw.term .hw-term { display: block; }
+  .hw.term .hw-thread, .hw.term .hw-comp { display: none; }
+  .hw-term .p { color: #8fa3c8; } .hw-term .ta { color: #6fd394; } .hw-term .td { color: #f08a80; }
+  .hw { border: 0; height: calc(min(1320px, 88vw) * 1040 / 1760 - 14px); min-height: 520px; }
+  .win .demo-bar { height: auto; min-height: 48px; gap: 8px; padding: 6px 10px 6px 14px; }
+  .pick { display: inline-flex; padding: 3px; border-radius: 9px; background: rgba(10,10,10,.06); margin-left: 10px; }
+  .pick button { border: 0; background: transparent; color: var(--ink-2); font: 500 .8rem/1.2 var(--mono); padding: .32rem .7rem; border-radius: 7px; cursor: pointer; }
+  .pick button:hover { color: var(--ink); }
+  .pick button[aria-checked="true"] { background: var(--paper); color: var(--ink); box-shadow: 0 1px 2px rgba(10,10,10,.14); }
+  .win .demo-bar .demo-how { margin: 0 0 0 8px; transform: none; font-size: .8rem; color: var(--ink-3); }
+  .demo-how b { color: var(--ink-2); font-weight: 600; }
+  #replay { margin-left: auto; border: 1px solid var(--rule-2); background: var(--paper); color: var(--ink); border-radius: 7px; padding: .34rem .8rem; font: 600 .8rem/1.2 var(--body); cursor: pointer; }
+  #replay:hover { border-color: var(--ink); }
+  @media (max-width: 1100px) {
+    .hw-sess, .hw-proj { display: none; }
+    .hw-top { grid-template-columns: 1fr auto; gap: 12px; }
+    .hw.canvas .hw-canvas { width: 280px; }
+    .hw-canvas-in { width: 279px; }
+    .demo-how { display: none; }
+  }
+  @media (max-width: 760px) {
+    .win .demo-bar { flex-wrap: wrap; padding: 8px; }
+    .win .demo-bar i { display: none; }
+    .pick { margin-left: 0; width: 100%; display: grid; grid-template-columns: repeat(3, 1fr); }
+    #replay { margin-left: 0; width: 100%; }
+    .hw { height: 560px; }
+    .hw-rail { display: none; }
+    .hw-thread { padding: 14px 14px 6px; }
+    .hw-comp { margin: 4px 14px 10px; }
+    .hw-tabs .hw-btn.ghost { display: none; }
+  }
+
+
+  /* Agents: one line for everything not named above. */
+  .any-line { margin: clamp(2rem, 4vw, 4rem) 0 0; font: 650 clamp(2rem, 4.6vw, 4.8rem)/1.02 var(--display); letter-spacing: -.02em; font-variation-settings: "wdth" 92; text-wrap: balance; max-width: 22ch; }
+  @media (min-width: 561px) and (max-width: 1100px) {
+    .agents { grid-template-columns: repeat(3, 1fr); }
+    .agents > div:nth-child(4) { border-left: 0; padding-left: 0; }
+    .agents > div:nth-child(5) { border-left: 1px solid var(--rule); padding-left: 1.2rem; }
+    .agents > div:nth-child(n+4) { border-top: 1px solid var(--rule); }
+  }
+
+  /* Glass: the pages stand around a rim, and the one in front is the big one. */
+  .wheel-scroll { height: calc(100vh + 10 * 60vh); }
+  .wheel-pin {
+    position: sticky; top: 0; height: 100vh; overflow: clip; padding: 64px var(--gutter) 0;
+    display: flex; flex-direction: column; align-items: center; text-align: center;
+  }
+  .wheel-pin h2 { font-size: clamp(1.3rem, 1.7vw, 1.8rem); margin-top: 1.2vh; }
+  .wheel { position: relative; flex: 1; min-height: 0; width: 100%; margin-top: .6vh; }
+  .wheel-card {
+    --d: 0; position: absolute; left: 50%; top: 0; margin: 0; width: var(--cw, 800px);
+    transform-origin: 50% 50%; will-change: transform; cursor: pointer;
+  }
+  .wheel-card.front { cursor: default; }
+  .wheel-card::after { content: ""; position: absolute; inset: 0; background: var(--field); opacity: var(--d); pointer-events: none; transition: opacity .2s ease; }
+  .wheel-card:not(.front):hover::after { opacity: 0; }
+  .wheel-card img { width: 100%; height: auto; }
+  .wheel-text { flex-shrink: 0; margin: .8vh 0 1.2vh; max-width: 60rem; min-height: 3.4rem; }
+  .wheel-text b { display: block; font: 650 clamp(1.2rem, 1.5vw, 1.5rem)/1.1 var(--display); letter-spacing: -.02em; }
+  .wheel-text p { margin: .25rem 0 0; color: var(--ink-2); font-size: clamp(.9rem, 1vw, 1.02rem); line-height: 1.45; }
+  .wheel-card { overflow: visible; }
+  .wheel-card .bar { border-radius: 14px 14px 0 0; }
+  .wheel-card img { display: block; border-radius: 0 0 14px 14px; }
+  .wheel-card::after { border-radius: 14px; }
+  .wheel-card figcaption {
+    position: absolute; left: 50%; top: 100%; transform-origin: 50% 0; transform: translate(-50%, 6px) scale(var(--inv, 1));
+    font: 600 13px/1.2 var(--body); color: var(--ink-2); white-space: nowrap; opacity: var(--cap, 0); pointer-events: none;
+  }
+  .wheel-card.rear figcaption { top: auto; bottom: 100%; transform-origin: 50% 100%; transform: translate(-50%, -6px) scale(var(--inv, 1)); }
+
+  /* Scroll: a bar for the page, and parts that move with it. */
+  .progress { position: fixed; left: 0; top: 0; right: 0; height: 3px; z-index: 60; background: var(--indigo); transform-origin: 0 50%; transform: scaleX(var(--sp, 0)); pointer-events: none; }
+  .hero { --h: 0; }
+  .hero.live h1.display .ln { overflow: visible; }
+  .hero.live h1.display .ln > span { transition: none; }
+  .hero.live h1.display .ln:nth-child(1) > span { transform: translateX(calc(var(--h) * -7vw)); }
+  .hero.live h1.display .ln:nth-child(2) > span { transform: translateX(calc(var(--h) * 7vw)); }
+  .hero.live .hero-row { transition: none; opacity: calc(1 - var(--h) * .75); transform: translateY(calc(var(--h) * -30px)); }
+
+  [data-words] .w { color: rgba(10,10,10,.14); transition: color .3s ease; }
+  [data-words] .w.lit { color: var(--ink); }
+
+  .tape { --p: .5; margin-top: clamp(3rem, 6vw, 6rem); overflow: clip; border-top: 1px solid var(--ink); border-bottom: 1px solid var(--rule-2); padding: clamp(1.6rem, 3vw, 3rem) 0; }
+  .tape-row { display: flex; gap: clamp(2.5rem, 6vw, 8rem); width: max-content; will-change: transform; transform: translateX(calc(45vw - var(--p) * (100% - 10vw))); }
+  .tape-row b { display: block; font: 600 clamp(3.4rem, 9.5vw, 12rem)/.95 var(--mono); letter-spacing: -.06em; }
+  .tape-row span { display: block; margin-top: .9rem; color: var(--ink-3); font-size: clamp(.85rem, 1.1vw, 1.1rem); }
+  .tape-row .any b { color: var(--indigo); }
+
+  .tour-win { --tp: .5; transform: perspective(2400px) rotateY(calc((var(--tp) - .5) * -7deg)) rotateX(calc((var(--tp) - .5) * 3deg)); will-change: transform; }
+  .tour-win .frames { overflow: hidden; }
+  .tour-win .frames img { transform: translateY(10%) scale(1.05); transition: opacity .45s ease, transform .7s var(--ease-out); }
+  .tour-win .frames img.past { transform: translateY(-6%) scale(.94); }
+  .tour-win .frames img.on { transform: none; }
+  #tour-count { margin: 0 0 0 auto; transform: none; font-variant-numeric: tabular-nums; }
+  .win .bar #tour-title { margin: 0 0 0 auto; transform: translateX(22px); }
+
+  .motion .rise { opacity: 0; transform: translateY(34px); transition: opacity .7s ease, transform .9s var(--ease-out); transition-delay: calc(var(--i, 0) * 70ms); }
+  .motion .rise.in { opacity: 1; transform: none; }
+
+  .fmark { --q: 1; color: color-mix(in srgb, var(--ink) calc(6% + var(--q) * 94%), transparent); letter-spacing: calc(.1em - var(--q) * .13em); transform: translateY(calc((1 - var(--q)) * 22%)); }
+  @media (max-width: 900px) { .tour-win { transform: none; } }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .tape-row { transform: none; flex-wrap: wrap; width: auto; padding: 0 var(--gutter); }
+    .tour-win { transform: none; }
+    *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; }
+  }
 
 /* ── Kernel: the Husk pod, and the seed that lives in it ─────────────── */
 .hk {
@@ -306,160 +679,19 @@
   20%  { opacity: 0.95; }
   100% { opacity: 0;    translate: var(--sx) var(--sy); scale: 1.2; }
 }
-
-  /* ── Hero shot ───────────────────────────────────── */
-  .hero-shot {
-    margin: 3.5rem auto 0; max-width: 62rem; position: relative;
-  }
-  .hero-shot::before {
-    content: ""; position: absolute; inset: -10% -6% 8%;
-    background: radial-gradient(60% 60% at 50% 0%, rgba(247,74,29,.28), transparent 70%);
-    filter: blur(30px); z-index: -1;
-  }
-  .hero-shot img, .hero-shot video {
-    width: 100%; display: block; border-radius: var(--radius-lg);
-    border: 1px solid var(--line-2); box-shadow: 0 40px 90px -40px rgba(0,0,0,.9);
-  }
-
-  /* ── Section headings ────────────────────────────── */
-  section { padding: 4.5rem 0; }
-  .sec-head { text-align: center; max-width: 46rem; margin: 0 auto 3.5rem; }
-  /* The kicker reads as a pill so it registers as a label rather than stray
-     small text above the heading. */
-  .kicker {
-    display: inline-flex; align-items: center; gap: .45rem;
-    font-size: .72rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
-    color: var(--accent-2); background: var(--accent-soft);
-    border: 1px solid rgba(247,74,29,.28); border-radius: 999px;
-    padding: .32rem .75rem; line-height: 1;
-  }
-  .kicker::before {
-    content: ""; width: 5px; height: 5px; border-radius: 50%;
-    background: var(--accent); box-shadow: 0 0 7px var(--accent);
-  }
-  /* Headings set their own line-height: the body's 1.65 is tuned for prose and
-     leaves a two-line heading with a gap wide enough to read as two blocks. */
-  .sec-head h2 {
-    font-size: clamp(2.05rem, 4.4vw, 3.05rem);
-    line-height: 1.1; letter-spacing: -.025em; font-weight: 800;
-    margin: 1.05rem 0 .9rem;
-    background: linear-gradient(180deg, var(--text) 40%, #a9b0bd);
-    -webkit-background-clip: text; background-clip: text; color: transparent;
-  }
-  .sec-head p { color: var(--muted); font-size: 1.12rem; line-height: 1.6; margin: 0 auto; max-width: 40rem; }
-
-  /* ── Bento grid ──────────────────────────────────── */
-  .bento { display: grid; grid-template-columns: repeat(6, 1fr); gap: 1rem; }
-  .cell {
-    background: linear-gradient(180deg, var(--panel), var(--bg-2));
-    border: 1px solid var(--line); border-radius: var(--radius-lg);
-    padding: 1.5rem; overflow: hidden; position: relative;
-    display: flex; flex-direction: column;
-    opacity: 0; transform: translateY(18px); transition: opacity .6s ease, transform .6s ease, border-color .25s ease;
-  }
-  .cell.in { opacity: 1; transform: none; }
-  .cell:hover { border-color: var(--line-2); }
-  .cell .tag { font-size: .74rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
-  .cell h3 { margin: .5rem 0 .4rem; font-size: 1.22rem; line-height: 1.25; letter-spacing: -.01em; }
-  .cell p { margin: 0 0 1.4rem; color: var(--muted); font-size: .93rem; }
-  /* Cells in a row stretch to the tallest, so anchoring the shot to the bottom
-     keeps every screenshot on the same line whether its blurb runs one line or
-     two. Without this the images sit directly under text of unequal height. */
-  .cell .shot { margin-top: auto; border-radius: 12px; border: 1px solid var(--line-2); overflow: hidden; background: #08090c; }
-  .cell .shot img { width: 100%; display: block; }
-  .c-6 { grid-column: span 6; }
-  .c-4 { grid-column: span 4; }
-  .c-3 { grid-column: span 3; }
-  .c-2 { grid-column: span 2; }
-  .wide { flex-direction: row; align-items: center; gap: 2rem; }
-  .wide .txt { flex: 0 0 40%; }
-  .wide .shot { margin-top: 0; flex: 1; }
-  @media (max-width: 860px) {
-    .bento { grid-template-columns: 1fr 1fr; }
-    .c-6, .c-4, .c-3, .c-2 { grid-column: span 2; }
-    .wide { flex-direction: column; align-items: stretch; gap: 1.2rem; }
-    .wide .txt { flex: none; }
-    .wide .shot { margin-top: 0; }
-  }
-  @media (max-width: 540px) { .bento { grid-template-columns: 1fr; } .c-6,.c-4,.c-3,.c-2 { grid-column: span 1; } }
-
-  /* ── Install ─────────────────────────────────────── */
-  .tabs { display: flex; gap: .4rem; justify-content: center; margin-bottom: 1.4rem; flex-wrap: wrap; }
-  .tab {
-    border: 1px solid var(--line-2); background: var(--panel); color: var(--muted);
-    border-radius: 999px; padding: .45rem 1.05rem; font-size: .88rem; cursor: pointer; font-weight: 600;
-  }
-  .tab:hover { color: var(--text); }
-  .tab.active { color: #fff; background: linear-gradient(180deg, var(--accent-2), var(--accent)); border-color: transparent; }
-  .panel-install { max-width: 46rem; margin: 0 auto; }
-  .card {
-    background: var(--panel); border: 1px solid var(--line);
-    border-radius: var(--radius); padding: 1.15rem 1.25rem; margin-bottom: 1rem;
-  }
-  .card.rec { border-color: rgba(247,74,29,.45); box-shadow: 0 0 0 1px rgba(247,74,29,.12); }
-  .card h3 { margin: 0 0 .5rem; font-size: 1.18rem; line-height: 1.3; letter-spacing: -.01em; display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
-  .card h3 .badge {
-    font-size: .62rem; font-weight: 800; text-transform: uppercase; letter-spacing: .08em;
-    color: var(--accent); border: 1px solid rgba(247,74,29,.5); border-radius: 999px; padding: .12rem .5rem;
-  }
-  .card p { margin: 0 0 .85rem; color: var(--muted); font-size: .9rem; }
-  .card p code, .card h3 code { color: var(--text); background: #0b0c10; border: 1px solid var(--line-2); padding: .03rem .3rem; border-radius: 5px; font-size: .86em; }
-  .cmd { position: relative; }
-  pre {
-    margin: 0; background: #08090c; border: 1px solid var(--line-2);
-    border-radius: 9px; padding: .85rem 3.4rem .85rem 1rem; overflow-x: auto;
-    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: .84rem; line-height: 1.55;
-  }
-  pre code { color: var(--text); }
-  .copy {
-    position: absolute; top: .55rem; right: .55rem; border: 1px solid var(--line-2);
-    background: var(--panel); color: var(--muted); border-radius: 7px;
-    padding: .3rem .6rem; font-size: .72rem; cursor: pointer;
-  }
-  .copy:hover { color: var(--text); border-color: var(--accent); }
-  .install-group { display: none; }
-  .install-group.active { display: block; }
-
-  /* Below this width a one-line install command is wider than the screen. Wrap it
-     rather than letting it scroll under a hidden scrollbar, where the tail of the
-     URL simply reads as missing. */
-  @media (max-width: 720px) {
-    .hero-install { align-items: flex-start; }
-    .hero-install code { white-space: pre-wrap; overflow-wrap: anywhere; }
-    pre { white-space: pre-wrap; overflow-wrap: anywhere; }
-  }
-
-  /* ── Trust row ───────────────────────────────────── */
-  .trust { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
-  .trust .t {
-    text-align: center; padding: 1.6rem 1rem; border: 1px solid var(--line);
-    border-radius: var(--radius); background: var(--panel);
-  }
-  .trust .t .big { font-size: 1.9rem; font-weight: 800; letter-spacing: -.01em; }
-  .trust .t .lbl { color: var(--muted); font-size: .85rem; margin-top: .3rem; }
-  @media (max-width: 620px) { .trust { grid-template-columns: 1fr 1fr; } }
-
-  /* ── Footer ──────────────────────────────────────── */
-  footer {
-    border-top: 1px solid var(--line); padding: 3rem 0; margin-top: 2rem;
-    text-align: center; color: var(--muted); font-size: .88rem;
-  }
-  footer .fbrand { font-weight: 800; letter-spacing: .12em; color: var(--text); margin-bottom: .5rem; }
-  footer .flinks { display: flex; gap: 1.2rem; justify-content: center; flex-wrap: wrap; margin: .8rem 0; }
-  footer .flinks a { color: var(--muted); }
-  footer .flinks a:hover { color: var(--text); text-decoration: none; }
 </style>
 </head>
 <body>
+<div class="progress" aria-hidden="true"></div>
 
-<!-- ── Nav ── -->
 <nav id="nav">
   <div class="wrap nav-inner">
-    <div class="nav-brand">
-      <span>HUSK</span>
-    </div>
+    <a class="nav-brand" href="#" aria-label="Husk">
+      <img src="https://cdn.jsdelivr.net/gh/DorShaer/Husk@main/src/renderer/assets/husk-logo.png" alt="" />
+      Husk
+    </a>
     <div class="nav-links">
-      <a href="#features" class="hide-sm">Features</a>
+      <a href="#tour" class="hide-sm">Features</a>
       <a href="#install">Install</a>
       <a href="https://github.com/DorShaer/Husk" class="hide-sm">Docs</a>
       <a class="nav-cta" href="https://github.com/DorShaer/Husk" target="_blank" rel="noopener">
@@ -470,10 +702,11 @@
   </div>
 </nav>
 
-<!-- ── Hero ── -->
-<header>
+<header class="hero" data-tone="#f4f5f7">
   <div class="wrap">
-    <div class="hero-mark">
+    <h1 class="display" aria-label="Give your CLI agent a home.">
+      <span class="ln"><span aria-hidden="true">Give your CLI</span></span>
+      <span class="ln"><span><span aria-hidden="true">agent a home</span><span class="perch">
       <svg class="hk" viewBox="0 0 200 214" role="img" aria-label="Husk" id="hk">
                     <defs>
                       <linearGradient id="hk-rind-l" x1="0" y1="0" x2="1" y2="0.7">
@@ -616,132 +849,173 @@
                       <circle cx="100" cy="60" r="1.4" /><circle cx="100" cy="60" r="1.9" />
                     </g>
                   </svg>
-    </div>
-    <h1 class="wordmark" aria-label="Husk">
-      <span aria-hidden="true">H</span><span aria-hidden="true">U</span><span aria-hidden="true">S</span><span aria-hidden="true">K</span>
+      </span></span></span>
     </h1>
-    <p class="lede">A desktop home for <span class="grad">your CLI agent</span></p>
-    <p class="sub">Husk wraps any terminal-based AI coding agent in a clean window: a native chat with every session one click away, a model picker, drag-drop files and images, workflows, skills, and MCP. Bring your own agent. Install in one line.</p>
-    <div class="hero-cta">
-      <a class="btn btn-primary" href="#install">
-        <svg viewBox="0 0 24 24"><path d="M12 16l-5-5h3V4h4v7h3l-5 5zm-7 2h14v2H5v-2z"/></svg>
-        Install Husk
-      </a>
-      <a class="btn btn-ghost" href="https://github.com/DorShaer/Husk" target="_blank" rel="noopener">View on GitHub</a>
-    </div>
-    <div class="hero-os">
-      <button class="os-btn active" data-cmd="hero-cmd">Linux / macOS</button>
-      <button class="os-btn" data-cmd="hero-cmd-win">Windows</button>
-    </div>
-    <div class="hero-install" data-for="hero-cmd">
-      <span class="prompt">$</span>
-      <code id="hero-cmd">curl -fsSL https://dorshaer.github.io/Husk/install.sh | bash</code>
-      <button class="mini-copy" data-copy="#hero-cmd">Copy</button>
-    </div>
-    <div class="hero-install" data-for="hero-cmd-win" hidden>
-      <span class="prompt">PS</span>
-      <code id="hero-cmd-win">irm https://dorshaer.github.io/Husk/install.ps1 | iex</code>
-      <button class="mini-copy" data-copy="#hero-cmd-win">Copy</button>
-    </div>
-    <div class="os-note">Signed apt repo on Debian/Ubuntu, .rpm on Fedora, AppImage elsewhere, .dmg on macOS. Checksums verified.</div>
 
-    <div class="hero-shot">
-      <video autoplay muted loop playsinline preload="metadata" poster="husk-poster.jpg" aria-label="Husk in action">
-        <source src="husk.mp4" type="video/mp4" />
-        <img src="husk-poster.jpg" alt="Husk in action" />
-      </video>
+    <div class="hero-row">
+      <p class="lead">Husk wraps any terminal-based AI coding agent in a clean window: a native chat with every session one click away, a model picker, drag-drop files and images, workflows, skills, and MCP. Bring your own agent. Install in one line.</p>
+      <div class="hero-act">
+        <div class="hero-os">
+          <button class="os-btn active" data-cmd="hero-cmd">Linux / macOS</button>
+          <button class="os-btn" data-cmd="hero-cmd-win">Windows</button>
+        </div>
+        <div class="hero-install" data-for="hero-cmd">
+          <span class="prompt">$</span>
+          <code id="hero-cmd">curl -fsSL https://dorshaer.github.io/Husk/install.sh | bash</code>
+          <button class="mini-copy" data-copy="#hero-cmd">Copy</button>
+        </div>
+        <div class="hero-install" data-for="hero-cmd-win" hidden>
+          <span class="prompt">PS</span>
+          <code id="hero-cmd-win">irm https://dorshaer.github.io/Husk/install.ps1 | iex</code>
+          <button class="mini-copy" data-copy="#hero-cmd-win">Copy</button>
+        </div>
+        <div class="hero-cta">
+          <a class="btn btn-primary" href="#install">
+            <svg viewBox="0 0 24 24"><path d="M12 16l-5-5h3V4h4v7h3l-5 5zm-7 2h14v2H5v-2z"/></svg>
+            Install Husk
+          </a>
+          <a class="btn btn-ghost" href="https://github.com/DorShaer/Husk" target="_blank" rel="noopener">View on GitHub</a>
+        </div>
+        <div class="os-note">Signed apt repo on Debian/Ubuntu, .rpm on Fedora, AppImage elsewhere, .dmg on macOS. Checksums verified.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stage" id="stage">
+    <div class="deck" id="deck">
+      <figure class="win back b3" aria-hidden="true"><div class="bar"><i></i><i></i><i></i><span>Skills</span></div><img src="docs/images/husk-skills.png" alt="" /></figure>
+      <figure class="win back b2" aria-hidden="true"><div class="bar"><i></i><i></i><i></i><span>Workflows</span></div><img src="docs/images/husk-workflows.png" alt="" /></figure>
+      <figure class="win back b1" aria-hidden="true"><div class="bar"><i></i><i></i><i></i><span>Agents</span></div><img src="docs/images/husk-agents.png" alt="" /></figure>
+      <div class="win front">
+        <div class="bar demo-bar"><i></i><i></i><i></i>
+          <div class="pick" role="radiogroup" aria-label="Agent for the demo">
+            <button role="radio" aria-checked="true" data-agent="claude">claude</button>
+            <button role="radio" aria-checked="false" data-agent="copilot">copilot</button>
+            <button role="radio" aria-checked="false" data-agent="codex">codex</button>
+            <button role="radio" aria-checked="false" data-agent="aider">aider</button>
+            <button role="radio" aria-checked="false" data-agent="gemini">gemini</button>
+            <button role="radio" aria-checked="false" data-agent="kiro">kiro</button>
+          </div>
+          <span class="demo-how" id="demo-how"></span>
+          <button id="replay">Replay</button>
+        </div>
+    <div class="hw" id="hw" role="group" aria-label="Husk chat demo">
+      <div class="hw-top">
+        <span class="hw-proj"><svg viewBox="0 0 24 24"><path d="M3 6h6l2 2h10v11H3z"/></svg>work</span>
+        <span class="hw-search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M16 16l4 4"/></svg>Search for anything… <kbd>Ctrl K</kbd></span>
+        <span class="hw-usage"><i class="dot g"></i><i class="dot"></i>20K / 200K</span>
+      </div>
+      <div class="hw-body">
+        <div class="hw-rail" id="hw-rail" aria-hidden="true"></div>
+        <aside class="hw-sess" aria-hidden="true">
+          <div class="hw-sess-head"><b>Sessions</b><span class="hw-new">+ New</span></div>
+          <div class="hw-sess-search">Search sessions…</div>
+          <div class="hw-sess-group"><span>This project</span><span>3</span></div>
+          <div class="hw-card on">
+            <div class="r1"><span data-agent-name>claude</span><span>now</span></div>
+            <b id="hw-s-title">add backoff to the retry</b>
+            <div class="st"><i class="pulse"></i><span id="hw-s-state">Working</span></div>
+            <div class="chips"><span>work</span><span>Default</span></div>
+          </div>
+          <div class="hw-card"><div class="r1"><span>codex</span><span>2h</span></div><b>fix the flaky upload test</b><div class="st">Done</div></div>
+          <div class="hw-card"><div class="r1"><span>gemini</span><span>1d</span></div><b>draft the release notes</b><div class="st">Done</div></div>
+        </aside>
+        <div class="hw-main">
+          <div class="hw-tabs">
+            <span class="hw-tab" id="hw-tab">add backoff to the retry</span><span class="plus">+</span><span class="sp"></span>
+            <button class="hw-btn" id="hw-changes" aria-pressed="false">Changes</button>
+            <span class="hw-btn ghost">Split</span>
+            <span class="hw-btn ghost">Add context</span>
+          </div>
+          <div class="hw-thread" id="hw-thread"></div>
+          <div class="hw-term" id="hw-term"></div>
+          <div class="hw-comp">
+            <input id="hw-input" type="text" maxlength="80" autocomplete="off" aria-label="Message the demo agent" />
+            <div class="hw-comp-row">
+              <span class="chip">Attach</span><span class="chip" data-agent-name>claude</span><span class="chip">work</span><span class="chip">Default</span><span class="chip">ctx 10%</span>
+              <button id="hw-send" aria-label="Send"><svg viewBox="0 0 24 24"><path d="M12 19V6M6 12l6-6 6 6"/></svg></button>
+            </div>
+          </div>
+        </div>
+        <aside class="hw-canvas" id="hw-canvas" aria-hidden="true">
+          <div class="hw-canvas-in">
+            <div class="hw-canvas-tabs"><span class="on">Changes 1</span><span>Pull request</span><span>Checks</span></div>
+            <div class="file"><span class="mod" style="color:#c2700b;font-weight:700">M</span><span>retry.js</span><span class="add" style="margin-left:auto">+2</span><span class="del">-2</span></div>
+            <pre id="hw-canvas-diff"></pre>
+          </div>
+        </aside>
+      </div>
+      <div class="hw-status"><span>~/work</span><span>Default</span><span><i class="dot g"></i><span><span data-agent-name>claude</span> connected</span></span></div>
+    </div>
+      </div>
     </div>
   </div>
 </header>
 
-<!-- ── Why ── -->
-<section id="why">
-  <div class="wrap sec-head">
-    <div class="kicker">Why Husk</div>
-    <h2>The agent, unchanged. The surface, finally usable.</h2>
-    <p>CLI agents are powerful and free, but they live in a black-on-black terminal that newcomers find intimidating and easy to lose work in. Husk keeps the agent exactly as it is and adds the surface that makes it approachable.</p>
+<section id="why" data-tone="#ffffff">
+  <div class="wrap">
+    <div class="bring-head">
+      <h2 data-words>The agent, unchanged. The surface, finally usable.</h2>
+      <p class="lead">CLI agents are powerful and free, but they live in a black-on-black terminal that newcomers find intimidating and easy to lose work in. Husk keeps the agent exactly as it is and adds the surface that makes it approachable.</p>
+    </div>
+    <div class="agents" aria-label="Agents Husk runs">
+      <div><b>claude</b><span>Native chat</span></div>
+      <div><b>copilot</b><span>Native chat</span></div>
+      <div><b>codex</b><span>Native chat</span></div>
+      <div><b>gemini</b><span>Native chat</span></div>
+      <div><b>kiro</b><span>Native chat</span></div>
+      <div><b>aider</b><span>Its own terminal, a real PTY</span></div>
+    </div>
+    <p class="any-line" data-words>Or any other agent. If it runs in a terminal, it runs in Husk.</p>
   </div>
 </section>
 
-<!-- ── Features ── -->
-<section id="features" style="padding-top:0;">
-  <div class="wrap">
-    <div class="bento">
-
-      <div class="cell c-6 wide">
-        <div class="txt">
-          <div class="tag">Chat</div>
-          <h3>Your CLI agent, as a real chat</h3>
-          <p>Streamed replies, tool calls that open into their diff, permission cards and a model picker, with every past session one click away beside the thread. Paste an image, queue the next message while it works. Agents without a chat protocol still get a genuine terminal, and a real shell lives on its own page.</p>
-        </div>
-        <div class="shot"><img src="docs/images/husk-chat.png" alt="A native chat with the agent" loading="lazy" /></div>
+<section id="tour" aria-label="Features" data-tone="#eceefd">
+  <div class="wheel-scroll" id="wheel-scroll">
+    <div class="wheel-pin">
+      <h2>One window for the whole job</h2>
+      <div class="wheel" id="wheel">
+        <figure class="win wheel-card" data-name="Chat" data-desc="Streamed replies, tool calls that open into their diff, permission cards and a model picker, with every past session one click away beside the thread."><div class="bar"><i></i><i></i><i></i><span>Chat</span></div><img src="docs/images/husk-chat.png" alt="A native chat with the agent" /><figcaption>Chat</figcaption></figure>
+        <figure class="win wheel-card" data-name="Brain" data-desc="Save notes, teach Husk from text files, or let it capture a short record after a chat. Before your next message, Husk brings back only the memories that fit."><div class="bar"><i></i><i></i><i></i><span>Brain</span></div><img src="docs/images/husk-brain.png" alt="Brain page with saved memories and their connections" /><figcaption>Brain</figcaption></figure>
+        <figure class="win wheel-card" data-name="Agents" data-desc="Pick the agent personas active for your next session."><div class="bar"><i></i><i></i><i></i><span>Agents</span></div><img src="docs/images/husk-agents.png" alt="Agents page" loading="lazy" /><figcaption>Agents</figcaption></figure>
+        <figure class="win wheel-card" data-name="Workflows" data-desc="Build multi-step automations with conditional branching in a visual editor."><div class="bar"><i></i><i></i><i></i><span>Workflows</span></div><img src="docs/images/husk-workflows.png" alt="Workflows graph editor" loading="lazy" /><figcaption>Workflows</figcaption></figure>
+        <figure class="win wheel-card" data-name="Workflow runs" data-desc="Run a workflow and follow each step as it executes. Click a step to watch its terminal."><div class="bar"><i></i><i></i><i></i><span>Workflow runs</span></div><img src="docs/images/husk-workflow-run.png" alt="A workflow run in progress" loading="lazy" /><figcaption>Workflow runs</figcaption></figure>
+        <figure class="win wheel-card" data-name="Projects" data-desc="Pin folders as Projects so the agent always starts in the right working directory."><div class="bar"><i></i><i></i><i></i><span>Projects</span></div><img src="docs/images/husk-projects.png" alt="Projects" loading="lazy" /><figcaption>Projects</figcaption></figure>
+        <figure class="win wheel-card" data-name="Prompts" data-desc="Save reusable prompts and fire them with a single click."><div class="bar"><i></i><i></i><i></i><span>Prompts</span></div><img src="docs/images/husk-prompts.png" alt="Prompts library" loading="lazy" /><figcaption>Prompts</figcaption></figure>
+        <figure class="win wheel-card" data-name="Skills" data-desc="One-click Use, animated toggles, and source badges across your whole skill set."><div class="bar"><i></i><i></i><i></i><span>Skills</span></div><img src="docs/images/husk-skills.png" alt="Skills page" loading="lazy" /><figcaption>Skills</figcaption></figure>
+        <figure class="win wheel-card" data-name="MCP" data-desc="Live connection state, a curated catalog, and Clone to start a variant."><div class="bar"><i></i><i></i><i></i><span>MCP</span></div><img src="docs/images/husk-mcp.png" alt="MCP servers page" loading="lazy" /><figcaption>MCP</figcaption></figure>
+        <figure class="win wheel-card" data-name="MCP install" data-desc="Add any server by pasting its JSON or filling in a short form."><div class="bar"><i></i><i></i><i></i><span>MCP install</span></div><img src="docs/images/husk-mcp-install.png" alt="Installing a custom MCP server" loading="lazy" /><figcaption>MCP install</figcaption></figure>
       </div>
-
-      <div class="cell c-3">
-        <div class="tag">Agents</div>
-        <h3>Personas, curated</h3>
-        <p>Pick the agent personas active for your next session.</p>
-        <div class="shot"><img src="docs/images/husk-agents.png" alt="Agents page" loading="lazy" /></div>
-      </div>
-
-      <div class="cell c-3">
-        <div class="tag">Workflows</div>
-        <h3>Automations as graphs</h3>
-        <p>Build multi-step automations with conditional branching in a visual editor.</p>
-        <div class="shot"><img src="docs/images/husk-workflows.png" alt="Workflows graph editor" loading="lazy" /></div>
-      </div>
-
-      <div class="cell c-3">
-        <div class="tag">Projects</div>
-        <h3>Pin your folders</h3>
-        <p>Pin folders as Projects so the agent always starts in the right working directory.</p>
-        <div class="shot"><img src="docs/images/husk-projects.png" alt="Projects" loading="lazy" /></div>
-      </div>
-
-      <div class="cell c-3">
-        <div class="tag">Prompts</div>
-        <h3>Prompts on tap</h3>
-        <p>Save reusable prompts and fire them with a single click.</p>
-        <div class="shot"><img src="docs/images/husk-prompts.png" alt="Prompts library" loading="lazy" /></div>
-      </div>
-
-      <div class="cell c-3">
-        <div class="tag">Skills</div>
-        <h3>Skills, one click</h3>
-        <p>One-click <strong>Use</strong>, animated toggles, and source badges across your whole skill set.</p>
-        <div class="shot"><img src="docs/images/husk-skills.png" alt="Skills page" loading="lazy" /></div>
-      </div>
-
-      <div class="cell c-3">
-        <div class="tag">MCP</div>
-        <h3>MCP, wired in</h3>
-        <p>Live connection state, a curated catalog, a paste-the-JSON path for any server, and Clone to start a variant.</p>
-        <div class="shot"><img src="docs/images/husk-mcp.png" alt="MCP servers page" loading="lazy" /></div>
-      </div>
-
+      <div class="wheel-text" aria-live="polite"><b id="wheel-name">Chat</b><p id="wheel-desc">Streamed replies, tool calls that open into their diff, permission cards and a model picker, with every past session one click away beside the thread.</p></div>
     </div>
   </div>
 </section>
 
-<!-- ── Trust ── -->
-<section id="trust" style="padding-top:0;">
-  <div class="wrap trust">
-    <div class="t"><div class="big">1 line</div><div class="lbl">Install, any OS</div></div>
-    <div class="t"><div class="big">Signed</div><div class="lbl">apt repo + Sigstore provenance</div></div>
-    <div class="t"><div class="big">No Node</div><div class="lbl">Bundled Electron runtime</div></div>
-    <div class="t"><div class="big">Source-available</div><div class="lbl">Elastic License 2.0, free to use</div></div>
+<section class="more" data-tone="#f4f5f7">
+  <div class="wrap">
+    <h2 data-words>And the rest of the rail</h2>
+    <div class="more-grid">
+      <div><b>Terminal</b><p>A real shell in your project, in tabs.</p></div>
+      <div><b>Autopilot</b><p>Hand the agent a goal and walk away. Solo runs one agent; Team splits the goal across parallel runs, each in its own git worktree.</p></div>
+      <div><b>Split chat</b><p>Run two chats side by side.</p></div>
+      <div><b>Source</b><p>Read the working-tree diff, stage a file or an individual change, and commit.</p></div>
+      <div><b>Files</b><p>Drag-drop file context, with a tree view of your working directory.</p></div>
+      <div><b>GitHub</b><p>The open pull requests and issues for the current project, with their checks, labels and review state.</p></div>
+      <div><b>Schedule</b><p>Run a workflow or an autopilot goal on a recurrence.</p></div>
+      <div><b>Artifacts</b><p>A ledger of every workflow and autopilot run with its outcome, time, tokens and cost.</p></div>
+      <div><b>Sessions</b><p>Resume any prior agent session. Group the roster into folders you name.</p></div>
+    </div>
   </div>
 </section>
 
-<!-- ── Install ── -->
-<section id="install">
-  <div class="wrap">
+
+<section id="install" data-tone="#fff3e8">
+  <div class="wrap install-grid">
     <div class="sec-head">
-      <div class="kicker">Install</div>
-      <h2>Up and running in one line</h2>
-      <p>Pick your platform. The one-liner auto-detects and installs the right build.</p>
+      <h2 data-words>Up and running in one line</h2>
+      <p class="lead">Pick your platform. The one-liner auto-detects and installs the right build.</p>
     </div>
-
+    <div>
     <div class="tabs">
       <button class="tab active" data-os="quick">Fastest</button>
       <button class="tab" data-os="linux">Linux</button>
@@ -836,21 +1110,21 @@ xattr -dr com.apple.quarantine /Applications/Husk.app</code></pre>
       </div>
 
     </div>
+    </div>
   </div>
 </section>
 
-<!-- ── Footer ── -->
-<footer>
-  <div class="wrap">
-    <div class="fbrand">HUSK</div>
+<footer data-tone="#f4f5f7">
+  <div class="wrap foot">
+    <p>Debian packages are signed with the <a href="husk.gpg">Husk signing key</a>, and every release artifact carries Sigstore build provenance and a published SHA256SUM. The Windows and macOS apps are not code-signed yet. Released under the Elastic License 2.0.</p>
     <div class="flinks">
       <a href="https://github.com/DorShaer/Husk">GitHub</a>
       <a href="https://github.com/DorShaer/Husk/releases/latest">Releases</a>
       <a href="https://github.com/DorShaer/Husk/tree/main/docs">Docs</a>
       <a href="husk.gpg">Signing key</a>
     </div>
-    <div>Debian packages are signed with the <a href="husk.gpg">Husk signing key</a>, and every release artifact carries Sigstore build provenance and a published SHA256SUM. The Windows and macOS apps are not code-signed yet. Released under the Elastic License 2.0.</div>
   </div>
+  <div class="fmark" data-scrub aria-hidden="true">Husk</div>
 </footer>
 
 <script>
@@ -924,11 +1198,56 @@ xattr -dr com.apple.quarantine /Applications/Husk.app</code></pre>
   }, { passive: true });
 })();
 
-  // Nav shadow on scroll
-  var nav = document.getElementById('nav');
-  addEventListener('scroll', function () { nav.classList.toggle('scrolled', scrollY > 8); }, { passive: true });
+(function () {
+  var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var clamp = function (n, a, b) { return Math.max(a, Math.min(b, n)); };
 
-  // Copy buttons (card blocks)
+  var nav = document.getElementById('nav');
+  var stage = document.getElementById('stage');
+  var deck = document.getElementById('deck');
+  var scroller = document.getElementById('tour-scroll');
+  var items = [].slice.call(document.querySelectorAll('.tour-item'));
+  var frames = [].slice.call(document.querySelectorAll('#tour-frames img'));
+  var title = document.getElementById('tour-title');
+  var wide = matchMedia('(min-width: 901px)');
+  var live = false, current = 0;
+
+  function show(i) {
+    if (i === current) return;
+    current = i;
+    items.forEach(function (el, n) { el.classList.toggle('on', n === i); });
+    frames.forEach(function (el, n) { el.classList.toggle('on', n === i); el.classList.toggle('past', n < i); });
+    document.getElementById('tour-count').textContent = (i + 1) + ' / ' + items.length;
+    title.textContent = items[i].querySelector('b').textContent;
+  }
+
+  // The deck lies back at the top of the page and stands up flat as it scrolls into reading position.
+  function frame() {
+    nav.classList.toggle('scrolled', scrollY > 8);
+    if (live) stage.style.setProperty('--s', reduce ? 0 : (1 - clamp(scrollY / (innerHeight * .78), 0, 1)).toFixed(4));
+  }
+  var queued = 0;
+  function onScroll() { if (!queued) queued = requestAnimationFrame(function () { queued = 0; frame(); }); }
+  addEventListener('scroll', onScroll, { passive: true });
+  addEventListener('resize', onScroll);
+
+  if (!reduce) {
+    addEventListener('pointermove', function (e) {
+      stage.style.setProperty('--mx', (e.clientX / innerWidth * 2 - 1).toFixed(3));
+      stage.style.setProperty('--my', (e.clientY / innerHeight * 2 - 1).toFixed(3));
+    }, { passive: true });
+  }
+
+  // One load moment: the headline rises, then the deck fans out.
+  requestAnimationFrame(function () {
+    document.body.classList.add('ready');
+    if (reduce) { live = true; frame(); return; }
+    setTimeout(function () {
+      stage.style.setProperty('--s', (1 - clamp(scrollY / (innerHeight * .78), 0, 1)).toFixed(4));
+      setTimeout(function () { deck.classList.add('live'); live = true; frame(); }, 1350);
+    }, 380);
+  });
+
   document.querySelectorAll('.copy').forEach(function (btn) {
     btn.addEventListener('click', function () {
       var pre = btn.parentElement.querySelector('pre');
@@ -938,7 +1257,6 @@ xattr -dr com.apple.quarantine /Applications/Husk.app</code></pre>
       });
     });
   });
-  // Mini copy (hero)
   document.querySelectorAll('.mini-copy').forEach(function (btn) {
     btn.addEventListener('click', function () {
       var el = document.querySelector(btn.dataset.copy);
@@ -949,7 +1267,6 @@ xattr -dr com.apple.quarantine /Applications/Husk.app</code></pre>
     });
   });
 
-  // Hero OS toggle: show one install command at a time.
   document.querySelectorAll('.os-btn').forEach(function (btn) {
     btn.addEventListener('click', function () {
       document.querySelectorAll('.os-btn').forEach(function (b) { b.classList.remove('active'); });
@@ -960,7 +1277,6 @@ xattr -dr com.apple.quarantine /Applications/Husk.app</code></pre>
     });
   });
 
-  // Install tabs
   document.querySelectorAll('.tab').forEach(function (tab) {
     tab.addEventListener('click', function () {
       document.querySelectorAll('.tab').forEach(function (t) { t.classList.remove('active'); });
@@ -971,13 +1287,6 @@ xattr -dr com.apple.quarantine /Applications/Husk.app</code></pre>
     });
   });
 
-  // Reveal on scroll
-  var io = new IntersectionObserver(function (entries) {
-    entries.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
-  }, { threshold: .12 });
-  document.querySelectorAll('.cell').forEach(function (c) { io.observe(c); });
-
-  // Live star count (graceful, no-op on failure)
   fetch('https://api.github.com/repos/DorShaer/Husk')
     .then(function (r) { return r.json(); })
     .then(function (d) {
@@ -985,6 +1294,291 @@ xattr -dr com.apple.quarantine /Applications/Husk.app</code></pre>
         document.getElementById('star-count').textContent = d.stargazers_count.toLocaleString();
       }
     }).catch(function () {});
+})();
+</script>
+<script>
+/* Scripted chat demo */
+(function () {
+  const hw = document.getElementById('hw');
+  const thread = document.getElementById('hw-thread');
+  const term = document.getElementById('hw-term');
+  const input = document.getElementById('hw-input');
+  const how = document.getElementById('demo-how');
+  const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const HOW = {
+    claude: ['claude', 'runs as a native chat over stream-json.'],
+    copilot: ['copilot', 'runs as a native chat over the Agent Client Protocol.'],
+    codex: ['codex', 'runs as a native chat over its app-server.'],
+    aider: ['aider', 'has no chat protocol, so Husk opens it in a real terminal.'],
+    gemini: ['gemini', 'runs as a native chat over the Agent Client Protocol.'],
+    kiro: ['kiro', 'runs as a native chat over the Agent Client Protocol.'],
+  };
+  const DIFF = [
+    [' ', 'async function retry(fn, attempt = 0) {'],
+    ['d', '-  const delay = 1000;'],
+    ['a', '+  const delay = Math.min(30000, 1000 * 2 ** attempt);'],
+    ['d', '-  await sleep(delay);'],
+    ['a', '+  await sleep(delay + jitter());'],
+  ];
+  const DEFAULT_ASK = 'add backoff to the retry';
+  let agent = 'claude', run = 0;
+
+  const ICONS = [
+    '<path d="M4 5h16v11H9l-5 4z"/>',
+    '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>',
+    '<rect x="3" y="4" width="7" height="6" rx="1"/><rect x="14" y="14" width="7" height="6" rx="1"/><path d="M10 7h4v10"/>',
+    '<path d="M12 3v18M3 12h18M6 6l12 12M18 6L6 18"/>',
+    '<circle cx="12" cy="12" r="8"/><path d="M12 4v16"/>',
+    '<path d="M3 6h6l2 2h10v11H3z"/>',
+    '<path d="M6 3h8l4 4v14H6z"/><path d="M9 12h6M9 16h6"/>',
+    '<circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="8" r="2"/><path d="M6 8v8M18 10c0 4-6 3-10 6"/>',
+    '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>',
+    '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>',
+  ];
+  const TAIL = [
+    '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 10l3 2-3 2M12 15h4"/>',
+    '<circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8" stroke-dasharray="3 3"/>',
+  ];
+  const icon = (d, cls) => '<span class="' + (cls || '') + '"><svg viewBox="0 0 24 24">' + d + '</svg></span>';
+  document.getElementById('hw-rail').innerHTML =
+    ICONS.map((d, i) => icon(d, i === 0 ? 'on' : '')).join('') + icon(TAIL[0], 'gap') + icon(TAIL[1]);
+
+  const diffHtml = () => DIFF.map(([k, t]) => {
+    const s = document.createElement('span');
+    if (k !== ' ') s.className = k;
+    s.textContent = t;
+    return s.outerHTML;
+  }).join('');
+  document.getElementById('hw-canvas-diff').innerHTML = diffHtml();
+
+  function el(cls, html) {
+    const d = document.createElement('div');
+    d.className = cls;
+    if (html) d.innerHTML = html;
+    thread.appendChild(d);
+    thread.scrollTop = thread.scrollHeight;
+    return d;
+  }
+  function setCanvas(open) {
+    hw.classList.toggle('canvas', open);
+    document.getElementById('hw-changes').setAttribute('aria-pressed', String(open));
+  }
+
+  async function play(ask) {
+    const my = ++run;
+    const wait = (ms) => new Promise((ok, no) => {
+      if (still) return ok();
+      setTimeout(() => (my === run ? ok() : no()), ms);
+    });
+    async function stream(node, text) {
+      if (still) { node.textContent = text; return; }
+      node.classList.add('streaming');
+      for (let i = 0; i < text.length; i += 2) {
+        node.textContent = text.slice(0, i + 2);
+        thread.scrollTop = thread.scrollHeight;
+        await wait(18);
+      }
+      node.classList.remove('streaming');
+    }
+
+    thread.textContent = '';
+    term.textContent = '';
+    setCanvas(false);
+    hw.classList.remove('done');
+    hw.classList.toggle('term', agent === 'aider');
+    document.querySelectorAll('[data-agent-name]').forEach((n) => { n.textContent = agent; });
+    input.placeholder = 'Message ' + agent + ' (Enter to send)';
+    how.innerHTML = '<b>' + HOW[agent][0] + '</b> ' + HOW[agent][1];
+    document.getElementById('hw-s-title').textContent = ask;
+    document.getElementById('hw-tab').textContent = ask;
+    document.getElementById('hw-s-state').textContent = 'Working';
+
+    try {
+      if (agent === 'aider') {
+        const line = (cls, text) => {
+          const s = document.createElement('span');
+          s.className = cls; s.textContent = text + '\n';
+          term.appendChild(s);
+        };
+        line('p', '$ aider retry.js'); await wait(500);
+        line('', '> ' + ask); await wait(900);
+        line('', '\nretry.js');
+        for (const [k, t] of DIFF.slice(1)) { line(k === 'a' ? 'ta' : 'td', t); await wait(160); }
+        await wait(400);
+        line('', '\nApplied edit to retry.js'); await wait(300);
+        line('p', '> ');
+      } else {
+        el('m-user').textContent = ask;
+        await wait(650);
+        await stream(el('m-ai'), 'I will make the delay grow with each attempt and cap it.');
+        await wait(350);
+        const perm = el('m-perm', '<b>Edit file</b><code>retry.js</code><span class="q">Allow this edit?</span><span class="acts"><span>Deny</span><span class="allow">Allow</span></span>');
+        await wait(950);
+        perm.querySelector('.allow').classList.add('press');
+        await wait(320);
+        perm.querySelector('.acts').outerHTML = '<span class="ok">Allowed</span>';
+        await wait(300);
+        const tool = el('m-tool', '<button aria-expanded="false"><i class="spin"></i><span>Editing</span><code>retry.js</code></button><div class="diff"><div><pre>' + diffHtml() + '</pre></div></div>');
+        const head = tool.querySelector('button');
+        head.addEventListener('click', () => {
+          head.setAttribute('aria-expanded', String(tool.classList.toggle('open')));
+        });
+        await wait(900);
+        head.innerHTML = '<span class="tick">✓</span><span>Edited</span><code>retry.js</code><span class="add">+2</span><span class="del">-2</span><svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>';
+        tool.classList.add('open');
+        head.setAttribute('aria-expanded', 'true');
+        await wait(450);
+        thread.scrollTop = thread.scrollHeight;
+        await wait(350);
+        await stream(el('m-ai'), 'The retry now backs off exponentially and caps at thirty seconds.');
+        el('m-meta').textContent = 'Done in 4s';
+        await wait(250);
+        const rc = el('m-rcpt', '<div><b>1 file changed during this turn</b><span class="add">+2</span><span class="del">-2</span><button class="view">View</button></div><div><span class="mod">M</span><span>retry.js</span><span class="add r">+2</span><span class="del">-2</span></div>');
+        rc.querySelector('.view').addEventListener('click', () => setCanvas(!hw.classList.contains('canvas')));
+        thread.scrollTop = thread.scrollHeight;
+      }
+      hw.classList.add('done');
+      document.getElementById('hw-s-state').textContent = 'Done';
+    } catch (e) { /* a newer run took over */ }
+  }
+
+  document.querySelectorAll('.pick button').forEach((b) => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('.pick button').forEach((x) => x.setAttribute('aria-checked', String(x === b)));
+      agent = b.dataset.agent;
+      play(DEFAULT_ASK);
+    });
+  });
+  document.getElementById('replay').addEventListener('click', () => play(DEFAULT_ASK));
+  document.getElementById('hw-changes').addEventListener('click', () => setCanvas(!hw.classList.contains('canvas')));
+  function send() {
+    const text = input.value.trim();
+    input.value = '';
+    play(text || DEFAULT_ASK);
+  }
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+  document.getElementById('hw-send').addEventListener('click', send);
+
+  // The scene starts when the window is on screen.
+  if (still || !('IntersectionObserver' in window)) { play(DEFAULT_ASK); } else {
+    const seen = new IntersectionObserver((es) => {
+      if (es.some((e) => e.isIntersecting)) { seen.disconnect(); play(DEFAULT_ASK); }
+    }, { threshold: .3 });
+    seen.observe(hw);
+  }
+})();
+
+
+/* Scroll: tones, word fill, scrubbed parts, reveals */
+(function () {
+  var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var clamp = function (n, a, b) { return Math.max(a, Math.min(b, n)); };
+  var root = document.documentElement, hero = document.querySelector('.hero');
+  var toned = [].slice.call(document.querySelectorAll('[data-tone]'));
+  var scrubs = [].slice.call(document.querySelectorAll('[data-scrub]'));
+  var worded = [].slice.call(document.querySelectorAll('[data-words]')).map(function (el) {
+    el.setAttribute('aria-label', el.textContent);
+    el.innerHTML = el.textContent.split(' ').map(function (w) { return '<span class="w" aria-hidden="true">' + w + '</span>'; }).join(' ');
+    return { el: el, words: [].slice.call(el.querySelectorAll('.w')) };
+  });
+  if (reduce) { worded.forEach(function (o) { o.words.forEach(function (w) { w.classList.add('lit'); }); }); }
+  else {
+    root.classList.add('motion');
+    document.querySelectorAll('.more-grid > div, .facts > div').forEach(function (el) {
+      el.classList.add('rise');
+      el.style.setProperty('--i', [].indexOf.call(el.parentElement.children, el) % 4);
+    });
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+    }, { threshold: .15 });
+    document.querySelectorAll('.rise').forEach(function (el) { io.observe(el); });
+    setTimeout(function () { hero.classList.add('live'); }, 1500);
+  }
+  function frame() {
+    var vh = innerHeight, mid = vh / 2;
+    root.style.setProperty('--sp', (scrollY / Math.max(1, root.scrollHeight - vh)).toFixed(4));
+    for (var i = 0; i < toned.length; i++) {
+      var r = toned[i].getBoundingClientRect();
+      if (r.top <= mid && r.bottom > mid) { document.body.style.setProperty('--field', toned[i].dataset.tone); break; }
+    }
+    if (reduce) return;
+    hero.style.setProperty('--h', clamp(scrollY / (vh * .8), 0, 1).toFixed(4));
+    scrubs.forEach(function (el) {
+      var b = el.getBoundingClientRect();
+      el.style.setProperty('--p', clamp((vh - b.top) / (vh + b.height), 0, 1).toFixed(4));
+      el.style.setProperty('--q', clamp((vh - b.top) / (b.height * .9), 0, 1).toFixed(4));
+    });
+    worded.forEach(function (o) {
+      var b = o.el.getBoundingClientRect();
+      var n = Math.round(clamp((vh * .88 - b.top) / (vh * .42), 0, 1) * o.words.length);
+      o.words.forEach(function (w, k) { w.classList.toggle('lit', k < n); });
+    });
+  }
+  var queued = 0;
+  function on() { if (!queued) queued = requestAnimationFrame(function () { queued = 0; frame(); }); }
+  addEventListener('scroll', on, { passive: true });
+  addEventListener('resize', on);
+  frame();
+})();
+
+/* Glass: scroll turns the rim clockwise; the page in front grows, the one leaving shrinks */
+(function () {
+  var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var clamp = function (n, a, b) { return Math.max(a, Math.min(b, n)); };
+  var mix = function (a, b, t) { return a + (b - a) * t; };
+  var sc = document.getElementById('wheel-scroll'), box = document.getElementById('wheel');
+  var cards = [].slice.call(document.querySelectorAll('.wheel-card'));
+  var name = document.getElementById('wheel-name'), desc = document.getElementById('wheel-desc');
+  var n = cards.length, STEP = 2 * Math.PI / n, cur = 0, rot = 0;
+  function turn() {
+    var W = box.clientWidth, H = box.clientHeight;
+    var s0 = W < 700 ? .34 : .24, ry = H * .07, peek = Math.max(84, H * .115);
+    var cw = Math.min(1400, W * .94, (H - peek - 34) * 1760 / 1040), ch = cw * 1040 / 1760 + 34;
+    var rx = Math.min(W / 2 - s0 * cw * (W < 700 ? .3 : .5), cw * .86);
+    var total = peek + ch, top = (H - total) / 2;
+    var ringY = top + s0 * .7 * ch / 2 + ry + 22, frontY = top + total - ch / 2;
+    box.style.setProperty('--cw', cw.toFixed(1) + 'px');
+    cards.forEach(function (c, k) {
+      var th = (k - rot) * STEP, cos = Math.cos(th), sin = Math.sin(th);
+      var off = Math.abs(k - rot); off = Math.min(off, n - off);
+      var g = clamp(1 - off, 0, 1); g = g * g * (3 - 2 * g);
+      var depth = .7 + .3 * (1 + cos) / 2;
+      var x = mix(rx * sin, 0, g), y = mix(ringY + ry * cos, frontY, g), s = mix(s0 * depth, 1, g);
+      var tilt = -sin * 64 * (1 - g);
+      c.style.transform = 'translate(-50%, -50%) translate(' + x.toFixed(1) + 'px,' + y.toFixed(1) + 'px) perspective(1400px) rotateY(' + tilt.toFixed(1) + 'deg) scale(' + s.toFixed(4) + ')';
+      c.style.zIndex = Math.round(100 + cos * 50 + g * 100);
+      c.style.setProperty('--d', ((1 - g) * (.08 + .5 * (1 - cos) / 2)).toFixed(3));
+      c.style.setProperty('--inv', (1 / s).toFixed(3));
+      c.style.setProperty('--cap', Math.abs(sin) > .85 ? 0 : (1 - g).toFixed(3));
+      c.classList.toggle('front', g > .6);
+      c.classList.toggle('rear', cos < 0);
+    });
+    var i = ((Math.round(rot) % n) + n) % n;
+    if (i === cur) return;
+    cur = i;
+    name.textContent = cards[i].dataset.name;
+    desc.textContent = cards[i].dataset.desc;
+  }
+  function frame() {
+    var r = sc.getBoundingClientRect(), total = r.height - innerHeight;
+    var at = clamp(-r.top / total, 0, .9999) * n, i = Math.floor(at), f = at - i;
+    var t = clamp((f - .45) / .55, 0, 1);
+    rot = reduce || i === n - 1 ? i : i + t * t * (3 - 2 * t);
+    turn();
+  }
+  cards.forEach(function (c, i) {
+    c.addEventListener('click', function () {
+      if (c.classList.contains('front')) return;
+      var r = sc.getBoundingClientRect(), total = r.height - innerHeight;
+      scrollTo({ top: scrollY + r.top + (i + .2) / n * total, behavior: reduce ? 'auto' : 'smooth' });
+    });
+  });
+  var queued = 0;
+  function on() { if (!queued) queued = requestAnimationFrame(function () { queued = 0; frame(); }); }
+  addEventListener('scroll', on, { passive: true });
+  addEventListener('resize', on);
+  frame();
+})();
 </script>
 </body>
 </html>

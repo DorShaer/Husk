@@ -28,8 +28,7 @@ src/main.js          electron main process (IPC, PTY, agent control)
 src/preload.js       contextBridge surface
 src/lib/             pure helpers (shell-quote, path-confine, pty-spawn, workflow-graph, mcp/)
 src/renderer/        UI (single-page Electron view + xterm.js)
-libs/lifeos/         bundled LifeOS framework (third-party)
-installer/           OS install assets, default prompts, verify.sh / verify.ps1
+installer/           OS install assets and default prompts
 test/unit/           node:test unit tests against src/lib/
 test/e2e/            Playwright smoke (real Electron boot)
 docs/                you are here
@@ -69,7 +68,7 @@ perf(renderer): narrow `transition: all` to specific properties
 
 Allowed types: `feat`, `fix`, `chore`, `docs`, `style`, `refactor`, `perf`, `test`, `build`.
 
-Common scopes: `mcp`, `rail`, `chat`, `skills`, `sessions`, `voice`, `prefs`, `installer`, `readme`, `agent-pill`, `topbar`, `status-panel`, `pai`, `ci`, `release`, `pty`, `bootstrap`, `ui`, `palette`, `onboarding`, `prompts`, `updates`, `workflows`, `profiles`, `projects`.
+Common scopes: `mcp`, `rail`, `chat`, `skills`, `sessions`, `voice`, `prefs`, `installer`, `readme`, `agent-pill`, `topbar`, `status-panel`, `ci`, `release`, `pty`, `bootstrap`, `ui`, `palette`, `onboarding`, `prompts`, `updates`, `workflows`, `profiles`, `projects`.
 
 Subject rules: lowercase first word after the colon, no period at the end, imperative mood, 72 chars or fewer. Body is optional and explains the *why* (the diff already shows the *what*). No em dashes anywhere.
 

@@ -51,7 +51,7 @@ test('trusting the folder keeps the chat it was asked in', async () => {
     await expect(win.locator('#trust-banner')).toBeVisible();
     await win.click('#btn-trust-folder');
     await expect(win.locator('#trust-banner')).toBeHidden();
-    await expect(pane.locator('.chat-meta', { hasText: 'Resumed session' })).toBeVisible();
+    await expect(pane.locator('.chat-meta', { hasText: 'Agent restarted in the same conversation' })).toBeVisible();
 
     // The same tab, the same session, the thread still there.
     const after = await win.evaluate(() => { const t = TABS.get(activeTabId); return { id: t.id, session: t.agentId, tabs: TABS.size }; }); // eslint-disable-line no-undef

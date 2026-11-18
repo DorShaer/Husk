@@ -65,13 +65,14 @@ function isOlder(session, now) {
 }
 
 function normPath(p) {
-  return String(p || '').replace(/\/+$/, '');
+  return String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').replace(/^([A-Z]):/, (_, drive) => `${drive.toLowerCase()}:`) || (String(p || '').startsWith('/') ? '/' : '');
 }
 
-// The directory the session actually ran in. The recorded cwd is authoritative;
-// the project path is a decode of the directory name and only a fallback.
+// The directory the session actually ran in. The main process resolves links
+// into realCwd; without it the recorded cwd is authoritative, and the project
+// path is a decode of the directory name and only a fallback.
 function sessionCwd(s) {
-  return normPath((s && s.originalCwd) || (s && s.projectPath));
+  return normPath((s && s.realCwd) || (s && s.originalCwd) || (s && s.projectPath));
 }
 
 function basename(p) {
@@ -79,9 +80,12 @@ function basename(p) {
   return segs.length ? segs[segs.length - 1] : '';
 }
 
+// A session belongs to a project when it ran in the project folder or in a
+// folder inside it.
 function inCurrentProject(s, currentCwd) {
   const cur = normPath(currentCwd);
-  return cur !== '' && sessionCwd(s) === cur;
+  const cwd = sessionCwd(s);
+  return cur !== '' && (cwd === cur || cwd.startsWith(cur.endsWith('/') ? cur : `${cur}/`));
 }
 
 const norm = (x) => String(x == null ? '' : x).toLowerCase().replace(/\s+/g, ' ').trim();
@@ -153,7 +157,7 @@ function signal(s, ctx) {
   const st = (a) => agentState(a.state, { started: !!a.hasTranscript });
 
   const blocked = kids.filter((a) => a.running && st(a) === 'blocked');
-  const running = kids.filter((a) => a.running && st(a) !== 'blocked');
+  const running = kids.filter((a) => a.running && st(a) === 'running');
   const failed = kids.filter((a) => st(a) === 'failed');
 
   if (self && self.running && st(self) === 'blocked') {
@@ -162,7 +166,7 @@ function signal(s, ctx) {
   if (blocked.length) {
     return { kind: 'blocked', tok: `${blocked.length} needs you`, cont: blocked[0].needs || blocked[0].detail || '' };
   }
-  if (self && self.running) {
+  if (self && self.running && st(self) === 'running') {
     return { kind: 'running', tok: 'working', cont: self.detail || self.intent || self.status || '' };
   }
   if (running.length) {
@@ -209,7 +213,6 @@ function filterSessions(list, ctx) {
   if (chips.project && c.currentCwd) out = out.filter((s) => inCurrentProject(s, c.currentCwd));
   if (chips.live) out = out.filter((s) => { const k = signalKind(s, c); return k === 'running' || k === 'blocked'; });
   if (chips.needs) out = out.filter((s) => signalKind(s, c) === 'blocked');
-  if (chips.work) out = out.filter((s) => !!(s.prdSlug || s.prdPath));
 
   const present = new Set(out.map((s) => s.id));
   out = out.filter((s) => {
@@ -238,7 +241,7 @@ function filterSessions(list, ctx) {
       hits.set(s.id, m.positions);
       return;
     }
-    const blob = [s.id, s.projectPath, s.prdPhase, s.prdSlug, s.firstMessage].join(' ').toLowerCase();
+    const blob = [s.id, s.projectPath, s.firstMessage].join(' ').toLowerCase();
     if (blob.includes(ql)) scored.push({ s, score: 0, i });
   });
   scored.sort((a, b) => b.score - a.score || b.s.mtime - a.s.mtime || a.i - b.i);
@@ -291,7 +294,10 @@ function newestOf(entries) {
 
 function byProject(entries, ctx) {
   const buckets = new Map();
+  const gone = [];
   for (const e of entries) {
+    // A folder that was deleted names no project it can be grouped with.
+    if (e.s && e.s.cwdMissing) { gone.push(e); continue; }
     const cwd = sessionCwd(e.s);
     if (!buckets.has(cwd)) buckets.set(cwd, []);
     buckets.get(cwd).push(e);
@@ -316,6 +322,12 @@ function byProject(entries, ctx) {
       || a.name.localeCompare(b.name)
       || a.cwd.localeCompare(b.cwd);
   });
+  if (gone.length) {
+    groups.push({
+      id: 'p:missing', kind: 'project', cwd: '', name: 'Folder no longer exists',
+      note: '', current: false, missing: true, newest: newestOf(gone), rows: gone,
+    });
+  }
   return groups;
 }
 
@@ -563,6 +575,7 @@ module.exports = {
   inCurrentProject,
   titleOf,
   disambiguateTitles,
+  agentLabel,
   signal,
   signalKind,
   scent,

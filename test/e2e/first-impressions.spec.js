@@ -49,20 +49,18 @@ test('a first install: Install shows its command before running it, no changelog
     // A new install opens light, with the indigo accent.
     await expect(win.locator('body')).toHaveAttribute('data-theme', 'light');
     await expect(win.locator('body')).toHaveAttribute('data-accent', 'indigo');
-    await win.click('#ob-start');
+    await win.click('#ob-next');
     // An agent that is not installed offers Install. One click only says what
     // would run; nothing has been run.
-    const install = win.locator('#ob-agents .ob-cli-install').first();
-    await expect(install).toBeVisible();
+    const first = win.locator('#ob-clis .cine-cli[data-state="missing"]', { has: win.locator('.cine-cli-btn', { hasText: /^Install$/ }) }).first();
+    await expect(first).toBeVisible();
+    const install = win.locator(`#ob-clis .cine-cli[data-cmd="${await first.getAttribute('data-cmd')}"] .cine-cli-btn`);
     await install.click();
     await expect(win.locator('#ob-log')).toContainText('npm install -g');
     await expect(install).toHaveText('Run it');
     expect(fs.existsSync(path.join(home.homeDir, 'npm-calls.log'))).toBe(false);
 
-    // Through the rest of setup with the agent that is already here.
-    await win.locator('#ob-agents .ob-cli[data-id="claude"]').click();
-    await win.click('#ob-cli-next');
-    await win.click('#ob-finish');
+    await win.click('#ob-skip');
     await expect(win.locator('#onboarding')).toBeHidden();
 
     // No What's new for someone who has never seen what was old, and the
@@ -79,6 +77,8 @@ test('a first install: Install shows its command before running it, no changelog
     // The rail opens on the everyday pages; Tools is one heading until asked for.
     expect(config(home.homeDir).railToolsFolded).toBe(true);
     await expect(win.locator('#rail-tools')).toHaveClass(/is-folded/);
+    // The chat page's sessions column keeps the rail as an icon strip, which ignores the fold.
+    await win.evaluate(() => setPage('projects')); // eslint-disable-line no-undef
     await expect(win.locator('.rail-item[data-page="skills"]')).toBeHidden();
     await expect(win.locator('.rail-item[data-page="chat"]')).toBeVisible();
     await win.click('#rail-tools-fold');
@@ -146,9 +146,9 @@ test('an existing install keeps its rail, and the chat page explains itself', as
     await win.locator('#pref-ui-size').selectOption('0');
     await expect(win.locator('#toast-stack')).toContainText('Interface size: default');
     await expect.poll(() => config(home.homeDir).uiZoom).toBe(null);
-    // The save button says what it restarts.
-    await win.click('.prefs-nav-item[data-prefs-section="agent"]');
-    await expect(win.locator('#pref-save')).toHaveText('Save and restart agent');
+    // The save button describes saving defaults.
+    await win.click('.prefs-nav-item[data-prefs-section="connections"]');
+    await expect(win.locator('#pref-save')).toHaveText('Save connection');
 
     // Workflows with no run yet: calls to action, no row of zeros and blanks.
     await win.evaluate(() => setPage('workflows')); // eslint-disable-line no-undef

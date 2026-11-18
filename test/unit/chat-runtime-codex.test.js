@@ -103,8 +103,44 @@ test('an approval request becomes a card and the answer goes back on its id', as
 
 test('a server request Husk has no card for is refused, not left hanging', async () => {
   const { c } = await started();
-  c.feed({ id: 9, method: 'item/tool/requestUserInput', params: {} });
+  c.feed({ id: 9, method: 'unsupported/request', params: {} });
   assert.equal(c.stdinLines.find((l) => l.id === 9).error.code, -32601);
+});
+
+test('Codex questions remain interactive under Allow all and return answers by question id', async () => {
+  const { rt, c, events } = await started();
+  assert.equal(sent(c, 'initialize')[0].params.capabilities.experimentalApi, true);
+  await rt.allowAll({ tabId: 't1', on: true });
+  c.feed({ id: 90, method: 'item/tool/requestUserInput', params: {
+    isBlocking: false, itemId: 'ask-1', threadId: 'T1', turnId: 'u1',
+    questions: [{ id: 'panel', header: 'Panel', question: 'Which panel?', options: [{ label: 'Both', description: '' }] }],
+  } });
+  await tick();
+  const card = events.find((e) => e.type === 'permission');
+  assert.equal(card.title, 'AskUserQuestion');
+  assert.equal(card.nonBlocking, true);
+  assert.equal(c.stdinLines.some((l) => l.id === 90), false);
+  assert.equal(rt.list()[0].events.some((e) => e.type === 'permission' && e.requestId === card.requestId), true);
+  assert.equal((await rt.permission({ tabId: 't1', requestId: card.requestId, optionId: 'allow', answers: { panel: ['Both'], unexpected: ['ignored'] } })).ok, true);
+  await tick();
+  assert.deepEqual(c.stdinLines.find((l) => l.id === 90).result, { answers: { panel: { answers: ['Both'] } } });
+});
+
+test('Codex question dismissal returns an empty answer and server resolution disables a stale card', async () => {
+  const { rt, c, events } = await started();
+  const ask = (id) => c.feed({ id, method: 'item/tool/requestUserInput', params: { itemId: 'q' + id, questions: [{ id: 'free', header: 'Note', question: 'Anything else?', options: null }] } });
+  ask(91);
+  let card = events.filter((e) => e.type === 'permission').at(-1);
+  await rt.permission({ tabId: 't1', requestId: card.requestId, optionId: 'deny' });
+  await tick();
+  assert.deepEqual(c.stdinLines.find((l) => l.id === 91).result, { answers: {} });
+  ask(92);
+  card = events.filter((e) => e.type === 'permission').at(-1);
+  c.feed({ method: 'serverRequest/resolved', params: { threadId: 'T1', requestId: 92 } });
+  assert.equal(events.at(-1).type, 'permission_resolved');
+  await tick();
+  assert.equal(c.stdinLines.some((l) => l.id === 92), false);
+  assert.equal((await rt.permission({ tabId: 't1', requestId: card.requestId, optionId: 'allow', answers: { free: ['late'] } })).ok, false);
 });
 
 test('cancel interrupts the live turn and is silent without one', async () => {
@@ -154,6 +190,14 @@ test('recalled context rides ahead of the prompt on the wire and stays out of th
   assert.equal(sent(c, 'turn/start')[0].params.input[0].text, '[notes]\n\nhello');
   const logged = rt.list()[0].events.find((e) => e.type === 'user');
   assert.equal(logged.text, 'hello');
+});
+
+test('a rule block and a notes block both ride ahead of the prompt', async () => {
+  const { rt, c } = await started();
+  const context = '[Husk Brain rules: x]\n- be brief\n[End of Husk Brain rules]\n\n[Husk Brain: y]\n- a: b\n[End of Husk Brain notes]';
+  await rt.prompt({ tabId: 't1', text: 'hello', context });
+  assert.equal(sent(c, 'turn/start')[0].params.input[0].text, context + '\n\nhello');
+  assert.equal(rt.list()[0].events.find((e) => e.type === 'user').text, 'hello');
 });
 
 test('Allow all accepts this codex approval and the ones after it, one accept each', async () => {

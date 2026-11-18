@@ -221,7 +221,7 @@ test('friendlyScanError falls back to a generic message without leaking raw erro
 
 test('repoAgents:install resolves real paths and confines picks to the agents dir', () => {
   const src = fs.readFileSync(path.join(__dirname, '../../src/main.js'), 'utf8');
-  const block = src.slice(src.indexOf("ipcMain.handle('repoAgents:install'"), src.indexOf('// ─── MCP install-from-repo flow'));
+  const block = src.slice(src.indexOf("registerInstallHandler('repoAgents:install'"), src.indexOf('// ─── MCP install-from-repo flow'));
   assert.ok(block.includes('realpathSync'), 'install must resolve picks to their real path');
   assert.ok(block.includes('realAgentsDir'), 'install must compare against the real agents dir');
   assert.ok(block.includes("startsWith(realAgentsDir + path.sep)"), 'install must confine real paths to the agents dir');

@@ -87,7 +87,7 @@ test('an empty or absent path produces nothing rather than a bare space', () => 
 // that name and every later surface reads it back.
 test('the drop handler refuses a control character before the file is copied', () => {
   const MAIN = fs.readFileSync(path.resolve(__dirname, '..', '..', 'src', 'main.js'), 'utf8');
-  const handler = MAIN.match(/ipcMain\.handle\('fs:dropFile'[\s\S]*?\n\}\);/);
+  const handler = MAIN.match(/(?:ipcMain\.handle|registerInstallHandler)\('fs:dropFile'[\s\S]*?\n\}\);/);
   assert.ok(handler, 'the fs:dropFile handler was not found');
 
   const guardAt = handler[0].search(/x00-\\?x1F/);
