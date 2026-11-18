@@ -956,7 +956,7 @@
   <div class="wrap">
     <div class="bring-head">
       <h2 data-words>The agent, unchanged. The surface, finally usable.</h2>
-      <p class="lead">CLI agents are powerful and free, but they live in a black-on-black terminal that newcomers find intimidating and easy to lose work in. Husk keeps the agent exactly as it is and adds the surface that makes it approachable.</p>
+      <p class="lead">CLI agents are powerful and free, but they live in a black-on-black terminal that newcomers find intimidating and easy to lose work in. Husk keeps the agent exactly as it is and adds native chat, turn-by-turn change review, task routing, and help that works offline.</p>
     </div>
     <div class="agents" aria-label="Agents Husk runs">
       <div><b>claude</b><span>Native chat</span></div>
@@ -975,9 +975,10 @@
     <div class="wheel-pin">
       <h2>One window for the whole job</h2>
       <div class="wheel" id="wheel">
-        <figure class="win wheel-card" data-name="Chat" data-desc="Streamed replies, tool calls that open into their diff, permission cards and a model picker, with every past session one click away beside the thread."><div class="bar"><i></i><i></i><i></i><span>Chat</span></div><img src="docs/images/husk-chat.png" alt="A native chat with the agent" /><figcaption>Chat</figcaption></figure>
+        <figure class="win wheel-card" data-name="Chat" data-desc="Streamed replies, tool calls and permission cards. Pick a model from the selected CLI, carry a discussion to another CLI, and compact or continue in the same CLI when context runs low."><div class="bar"><i></i><i></i><i></i><span>Chat</span></div><img src="docs/images/husk-chat.png" alt="A native chat with the agent beside its pull request and checks" /><figcaption>Chat</figcaption></figure>
+        <figure class="win wheel-card" data-name="Changes" data-desc="Review files added, edited, or deleted during a turn, with readable diffs even without Git. Preview changed images or initialize Git when you want repository history."><div class="bar"><i></i><i></i><i></i><span>Changes</span></div><img src="docs/images/husk-changes.png" alt="A chat with turn changes and a selected file diff" loading="lazy" /><figcaption>Changes</figcaption></figure>
         <figure class="win wheel-card" data-name="Brain" data-desc="Save notes, teach Husk from text files, or let it capture a short record after a chat. Before your next message, Husk brings back only the memories that fit."><div class="bar"><i></i><i></i><i></i><span>Brain</span></div><img src="docs/images/husk-brain.png" alt="Brain page with saved memories and their connections" /><figcaption>Brain</figcaption></figure>
-        <figure class="win wheel-card" data-name="Agents" data-desc="Pick the agent personas active for your next session."><div class="bar"><i></i><i></i><i></i><span>Agents</span></div><img src="docs/images/husk-agents.png" alt="Agents page" loading="lazy" /><figcaption>Agents</figcaption></figure>
+        <figure class="win wheel-card" data-name="Agents" data-desc="Follow spawned agents on a live map, inspect recent tool activity, and respond when one needs you."><div class="bar"><i></i><i></i><i></i><span>Agents</span></div><img src="docs/images/husk-agent-map.png" alt="A live map of background agents and their activity" loading="lazy" /><figcaption>Agents</figcaption></figure>
         <figure class="win wheel-card" data-name="Workflows" data-desc="Build multi-step automations with conditional branching in a visual editor."><div class="bar"><i></i><i></i><i></i><span>Workflows</span></div><img src="docs/images/husk-workflows.png" alt="Workflows graph editor" loading="lazy" /><figcaption>Workflows</figcaption></figure>
         <figure class="win wheel-card" data-name="Workflow runs" data-desc="Run a workflow and follow each step as it executes. Click a step to watch its terminal."><div class="bar"><i></i><i></i><i></i><span>Workflow runs</span></div><img src="docs/images/husk-workflow-run.png" alt="A workflow run in progress" loading="lazy" /><figcaption>Workflow runs</figcaption></figure>
         <figure class="win wheel-card" data-name="Projects" data-desc="Pin folders as Projects so the agent always starts in the right working directory."><div class="bar"><i></i><i></i><i></i><span>Projects</span></div><img src="docs/images/husk-projects.png" alt="Projects" loading="lazy" /><figcaption>Projects</figcaption></figure>
@@ -996,7 +997,7 @@
     <h2 data-words>And the rest of the rail</h2>
     <div class="more-grid">
       <div><b>Terminal</b><p>A real shell in your project, in tabs.</p></div>
-      <div><b>Autopilot</b><p>Hand the agent a goal and walk away. Solo runs one agent; Team splits the goal across parallel runs, each in its own git worktree.</p></div>
+      <div><b>Autopilot</b><p>Hand an agent a goal or split it across a team. Choose a CLI and model for each job role, or let Auto by Husk route the work. Review a saved run and its changes before applying or discarding them.</p></div>
       <div><b>Split chat</b><p>Run two chats side by side.</p></div>
       <div><b>Source</b><p>Read the working-tree diff, stage a file or an individual change, and commit.</p></div>
       <div><b>Files</b><p>Drag-drop file context, with a tree view of your working directory.</p></div>
@@ -1004,6 +1005,7 @@
       <div><b>Schedule</b><p>Run a workflow or an autopilot goal on a recurrence.</p></div>
       <div><b>Artifacts</b><p>A ledger of every workflow and autopilot run with its outcome, time, tokens and cost.</p></div>
       <div><b>Sessions</b><p>Resume any prior agent session. Group the roster into folders you name.</p></div>
+      <div><b>Preferences and Help</b><p>The welcome tour helps you choose installed CLIs and an appearance. Choose the Glass theme and chat defaults in Preferences; bundled setup and troubleshooting help work offline. Launch checks run in the background to keep the window responsive.</p></div>
     </div>
   </div>
 </section>
