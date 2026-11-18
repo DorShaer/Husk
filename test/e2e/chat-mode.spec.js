@@ -1179,6 +1179,16 @@ test('top bar uses compact activity labels and keeps the context counter on one 
   try {
     await chatReady(win);
     await setWindowContentSize(app, 1920, 900);
+    // Isolate presentation checks from the real chat's asynchronous transport
+    // updates. Its callbacks close over the original tab, so a synthetic active
+    // tab lets this test exercise each status without racing those updates.
+    await win.evaluate(() => {
+      const source = TABS.get(activeTabId);
+      const tab = { ...source, id: 'topbar-presentation-fixture' };
+      TABS.clear();
+      TABS.set(tab.id, tab);
+      activeTabId = tab.id;
+    });
     const command = 'python3 - <<PY\n' + 'a very long shell command '.repeat(60);
     for (const [kind, label] of [['execute', 'Running'], ['edit', 'Editing'], ['read', 'Reading'], ['search', 'Searching'], ['fetch', 'Fetching'], ['other', 'Using tools'], [null, 'Thinking'], ['text', 'Writing']]) {
       await win.evaluate(({ kind, command }) => {

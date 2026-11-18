@@ -35,6 +35,11 @@ CLI agents are powerful and free. But they live in a black-on-black terminal tha
 
 <br /><br />
 
+<img src="docs/images/husk-changes.png" alt="A chat showing files changed in a turn beside a line diff, without Git initialized" width="900" />
+<br /><sub><i>Review files added, edited, or deleted during a turn, with diffs even in a folder without Git. Initialize a local repository from Changes when you want history.</i></sub>
+
+<br /><br />
+
 <img src="docs/images/husk-brain.png" alt="Brain page with saved memories and the connections between them" width="900" />
 <br /><sub><i>Save notes, teach Husk from text files, or let it keep a short record after a chat. Before your next message it brings back only the memories that fit, and the Synapses view shows how they connect.</i></sub>
 
@@ -43,6 +48,11 @@ CLI agents are powerful and free. But they live in a black-on-black terminal tha
 <img src="docs/images/husk-agents.png" alt="Agents page" width="450" />
 <img src="docs/images/husk-workflows.png" alt="Workflows hub" width="450" />
 <br /><sub><i>Curate the agent personas active for the next session. Start a multi-step automation from a ready-made topology, or build your own in the graph editor.</i></sub>
+
+<br /><br />
+
+<img src="docs/images/husk-agent-map.png" alt="A live map of background agents, their states, recent tool calls, and a waiting request" width="900" />
+<br /><sub><i>Follow the agents a chat starts, inspect their recent activity, and answer the one that needs you without leaving the map.</i></sub>
 
 <br /><br />
 
@@ -203,14 +213,14 @@ a cleanup path such as `~/.local/share/husk`, the uninstaller skips that path.
 
 ### Pages
 
-- **Chat**: the conversation as a native thread, with a Sessions column beside it (or the CLI's own terminal when Preferences says so, or the CLI has no chat protocol). Open the Changes canvas to inspect the working-tree diff, the branch's pull request, and its checks beside the conversation. Drag-drop files and images; the status panel folds out on the right. Drag the edges of the navigation sidebar, Sessions column, and status panel to resize them; widths are remembered, and double-click resets them. Split the view to run two chats side by side (`Ctrl+\`). Chat actions copies the chat ID or resume command. Move discussion can also continue in a specific destination chat ID. The New menu lists installed CLIs; the composer's CLI and folder chips switch the conversation context, with an option to carry its history into the new session.
+- **Chat**: the conversation as a native thread, with a Sessions column beside it (or the CLI's own terminal when Preferences says so, or the CLI has no chat protocol). Open the Changes canvas to inspect the working-tree diff, the branch's pull request, and its checks beside the conversation. Drag-drop files and images; the status panel folds out on the right. Drag the edges of the navigation sidebar, Sessions column, and status panel to resize them; widths are remembered, and double-click resets them. Split the view to run two chats side by side (`Ctrl+\`). Chat actions copies the chat ID or resume command. Move discussion can also continue in a specific destination chat ID. The New menu lists installed CLIs; the composer's CLI and folder chips switch the conversation context, with an option to carry its history into the new session. The model picker follows the selected CLI, and switching CLIs asks you to pick a model for the new chat. When context runs low, Husk offers compaction where supported or a fresh conversation with the same CLI.
 - **Terminal**: a real shell in your project, in tabs, pinned in the rail above the tool selector.
 - **Brain**: what Husk remembers. Save notes, teach it from text files, or let it capture a short record after a chat; the memories that fit are recalled into your next message. Mark a note as a rule to send it with unrelated chat prompts too. Rules default to global scope, can be limited to a workspace, and are included when a terminal session starts. The Rules tab shows disabled rules and rules held back by the prompt budget. Every memory can be pinned, edited, or removed, and the Synapses view shows how they connect.
-- **Agents**: pick which agent personas activate for the next session. Multiple can be active at once; import from any local CLI's agent dir, or install an agent pack from a local repo folder or a repo URL (e.g. `https://github.com/dev/agent-repo`).
+- **Agents**: pick which agent personas activate for the next session. Multiple can be active at once; import from any local CLI's agent dir, or install an agent pack from a local repo folder or a repo URL (e.g. `https://github.com/dev/agent-repo`). The live Agents map follows the background agents a chat starts, their recent tool calls, and any request waiting for you.
 - **Workflows**: a visual graph editor for chained steps with conditional branching and AI-decided routing.
 - **Projects**: switch the agent cwd between known project directories (so Claude's "remember this folder" trust prompts work).
 - **Autopilot**: hand the agent a goal and walk away. Solo runs one agent; Team splits the goal across collaborating parallel runs. Each run executes in its own git worktree with a dedicated PTY, an independent time/token/dollar budget, a hash-chained audit log, and an optional pre-run snapshot for one-click revert. A swarm bar shows every active run.
-  Models lets you assign a vendor and model independently to Simple tasks, Complex tasks, Planner, and Integrator. A job can override the worker vendor/model without changing planner or integrator settings. Each job type runs only on the CLI you choose for it; a job type with no CLI chosen does not run until you pick one. A CLI without a picked model uses its own default. Routing is captured when work starts so later settings changes do not redirect queued jobs. See [multi-vendor routing](docs/multi-vendor-routing.md).
+  Models lets you assign a CLI and model independently to Simple tasks, Complex tasks, Planner, and Integrator, or choose Auto by Husk for a job. Review a saved run and its changes before applying or discarding it. A job can override the worker vendor/model without changing planner or integrator settings. Routing is captured when work starts so later settings changes do not redirect queued jobs. See [multi-vendor routing](docs/multi-vendor-routing.md).
 - **Prompts**: local-only prompt library; one click sends a saved prompt into the agent.
 - **Skills**: install and manage Agent Skills in the shared `~/.agents/skills/` library. Husk exposes them through each agent's native skill location, so one skill can be used across agents.
 - **MCP**: install / toggle / health-check Model Context Protocol servers. Clone one to start a variant from its settings.

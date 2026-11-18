@@ -348,8 +348,13 @@ test('non-Git folders show turn changes and diffs, and initialize Git only after
     fs.writeFileSync('/tmp/husk-non-git-changes/changes.png', Buffer.from(png, 'base64'));
     await init.click();
     await win.locator('#confirm-ok').click();
-    await expect.poll(() => fs.existsSync(path.join(repo, '.git'))).toBe(true);
-    expect(execFileSync('git', ['-C', repo, 'branch', '--show-current'], { encoding: 'utf8' }).trim()).toBe('main');
+    // The confirmation starts `git init` asynchronously. `.git` appears before
+    // Git has finished writing the repository metadata, so wait for Git itself
+    // to recognize the new branch rather than only checking the directory.
+    await expect.poll(() => {
+      try { return execFileSync('git', ['-C', repo, 'branch', '--show-current'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); }
+      catch (_) { return ''; }
+    }).toBe('main');
     expect(execFileSync('git', ['-C', repo, 'remote'], { encoding: 'utf8' }).trim()).toBe('');
     let commits = ''; try { commits = execFileSync('git', ['-C', repo, 'rev-list', '--all'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch (_) {}
     expect(commits).toBe('');

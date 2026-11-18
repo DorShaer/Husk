@@ -843,6 +843,10 @@ const WHATS_NEW = {
         mediaAlt: 'The Agents map showing a chat, the agents it started, their tool-call heartbeats, and the selected agent\u2019s activity',
       },
       {
+        title: 'Choose the model and CLI for each job',
+        body: 'The shared model picker lists what each CLI offers. Continue a discussion on another installed CLI with a handoff. In Autopilot, assign a CLI and model to each job role or choose Auto by Husk, then review a saved run before applying its changes.',
+      },
+      {
         title: 'See what every turn changed, with or without Git',
         body: 'After each turn, Husk lists the files the agent added, edited or deleted, with their diffs, even in a folder that is not a Git repository. Open a file in the Changes panel to read its diff or have the agent explain it, and set up Git from there when you want history.',
         media: 'assets/wn-2150-changes.webp',
@@ -855,8 +859,8 @@ const WHATS_NEW = {
         mediaAlt: 'A context warning offering Compact conversation and New conversation above a chat whose context window is 92 percent full',
       },
       {
-        title: 'Glass, rebuilt',
-        body: 'A light theme of clear glass panes on a cool silver field, with your sessions and the conversation each on a pane of their own. Pick it in Preferences, under Appearance.',
+        title: 'A guided start, even offline',
+        body: 'The welcome tour helps you choose installed CLIs and an appearance. The bundled Help guide works offline, and the Glass theme is ready in Preferences under Appearance.',
         media: 'assets/wn-2150-glass.webp',
         mediaAlt: 'Husk in the Glass theme, with the Sessions list and the conversation on separate glass panes',
       },
