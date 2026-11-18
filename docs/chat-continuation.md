@@ -54,6 +54,8 @@ Provider limits offer usage details and switching only when another installed CL
 
 A completed turn that changes files adds a receipt to the conversation. Select a file or View to open its diff in Changes; Explain sends a question about that file to the active chat. Changes made by other applications during the same turn can also appear.
 
+![A completed turn with its file list and selected diff in Changes](images/husk-changes.png)
+
 This works in folders without Git. Husk compares local files before and after the turn without creating tracking files. Non-Git diffs remain available until the next turn or app restart. Common dependency and build folders, environment files, private-key files and symbolic links are skipped. Comparisons are bounded to 2,000 files, 4 MiB of file content and a two-second scan; files over 256 KiB and binary files have no line diff. The Changes view identifies incomplete comparisons.
 
 Select **Initialize Git** in Changes to create a repository in the working folder. Review the folder in the confirmation. This runs Git initialization only: no commit or remote is created. Pull requests and checks continue to require a Git repository and a configured remote.
