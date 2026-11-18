@@ -1,0 +1,23 @@
+Architectures: amd64
+Codename: stable
+Components: main
+Date: Wed, 18 Nov 2026 02:45:58 +0000
+Label: Husk
+Origin: Husk
+Suite: stable
+MD5Sum:
+ c88491cd117604f0b9627f6080941525              132 Release
+ 9fd228adf6f375b972710d6a1120573f            16337 main/binary-amd64/Packages
+ e06b0e09f46633c40a954d97b5a27ec0             3607 main/binary-amd64/Packages.gz
+SHA1:
+ 208776d53055e19f8ad60fcbe46f2d1fb0a78c10              132 Release
+ 8acfaec05745b82188c4c643ded37b7cf3e0443e            16337 main/binary-amd64/Packages
+ 88e15c5278fa8984632a2f8e5d204696de467fb8             3607 main/binary-amd64/Packages.gz
+SHA256:
+ 262054287704794a319e8b6b7c0478cb0f5e83c3cc2df082bccb784139643c80              132 Release
+ b4ef04004879a65f1410cf258c7aafffb53ec0fc305662973360bca8d5075d94            16337 main/binary-amd64/Packages
+ 76195bfa954681d0bdd512e59515c80962284f2eed5d5530d88f36be3a7fd361             3607 main/binary-amd64/Packages.gz
+SHA512:
+ b2a3f37bdb5ec0d226c5ab62e719def7ab4b8a901456bf43960b7caea4c22e9582e9403aba4b9302005923d5acdc33170e400f818f40bc88a0b88fab5f3c3dc1              132 Release
+ 573aba8f99e41ac9fd1686491a78d9f375a5ffc405af6aeaad69966bc99df5e20a35806adbd5fa7dee9208b4600dda200f4bbde2a70e6cd7240891d8c88723eb            16337 main/binary-amd64/Packages
+ 16d00d22a50f03f4a1fb409a9abf1a35336fc542f6e326bba7586a8d4e55f0f69d63c851997473ba3e9758042e34eeec4e6ec66dd51b7c5dabf3e183f572827b             3607 main/binary-amd64/Packages.gz
