@@ -82,14 +82,16 @@ test('peek reads any CLI Husk can and says so plainly where it cannot', async ()
     expect(copilot.entries.map((e) => [e.kind, e.text])).toEqual([['user', 'tidy the readme'], ['assistant', 'Tidied.']]);
     expect(copilot.noPreview).toBeFalsy();
 
-    await win.evaluate(() => {
+    await win.evaluate(async () => {
       setPage('sessions');
       sxPausePoll(true);
+      await sxLoad({ firstPaint: false });
       Object.assign(sx, { loaded: true, supported: true, error: '', agent: 'gemini', currentCwd: '', chips: { project: false, live: false, needs: false, work: false } });
       sx.cache = [{ id: 'gem-session-1', agent: 'gemini', title: 'A gemini chat', projectPath: '/p', originalCwd: '/p', path: '/p/g.jsonl', mtime: Date.now() }];
-      sx.detailId = '';
+      sx.detailId = 'gem-session-1';
+      sx.detailTab = 'activity';
       sxPaint();
-      sxSelect('gem-session-1');
+      await sxPeek('gem-session-1');
     });
     await expect(win.locator('#sx-d-body .sx-d-note')).toHaveText('No live preview for this CLI');
   } finally { await app.close(); fs.rmSync(home, { recursive: true, force: true }); }

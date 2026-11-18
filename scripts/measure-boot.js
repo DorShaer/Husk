@@ -47,11 +47,13 @@ async function run(home, seconds, label) {
     },
     timeout: (seconds + 90) * 1000, killSignal: 'SIGKILL',
   });
-  const { mark, blocks, listed, windowAt } = JSON.parse(fs.readFileSync(reportFile, 'utf8'));
+  const { mark, blocks, listed, windowAt, startupMarks, slowRequires } = JSON.parse(fs.readFileSync(reportFile, 'utf8'));
   const windowMs = windowAt - t0;
   const top = blocks.slice().sort((a, b) => b.ms - a.ms).slice(0, 5);
   const report = {
     label, windowMs, sessionsListMs: listed.ms, sessions: listed.count, claudeAll: listed.claude, olderUnread: listed.olderUnread,
+    startupMarks,
+    slowRequires: slowRequires.sort((a, b) => b.elapsedMs - a.elapsedMs).slice(0, 15),
     maxAfterWindowMs: Math.max(0, ...blocks.filter((b) => b.at - b.ms > mark).map((b) => b.ms)),
     maxBlockMs: top.length ? top[0].ms : 0,
     blocksOver100: blocks.filter((b) => b.ms > 100).length,

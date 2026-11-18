@@ -5,6 +5,17 @@
 // With HUSK_BOOT_PROFILE set to a file path, also writes a CPU profile there
 // when globalThis.__huskStopProfile() is called.
 const { performance } = require('node:perf_hooks');
+const Module = require('node:module');
+const slowRequires = [];
+const originalLoad = Module._load;
+Module._load = function loadWithTiming(request, parent, isMain) {
+  const startedAt = performance.now();
+  try { return originalLoad.call(this, request, parent, isMain); }
+  finally {
+    const elapsedMs = performance.now() - startedAt;
+    if (elapsedMs >= 10) slowRequires.push({ request, parent: parent && parent.filename, elapsedMs: Math.round(elapsedMs) });
+  }
+};
 
 const TICK_MS = 5;
 const blocks = [];
@@ -17,6 +28,7 @@ setInterval(() => {
   last = now;
 }, TICK_MS).unref();
 
+const startupMarks = globalThis.__huskStartupMarks = [{ label: 'process-start', at: Number(process.hrtime.bigint() / 1000000n) }];
 const out = process.env.HUSK_BOOT_PROFILE;
 if (out) {
   const inspector = require('node:inspector');
@@ -35,6 +47,7 @@ if (out) {
 }
 
 // Capture the window milestone on the same clock as the event-loop samples.
+require('electron').app.once('ready', () => startupMarks.push({ label: 'electron-ready', at: Number(process.hrtime.bigint() / 1000000n) }));
 require('electron').app.once('browser-window-created', (_event, win) => {
   win.webContents.once('dom-ready', () => {
     const mark = performance.now();
@@ -48,7 +61,7 @@ require('electron').app.once('browser-window-created', (_event, win) => {
     Promise.all([listed, new Promise(resolve => setTimeout(resolve, Number(process.env.HUSK_BOOT_SECONDS) * 1000))])
       .then(async ([sessions]) => {
         if (globalThis.__huskStopProfile) await globalThis.__huskStopProfile();
-        require('node:fs').writeFileSync(process.env.HUSK_BOOT_RESULT, JSON.stringify({ mark, blocks, listed: sessions, windowAt }));
+        require('node:fs').writeFileSync(process.env.HUSK_BOOT_RESULT, JSON.stringify({ mark, blocks, listed: sessions, windowAt, startupMarks: globalThis.__huskStartupMarks || [], slowRequires }));
         win.close();
       }).catch(err => { console.error(err); require('electron').app.exit(1); });
   });

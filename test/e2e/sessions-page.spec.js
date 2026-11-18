@@ -80,6 +80,7 @@ test('the shared detail panel stays full width when the status panel is collapse
   // pane in place and never sets body.dataset.detail.
   await win.evaluate(() => setPage('skills'));
   await win.waitForSelector('.sk-row', { timeout: 10_000 });
+  await win.evaluate(() => document.querySelectorAll('.modal').forEach((modal) => { modal.hidden = true; }));
   await win.click('.sk-row');
   await win.waitForTimeout(400); // dp-in animation settles
 

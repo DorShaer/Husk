@@ -13,6 +13,7 @@ test('high context raises the usage bell and shows the source', async () => {
   fs.mkdirSync(config, { recursive: true });
   fs.writeFileSync(path.join(config, 'config.json'), JSON.stringify({ firstRunDone: true, skipWelcome: true, resumeLastOnLaunch: false, agentCommand: 'gemini', planUsageSource: 'cli' }));
   fs.writeFileSync(path.join(bin, 'gemini'), `#!/bin/sh\nexec "${process.execPath}" "${path.join(ROOT, 'test/e2e/fixtures/fake-acp-agent.js')}" "$@"\n`, { mode: 0o755 });
+  fs.copyFileSync(path.join(bin, 'gemini'), path.join(bin, 'copilot'));
   const app = await electron.launch({ args: [path.join(ROOT, 'src/main.js'), '--no-sandbox'], cwd: ROOT, env: { ...process.env, HOME: home, USERPROFILE: home, PATH: `${bin}${path.delimiter}${process.env.PATH}`, ELECTRON_DISABLE_SANDBOX: '1', HUSK_E2E: '1' } });
   try {
     const win = await app.firstWindow();
@@ -47,6 +48,7 @@ test('high context raises the usage bell and shows the source', async () => {
     await expect(win.locator('#usage-bell-count')).toBeHidden();
     await win.evaluate(() => window.huskOfferHandoff(activeTabId, { reason: 'possible-limit' }));
     await expect(win.locator('.chat-pane.show .chat-handoff-offer')).toContainText('may have reached a usage limit');
+    await win.locator('.chat-pane.show').getByRole('button', { name: 'Dismiss', exact: true }).click();
     await win.locator('.chat-pane.show').getByRole('button', { name: 'Yes', exact: true }).click();
     await expect(input).toBeEnabled();
     await expect(input).toHaveAttribute('placeholder', /Enter to send/);
