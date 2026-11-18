@@ -38,12 +38,20 @@ async function launch({ homeDir, bin }) {
   const win = await app.firstWindow({ timeout: 30_000 });
   await win.waitForLoadState('domcontentloaded');
   await win.evaluate(() => { document.querySelectorAll('.modal, #whatsnew').forEach((m) => { m.hidden = true; }); });
+  await win.waitForFunction(() => {
+    const tab = TABS.get(activeTabId);
+    return window.husk && window.husk.chat && window.HuskChat
+      && tab && tab.mode === 'chat' && tab.chatStart;
+  }, null, { timeout: 60_000 });
   return { app, win };
 }
 
 const ready = (win) => win.waitForFunction(() => {
+  const tab = TABS.get(activeTabId);
   const i = document.querySelector('.chat-pane.show .chat-input');
-  return i && !i.disabled && !/Starting|has exited/.test(i.placeholder);
+  return tab && tab.mode === 'chat' && tab.chatAlive && !tab.chatStopping && !tab.exited
+    && i && !i.disabled && !/Starting|has exited/.test(i.placeholder)
+    && !document.querySelector('#chat-empty.show');
 }, null, { timeout: 30_000 });
 
 const lines = (file) => (fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split('\n').filter(Boolean) : []);
