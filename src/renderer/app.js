@@ -844,7 +844,7 @@ const WHATS_NEW = {
       },
       {
         title: 'Choose the model and CLI for each job',
-        body: 'The shared model picker lists what each CLI offers, and switching chat vendors asks you to select a model for the new CLI. Continue a discussion on another installed CLI with a handoff. In Autopilot, assign a CLI and model to each job role or choose Auto by Husk, then review a saved run before applying its changes.',
+        body: 'The shared model picker lists what each CLI offers. Continue a discussion on another installed CLI with a handoff. In Autopilot, assign a CLI and model to each job role or choose Auto by Husk, then review a saved run before applying its changes.',
       },
       {
         title: 'See what every turn changed, with or without Git',
@@ -859,8 +859,8 @@ const WHATS_NEW = {
         mediaAlt: 'A context warning offering Compact conversation and New conversation above a chat whose context window is 92 percent full',
       },
       {
-        title: 'A guided, responsive start',
-        body: 'The welcome tour helps you choose installed CLIs and an appearance. Session and CLI checks now run in the background so Husk stays responsive while it looks for your work. The bundled Help guide works offline, and the Glass theme is ready in Preferences under Appearance.',
+        title: 'A guided start, even offline',
+        body: 'The welcome tour helps you choose installed CLIs and an appearance. The bundled Help guide works offline, and the Glass theme is ready in Preferences under Appearance.',
         media: 'assets/wn-2150-glass.webp',
         mediaAlt: 'Husk in the Glass theme, with the Sessions list and the conversation on separate glass panes',
       },
